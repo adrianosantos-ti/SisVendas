@@ -311,9 +311,9 @@ with aba_clientes:
             cli_id_hist = clientes_dict_hist[cli_hist_selecionado]
             
             query_hist_cli = """
-                SELECT v.codigo_venda AS "Nº Venda", COALESCE(p.nome, 'Produto Excluído') AS Produto, v.quantidade AS Qtd, 
+                SELECT v.codigo_venda AS "Nº Venda", COALESCE(p.nome, 'Produto Excluído') AS "Produto", v.quantidade AS "Qtd", 
                        v.valor_total AS "Total (R$)", v.valor_restante AS "Restante (R$)",
-                       v.data_venda AS Data, v.forma_pagamento AS Pagamento 
+                       v.data_venda AS "Data", v.forma_pagamento AS "Pagamento" 
                 FROM vendas v 
                 LEFT JOIN produtos p ON v.produto_id = p.id 
                 WHERE v.cliente_id = %s
@@ -463,11 +463,11 @@ with aba_historico:
     st.header("📜 Histórico Geral e Faturamento")
     
     query_todas_vendas = """
-        SELECT v.id AS "ID Item", v.codigo_venda AS "Nº Venda", COALESCE(c.nome, 'Cliente Excluído') AS Cliente, 
-               COALESCE(p.nome, 'Produto Excluído') AS Produto, v.quantidade AS Qtd,
+        SELECT v.id AS "ID Item", v.codigo_venda AS "Nº Venda", COALESCE(c.nome, 'Cliente Excluído') AS "Cliente", 
+               COALESCE(p.nome, 'Produto Excluído') AS "Produto", v.quantidade AS "Qtd",
                v.valor_unitario AS "Preço Tabela", v.desconto AS "Desconto Unit",
                v.valor_total AS "Total (R$)", v.valor_entrada AS "Entrada (R$)", v.valor_restante AS "Restante (R$)",
-               v.data_venda AS Data, v.forma_pagamento AS Pagamento, v.prazo AS Prazo 
+               v.data_venda AS "Data", v.forma_pagamento AS "Pagamento", v.prazo AS "Prazo" 
         FROM vendas v 
         LEFT JOIN clientes c ON v.cliente_id = c.id 
         LEFT JOIN produtos p ON v.produto_id = p.id 
