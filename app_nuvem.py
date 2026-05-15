@@ -10,7 +10,7 @@ if 'carrinho' not in st.session_state:
     st.session_state['carrinho'] = []
 
 # COLE A SUA SENHA NO LUGAR DE "SUA_SENHA_AQUI" (Sem os colchetes)
-DATABASE_URL = "postgresql://postgres.dqxurbhffgcjdbouaccb:Ip%401408Dryko@aws-1-sa-east-1.pooler.supabase.com:5432/postgres"
+DATABASE_URL = st.secrets["DATABASE_URL"]
 
 def conectar_banco():
     return psycopg2.connect(DATABASE_URL)
