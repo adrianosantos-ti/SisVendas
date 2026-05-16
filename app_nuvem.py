@@ -742,3 +742,101 @@ with aba_historico:
             
     else:
         st.info("Nenhuma venda registrada no sistema até o momento.")
+
+# ==========================================
+# ABA 6: CONTROLE FINANCEIRO (CONTAS A RECEBER)
+# ==========================================
+with aba_financeiro:
+    st.header("💰 Controle Financeiro e Inadimplência")
+    
+    # Busca todos os dados do contas a receber misturando com o nome do cliente
+    query_financeiro = """
+        SELECT cr.id AS "ID Parcela", cr.venda_codigo AS "Nº Venda", c.nome AS "Cliente",
+               cr.num_parcela AS "Parcela", cr.total_parcelas AS "De",
+               cr.valor_parcela AS "Valor (R$)", cr.data_vencimento AS "Vencimento",
+               cr.status AS "Status", cr.data_pagamento AS "Data Pagamento"
+        FROM contas_receber cr
+        JOIN clientes c ON cr.cliente_id = c.id
+        ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') ASC
+    """
+    df_financeiro = carregar_dados(query_financeiro)
+    
+    if not df_financeiro.empty:
+        # Converter datas para o Python entender e fazer cálculos
+        df_financeiro['Data_Venc_Obj'] = pd.to_datetime(df_financeiro['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
+        hoje = date.today()
+        
+        # --- MÉTRICAS E INDICADORES RÁPIDOS ---
+        valor_recebido = df_financeiro[df_financeiro['Status'] == 'Pago']['Valor (R$)'].sum()
+        valor_pendente = df_financeiro[df_financeiro['Status'] == 'Pendente']['Valor (R$)'].sum()
+        
+        # Atrasados: Status Pendente E data de vencimento menor que hoje
+        mask_atrasado = (df_financeiro['Status'] == 'Pendente') & (df_financeiro['Data_Venc_Obj'] < hoje)
+        valor_atrasado = df_financeiro[mask_atrasado]['Valor (R$)'].sum()
+        
+        col_met1, col_met2, col_met3 = st.columns(3)
+        col_met1.metric("✅ Total Já Recebido", f"R$ {valor_recebido:.2f}")
+        col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(valor_pendente - valor_atrasado):.2f}")
+        col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {valor_atrasado:.2f}", delta="- Atenção" if valor_atrasado > 0 else "Tudo em dia!", delta_color="inverse")
+        
+        st.markdown("---")
+        
+        # --- ÁREA DE DAR BAIXA EM PARCELAS ---
+        df_pendentes = df_financeiro[df_financeiro['Status'] == 'Pendente']
+        
+        with st.expander("✅ Dar Baixa em Pagamento (Receber Parcela)", expanded=True):
+            if not df_pendentes.empty:
+                with st.form("form_dar_baixa"):
+                    # Cria uma lista bonita para o selectbox
+                    opcoes_baixa = df_pendentes.apply(
+                        lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parcela {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", 
+                        axis=1
+                    ).tolist()
+                    
+                    # Cria um dicionário para achar o ID da parcela escondido
+                    ids_pendentes = df_pendentes['ID Parcela'].tolist()
+                    dict_baixa = dict(zip(opcoes_baixa, ids_pendentes))
+                    
+                    parcela_sel = st.selectbox("Selecione a parcela que o cliente acabou de pagar:", options=opcoes_baixa)
+                    
+                    col_b1, col_b2 = st.columns([1, 2])
+                    data_pag_real = col_b1.date_input("Data do Pagamento", value=hoje, format="DD/MM/YYYY")
+                    
+                    if st.form_submit_button("💰 Confirmar Recebimento", type="primary"):
+                        id_para_baixar = dict_baixa[parcela_sel]
+                        data_pag_formatada = data_pag_real.strftime("%d/%m/%Y")
+                        
+                        conn = conectar_banco()
+                        cursor = conn.cursor()
+                        cursor.execute("UPDATE contas_receber SET status = 'Pago', data_pagamento = %s WHERE id = %s", (data_pag_formatada, id_para_baixar))
+                        conn.commit()
+                        conn.close()
+                        
+                        st.success("Pagamento registrado com sucesso! O fluxo de caixa foi atualizado.")
+                        st.rerun()
+            else:
+                st.success("🎉 Nenhuma parcela pendente! Todos os clientes estão em dia.")
+                
+        st.markdown("---")
+        
+        # --- TABELA DE VISUALIZAÇÃO E FILTROS ---
+        st.subheader("📋 Relatório de Parcelas e Boletos")
+        
+        filtro_status = st.radio("Filtrar por Status:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True)
+        
+        df_view = df_financeiro.copy()
+        
+        if filtro_status == "Pendentes":
+            df_view = df_view[df_view['Status'] == 'Pendente']
+        elif filtro_status == "Pagos":
+            df_view = df_view[df_view['Status'] == 'Pago']
+        elif filtro_status == "Atrasados":
+            df_view = df_view[(df_view['Status'] == 'Pendente') & (df_view['Data_Venc_Obj'] < hoje)]
+            
+        # Removemos a coluna de objeto de data que foi usada só pra matemática antes de mostrar na tela
+        df_view = df_view.drop(columns=['Data_Venc_Obj', 'ID Parcela'])
+        
+        st.dataframe(df_view, use_container_width=True, hide_index=True)
+        
+    else:
+        st.info("Nenhuma movimentação financeira registrada ainda. Faça sua primeira venda para alimentar o caixa!")
