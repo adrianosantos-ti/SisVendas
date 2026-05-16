@@ -457,7 +457,7 @@ with aba_vendas:
                         item_restante = item['Subtotal (R$)'] - item_entrada
                         
                         cursor.execute("""
-                            INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantity, data_venda, valor_total, valor_entrada, valor_restante, valor_unitario, desconto, forma_pagamento, prazo) 
+                            INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, valor_entrada, valor_restante, valor_unitario, desconto, forma_pagamento, prazo) 
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """, (novo_codigo_venda, cli_id, item['produto_id'], item['quantidade'], data_venda_formatada, item['Subtotal (R$)'], item_entrada, item_restante, item['Valor Original (R$)'], item['Desconto (R$)'], forma_pag, f"{qtd_parcelas}x"))
                         
