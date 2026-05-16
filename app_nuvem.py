@@ -342,6 +342,15 @@ with aba_clientes:
 with aba_vendas:
     st.header("🛒 Registrar Venda (PDV)")
 
+    if 'zap_link' in st.session_state:
+        st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada! Total: R$ {st.session_state['zap_total']:.2f}")
+        with st.container(border=True):
+            st.subheader("📲 Enviar Recibo via WhatsApp")
+            st.text_area("Prévias:", value=st.session_state['zap_msg'], height=220, disabled=True, key="msg_pdv_imediata")
+            st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
+            st.info("💡 Para iniciar uma nova venda, basta adicionar um produto lá em cima!")
+        st.markdown("---")
+
     if df_produtos.empty or df_clientes.empty:
         st.warning("É necessário ter clientes e produtos cadastrados.")
     else:
@@ -351,9 +360,16 @@ with aba_vendas:
         cliente_selecionado = col_cli.selectbox("Cliente", options=list(clientes_dict.keys()))
         data_venda_input = col_data.date_input("Data da Venda", format="DD/MM/YYYY", value=date.today())
         
-        col_pag, col_prazo = st.columns(2)
-        forma_pag = col_pag.selectbox("Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"])
-        prazo = col_prazo.selectbox("Prazo", ["À vista", "30 dias", "60 dias", "3x sem juros", "A Combinar"])
+        col_pag, col_parc = st.columns(2)
+        forma_pag = col_pag.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Crediário/Fiado"])
+        
+        # Novo sistema inteligente de parcelas baseado no financeiro
+        qtd_parcelas = col_parc.number_input("Número de Parcelas", min_value=1, max_value=12, value=1, step=1)
+        
+        col_venc = st.columns(1)[0]
+        # Se for 1 parcela, sugere hoje. Se for mais, sugere daqui a 30 dias, mas deixa alterar.
+        sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
+        data_1_vencimento = col_venc.date_input("Data de Vencimento (ou do 1º vencimento se parcelado)", format="DD/MM/YYYY", value=sugestao_venc)
         
         st.markdown("---")
         st.subheader("2. Adicionar Produtos")
@@ -373,10 +389,8 @@ with aba_vendas:
             if st.form_submit_button("➕ Adicionar ao Carrinho"):
                 prod_id = produtos_dict[produto_selecionado]
                 estoque_atual = int(df_produtos.loc[df_produtos['id'] == prod_id, 'quantidade'].values[0])
-                
                 qtd_no_carrinho = sum([item['quantidade'] for item in st.session_state['carrinho'] if item['produto_id'] == prod_id])
                 qtd_total_desejada = qtd_venda + qtd_no_carrinho
-                
                 valor_com_desconto = preco_tabela - desconto_unit
                 
                 if estoque_atual < qtd_total_desejada:
@@ -384,7 +398,6 @@ with aba_vendas:
                 elif valor_com_desconto < 0:
                     st.error("O desconto não pode ser maior que o valor do produto!")
                 else:
-                    # --- MÁGICA: Se havia um recibo antigo, apaga ele ao iniciar nova venda ---
                     if 'zap_link' in st.session_state:
                         del st.session_state['zap_link']
                         del st.session_state['zap_msg']
@@ -419,9 +432,9 @@ with aba_vendas:
                 valor_restante = total_venda - valor_entrada
                 
                 if valor_entrada > 0:
-                    col_ent2.success(f"⏳ Ficará um restante a receber de: **R$ {valor_restante:.2f}**")
+                    col_ent2.success(f"⏳ Restante Financeiro: **R$ {valor_restante:.2f}** em {qtd_parcelas}x")
                 else:
-                    col_ent2.info("Nenhuma entrada registrada. O valor ficará pendente ou será pago integralmente no prazo.")
+                    col_ent2.info(f"O valor total de R$ {total_venda:.2f} será lançado em {qtd_parcelas}x.")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 col_finalizar, col_limpar = st.columns([2, 1])
@@ -437,17 +450,40 @@ with aba_vendas:
                     resultado_max = cursor.fetchone()[0]
                     novo_codigo_venda = (resultado_max if resultado_max is not None else 0) + 1
                     
+                    # 1. Salva os produtos no histórico de vendas tradicional
                     for item in st.session_state['carrinho']:
                         proporcao = item['Subtotal (R$)'] / total_venda if total_venda > 0 else 0
                         item_entrada = valor_entrada * proporcao
                         item_restante = item['Subtotal (R$)'] - item_entrada
                         
                         cursor.execute("""
-                            INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, valor_entrada, valor_restante, valor_unitario, desconto, forma_pagamento, prazo) 
+                            INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantity, data_venda, valor_total, valor_entrada, valor_restante, valor_unitario, desconto, forma_pagamento, prazo) 
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """, (novo_codigo_venda, cli_id, item['produto_id'], item['quantidade'], data_venda_formatada, item['Subtotal (R$)'], item_entrada, item_restante, item['Valor Original (R$)'], item['Desconto (R$)'], forma_pag, prazo))
+                        """, (novo_codigo_venda, cli_id, item['produto_id'], item['quantidade'], data_venda_formatada, item['Subtotal (R$)'], item_entrada, item_restante, item['Valor Original (R$)'], item['Desconto (R$)'], forma_pag, f"{qtd_parcelas}x"))
                         
                         cursor.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id = %s", (item['quantidade'], item['produto_id']))
+                    
+                    # 2. INTELGÊNCIA DO FLUXO FINANCEIRO: Lançamento de Parcelas
+                    if valor_restante == 0:
+                        # Venda totalmente paga à vista
+                        cursor.execute("""
+                            INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (novo_codigo_venda, cli_id, 1, 1, total_venda, data_venda_formatada, 'Pago', data_venda_formatada))
+                    else:
+                        # Venda com valor em aberto (parcelada)
+                        valor_da_parcela = valor_restante / qtd_parcelas
+                        data_venc_atual = data_1_vencimento
+                        
+                        for i in range(1, qtd_parcelas + 1):
+                            venc_formatado = data_venc_atual.strftime("%d/%m/%Y")
+                            cursor.execute("""
+                                INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            """, (novo_codigo_venda, cli_id, i, qtd_parcelas, valor_da_parcela, venc_formatado, 'Pendente'))
+                            
+                            # Soma exatamente 1 mês para a próxima parcela (Aproximação de 30 dias)
+                            data_venc_atual = data_venc_atual + timedelta(days=30)
                     
                     cursor.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id,))
                     dados_cli = cursor.fetchone()
@@ -456,20 +492,25 @@ with aba_vendas:
                     conn.commit()
                     conn.close()
                     
+                    # 3. Formata a mensagem do Zap detalhando o parcelamento financeiro
                     msg = f"Olá, {cliente_selecionado}! 🌸\n\n"
                     msg += f"Aqui está o recibo da sua compra realizada em *{data_venda_formatada}*:\n"
                     msg += f"🧾 *Venda Nº {novo_codigo_venda}*\n\n"
-                    msg += "🛍️ *Produtos adicionados:*\n"
-                    
+                    msg += "🛍️ *Produtos:*\n"
                     for item in st.session_state['carrinho']:
                         msg += f"• {item['quantidade']}x {item['Produto']} — R$ {item['Subtotal (R$)']:.2f}\n"
                     
-                    msg += f"\n💰 *Valor Total:* R$ {total_venda:.2f}\n"
+                    msg += f"\n💰 *Total da Compra:* R$ {total_venda:.2f}\n"
                     if valor_entrada > 0:
                         msg += f"💸 *Entrada Paga:* R$ {valor_entrada:.2f}\n"
-                        msg += f"⏳ *Restante a receber:* R$ {valor_restante:.2f}\n"
-                    msg += f"💳 *Forma de Pagto:* {forma_pag} ({prazo})\n\n"
-                    msg += "Muito obrigada pela preferência e confiança! ✨"
+                    
+                    if valor_restante > 0:
+                        msg += f"💳 *Plano de Pagto:* {qtd_parcelas}x de R$ {(valor_restante/qtd_parcelas):.2f}\n"
+                        msg += f"📅 *1º Vencimento:* {data_1_vencimento.strftime('%d/%m/%Y')}\n"
+                    else:
+                        msg += f"✅ *Pagamento:* {forma_pag} (À vista - Quitado)\n"
+                        
+                    msg += "\nMuito obrigada pela preferência! ✨"
                     
                     import urllib.parse
                     msg_url = urllib.parse.quote(msg)
@@ -485,7 +526,6 @@ with aba_vendas:
                     st.session_state['zap_msg'] = msg
                     st.session_state['zap_codigo'] = novo_codigo_venda
                     st.session_state['zap_total'] = total_venda
-                    
                     st.session_state['carrinho'] = []
                     st.rerun()
                     
@@ -493,11 +533,10 @@ with aba_vendas:
                     st.session_state['carrinho'] = []
                     st.rerun()
         else:
-            # --- MÁGICA: Onde seria apenas o aviso de carrinho vazio, exibimos o botão do Zap! ---
             if 'zap_link' in st.session_state:
                 with st.container(border=True):
-                    st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada! Total: R$ {st.session_state['zap_total']:.2f}")
-                    st.markdown("👇 **Clique abaixo para enviar o recibo para a cliente:**")
+                    st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada no Financeiro! Total: R$ {st.session_state['zap_total']:.2f}")
+                    st.markdown("👇 **Clique abaixo para enviar o recibo com o parcelamento:**")
                     st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
                     st.info("💡 Para iniciar uma nova venda, basta adicionar um produto lá em cima!")
             else:
