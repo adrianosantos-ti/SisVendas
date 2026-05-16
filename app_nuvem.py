@@ -342,6 +342,26 @@ with aba_clientes:
 with aba_vendas:
     st.header("🛒 Registrar Venda (PDV)")
     
+    # --- NOVO: EXIBIR RECIBO DO WHATSAPP SE A VENDA FOI FINALIZADA ---
+    if 'zap_link' in st.session_state:
+        st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} finalizada com sucesso! Total: R$ {st.session_state['zap_total']:.2f}")
+        
+        with st.container(border=True):
+            st.subheader("📲 Enviar Recibo via WhatsApp")
+            st.text_area("Pré-visualização da Mensagem:", value=st.session_state['zap_msg'], height=220, disabled=True, key="msg_pdv_imediata")
+            
+            col_zap1, col_zap2 = st.columns([2, 1])
+            col_zap1.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
+            
+            if col_zap2.button(" Nova Venda", use_container_width=True):
+                del st.session_state['zap_link']
+                del st.session_state['zap_msg']
+                del st.session_state['zap_codigo']
+                del st.session_state['zap_total']
+                st.rerun()
+        st.markdown("---")
+    # --- FIM DO BLOCO DE EXIBIÇÃO ---
+
     if df_produtos.empty or df_clientes.empty:
         st.warning("É necessário ter clientes e produtos cadastrados.")
     else:
@@ -442,11 +462,49 @@ with aba_vendas:
                         
                         cursor.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id = %s", (item['quantidade'], item['produto_id']))
                     
+                    # --- NOVO: BUSCAR TELEFONE E MONTAR TEXTO COMPLETO DO CARRINHO ANTES DE LIMPAR ---
+                    cursor.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id,))
+                    dados_cli = cursor.fetchone()
+                    tel_cliente = dados_cli[0] if dados_cli else None
+                    
                     conn.commit()
                     conn.close()
                     
+                    # Montar o detalhamento de itens para o texto do WhatsApp
+                    msg = f"Olá, {cliente_selecionado}! 🌸\n\n"
+                    msg += f"Aqui está o recibo da sua compra realizada em *{data_venda_formatada}*:\n"
+                    msg += f"🧾 *Venda Nº {novo_codigo_venda}*\n\n"
+                    msg += "🛍️ *Produtos adicionados:*\n"
+                    
+                    for item in st.session_state['carrinho']:
+                        msg += f"• {item['quantidade']}x {item['Produto']} — R$ {item['Subtotal (R$)']:.2f}\n"
+                    
+                    msg += f"\n💰 *Valor Total:* R$ {total_venda:.2f}\n"
+                    if valor_entrada > 0:
+                        msg += f"💸 *Entrada Paga:* R$ {valor_entrada:.2f}\n"
+                        msg += f"⏳ *Restante a receber:* R$ {valor_restante:.2f}\n"
+                    msg += f"💳 *Forma de Pagto:* {forma_pag} ({prazo})\n\n"
+                    msg += "Muito obrigada pela preferência e confiança! ✨"
+                    
+                    # Tratar o link com o número de celular
+                    import urllib.parse
+                    msg_url = urllib.parse.quote(msg)
+                    if tel_cliente:
+                        tel_limpo = ''.join(filter(str.isdigit, str(tel_cliente)))
+                        if len(tel_limpo) >= 10 and not tel_limpo.startswith('55'):
+                            tel_limpo = '55' + tel_limpo
+                        link_wpp = f"https://wa.me/{tel_limpo}?text={msg_url}"
+                    else:
+                        link_wpp = f"https://wa.me/?text={msg_url}"
+                    
+                    # Guardar na memória para exibir após o rerun
+                    st.session_state['zap_link'] = link_wpp
+                    st.session_state['zap_msg'] = msg
+                    st.session_state['zap_codigo'] = novo_codigo_venda
+                    st.session_state['zap_total'] = total_venda
+                    
+                    # Reseta o carrinho e recarrega para mostrar o recibo estruturado lá em cima
                     st.session_state['carrinho'] = []
-                    st.success(f"Venda Nº {novo_codigo_venda} finalizada com sucesso! Total: R$ {total_venda:.2f}")
                     st.rerun()
                     
                 if col_limpar.button("🗑️ Esvaziar Carrinho", use_container_width=True):
