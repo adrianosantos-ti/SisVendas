@@ -556,7 +556,67 @@ with aba_historico:
                         st.rerun()
         
         st.markdown("---")
-        
+
+# --- NOVO BLOCO: RECIBO VIA WHATSAPP ---
+        st.subheader("📲 Enviar Recibo via WhatsApp")
+        opcoes_recibo = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+        venda_recibo_sel = st.selectbox("Selecione a venda para gerar o recibo", options=opcoes_recibo, key="sel_recibo")
+
+        if venda_recibo_sel:
+            venda_id_recibo = int(venda_recibo_sel.split("Item ")[1].split(")")[0])
+            
+            # Buscar detalhes da venda e telefone do cliente
+            conn = conectar_banco()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, v.valor_total, v.valor_entrada, v.valor_restante, v.forma_pagamento
+                FROM vendas v
+                JOIN clientes c ON v.cliente_id = c.id
+                JOIN produtos p ON v.produto_id = p.id
+                WHERE v.id = %s
+            """, (venda_id_recibo,))
+            dados_recibo = cursor.fetchone()
+            conn.close()
+
+            if dados_recibo:
+                tel, nome_cli, data_v, nome_prod, qtd, v_total, v_ent, v_rest, forma_pag = dados_recibo
+
+                # Montar a mensagem com emojis
+                msg = f"Olá, {nome_cli}! 🌸\n\n"
+                msg += f"Aqui está o resumo da sua compra do dia *{data_v}*:\n\n"
+                msg += f"🛍️ *Produto:* {qtd}x {nome_prod}\n"
+                msg += f"💰 *Valor Total:* R$ {v_total:.2f}\n"
+                if v_ent > 0:
+                    msg += f"💸 *Entrada Paga:* R$ {v_ent:.2f}\n"
+                    msg += f"⏳ *Restante:* R$ {v_rest:.2f}\n"
+                msg += f"💳 *Forma de Pagto:* {forma_pag}\n\n"
+                msg += "Muito obrigada pela preferência! ✨"
+
+                # Mostrar a mensagem na tela para você conferir antes de enviar
+                st.text_area("Pré-visualização da Mensagem:", value=msg, height=250, disabled=True)
+
+                # Tratamento do número e criação do link
+                if tel:
+                    # Limpa o telefone deixando só os números
+                    tel_limpo = ''.join(filter(str.isdigit, str(tel)))
+                    
+                    if len(tel_limpo) >= 10: # Verifica se tem pelo menos DDD + Número
+                        if not tel_limpo.startswith('55'):
+                            tel_limpo = '55' + tel_limpo # Adiciona o código do Brasil se não tiver
+                        
+                        import urllib.parse
+                        msg_url = urllib.parse.quote(msg)
+                        link_wpp = f"https://wa.me/{tel_limpo}?text={msg_url}"
+                        
+                        st.link_button("🟢 Abrir no WhatsApp", link_wpp, type="primary")
+                    else:
+                        st.warning("⚠️ O telefone do cliente parece incompleto. Corrija na aba de Clientes (precisa ter DDD).")
+                else:
+                    st.warning("⚠️ Este cliente não possui telefone cadastrado.")
+                    
+        st.markdown("---")
+        # --- FIM DO BLOCO WPP ---
+       
         df_todas_vendas['Data_Filtro'] = pd.to_datetime(df_todas_vendas['Data'], dayfirst=True, errors='coerce').dt.date
         
         data_min = df_todas_vendas['Data_Filtro'].min() if not pd.isna(df_todas_vendas['Data_Filtro'].min()) else date.today()
