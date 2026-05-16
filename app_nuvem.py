@@ -74,7 +74,7 @@ inicializar_banco()
 # INTERFACE WEB - STREAMLIT
 # ==========================================
 st.set_page_config(page_title="Sistema de Cosméticos", layout="wide")
-st.title("📦 Sistema de Gestão - Nuvem")
+st.title("📦 Sistema de Gestão")
 
 # Carregando dados
 df_produtos = carregar_dados("SELECT * FROM produtos ORDER BY nome")
