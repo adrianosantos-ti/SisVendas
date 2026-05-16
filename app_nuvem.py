@@ -621,25 +621,35 @@ with aba_historico:
                 with st.form("form_del_venda"):
                     opcoes_venda_del = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
                     venda_para_apagar = st.selectbox("Selecione o item lançado por engano", options=opcoes_venda_del, key="sel_del_venda")
-                    
+            
                     if st.form_submit_button("🚨 Confirmar Cancelamento", type="primary"):
-                        venda_id_del = int(venda_para_apagar.split("Item ")[1].split(")")[0])
-                        conn = conectar_banco()
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT produto_id, quantidade FROM vendas WHERE id = %s", (venda_id_del,))
-                        venda_info = cursor.fetchone()
-                        
-                        if venda_info:
-                            p_id, p_qtd = venda_info
-                            cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (p_qtd, p_id))
-                            cursor.execute("DELETE FROM vendas WHERE id = %s", (venda_id_del,))
-                            conn.commit()
-                            conn.close()
-                            st.success("Item cancelado e devolvido ao estoque.")
-                        else:
-                            conn.close()
-                            st.error("Erro ao encontrar os dados da venda.")
-                        st.rerun()
+                    venda_id_del = int(venda_para_apagar.split("Item ")[1].split(")")[0])
+                    conn = conectar_banco()
+                    cursor = conn.cursor()
+                
+                    # --- MODIFICADO: Buscamos também o codigo_venda para saber a qual grupo financeiro o item pertence ---
+                    cursor.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id = %s", (venda_id_del,))
+                    venda_info = cursor.fetchone()
+                
+                    if venda_info:
+                        p_id, p_qtd, cod_venda = venda_info
+                    
+                        # 1. Devolve a quantidade do item de volta para o estoque
+                        cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (p_qtd, p_id))
+                    
+                        # 2. Remove o item específico da tabela de vendas
+                        cursor.execute("DELETE FROM vendas WHERE id = %s", (venda_id_del,))
+                    
+                        # 3. NOVO: Limpa as parcelas abertas dessa venda no contas a receber
+                        cursor.execute("DELETE FROM contas_receber WHERE venda_codigo = %s", (cod_venda,))
+                    
+                        conn.commit()
+                        conn.close()
+                        st.success("Item cancelado, estoque atualizado e pendências financeiras removidas com sucesso!")
+                    else:
+                        conn.close()
+                        st.error("Erro ao encontrar os dados da venda.")
+                st.rerun()
         
         st.markdown("---")
 
