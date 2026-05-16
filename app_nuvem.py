@@ -1,7 +1,7 @@
 import streamlit as st
 import psycopg2
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 # ==========================================
 # CONFIGURAÇÃO DE MEMÓRIA E BANCO DE DADOS (NUVEM)
