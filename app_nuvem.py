@@ -83,12 +83,13 @@ df_categorias = carregar_dados("SELECT * FROM categorias ORDER BY nome")
 
 lista_categorias = df_categorias['nome'].tolist() if not df_categorias.empty else ["Geral"]
 
-aba_estoque, aba_clientes, aba_vendas, aba_historico, aba_categorias = st.tabs([
+aba_estoque, aba_clientes, aba_vendas, aba_historico, aba_categorias, aba_financeiro = st.tabs([
     "📦 Estoque de Produtos", 
     "👥 Clientes", 
     "🛒 Registrar Venda (PDV)", 
     "📜 Histórico Geral",
-    "🏷️ Categorias"
+    "🏷️ Categorias",
+    "💰 Financeiro"
 ])
 
 # ==========================================
