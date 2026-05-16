@@ -616,7 +616,7 @@ with aba_historico:
                     else:
                         conn.close()
 
-       with col_opcoes2:
+        with col_opcoes2:
             with st.expander("❌ Cancelar / Estornar Item", expanded=False):
                 with st.form("form_del_venda"):
                     opcoes_venda_del = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
@@ -645,7 +645,7 @@ with aba_historico:
         
         st.markdown("---")
 
-# --- NOVO BLOCO: RECIBO VIA WHATSAPP ---
+        # --- NOVO BLOCO: RECIBO VIA WHATSAPP ---
         st.subheader("📲 Enviar Recibo via WhatsApp")
         opcoes_recibo = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
         venda_recibo_sel = st.selectbox("Selecione a venda para gerar o recibo", options=opcoes_recibo, key="sel_recibo")
@@ -704,7 +704,7 @@ with aba_historico:
                     
         st.markdown("---")
         # --- FIM DO BLOCO WPP ---
-       
+        
         df_todas_vendas['Data_Filtro'] = pd.to_datetime(df_todas_vendas['Data'], dayfirst=True, errors='coerce').dt.date
         
         data_min = df_todas_vendas['Data_Filtro'].min() if not pd.isna(df_todas_vendas['Data_Filtro'].min()) else date.today()
