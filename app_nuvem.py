@@ -341,26 +341,6 @@ with aba_clientes:
 # ==========================================
 with aba_vendas:
     st.header("🛒 Registrar Venda (PDV)")
-    
-    # --- NOVO: EXIBIR RECIBO DO WHATSAPP SE A VENDA FOI FINALIZADA ---
-    if 'zap_link' in st.session_state:
-        st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} finalizada com sucesso! Total: R$ {st.session_state['zap_total']:.2f}")
-        
-        with st.container(border=True):
-            st.subheader("📲 Enviar Recibo via WhatsApp")
-            st.text_area("Pré-visualização da Mensagem:", value=st.session_state['zap_msg'], height=220, disabled=True, key="msg_pdv_imediata")
-            
-            col_zap1, col_zap2 = st.columns([2, 1])
-            col_zap1.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
-            
-            if col_zap2.button(" Nova Venda", use_container_width=True):
-                del st.session_state['zap_link']
-                del st.session_state['zap_msg']
-                del st.session_state['zap_codigo']
-                del st.session_state['zap_total']
-                st.rerun()
-        st.markdown("---")
-    # --- FIM DO BLOCO DE EXIBIÇÃO ---
 
     if df_produtos.empty or df_clientes.empty:
         st.warning("É necessário ter clientes e produtos cadastrados.")
@@ -404,6 +384,13 @@ with aba_vendas:
                 elif valor_com_desconto < 0:
                     st.error("O desconto não pode ser maior que o valor do produto!")
                 else:
+                    # --- MÁGICA: Se havia um recibo antigo, apaga ele ao iniciar nova venda ---
+                    if 'zap_link' in st.session_state:
+                        del st.session_state['zap_link']
+                        del st.session_state['zap_msg']
+                        del st.session_state['zap_codigo']
+                        del st.session_state['zap_total']
+                        
                     st.session_state['carrinho'].append({
                         'produto_id': prod_id,
                         'Produto': produto_selecionado,
@@ -462,7 +449,6 @@ with aba_vendas:
                         
                         cursor.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id = %s", (item['quantidade'], item['produto_id']))
                     
-                    # --- NOVO: BUSCAR TELEFONE E MONTAR TEXTO COMPLETO DO CARRINHO ANTES DE LIMPAR ---
                     cursor.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id,))
                     dados_cli = cursor.fetchone()
                     tel_cliente = dados_cli[0] if dados_cli else None
@@ -470,7 +456,6 @@ with aba_vendas:
                     conn.commit()
                     conn.close()
                     
-                    # Montar o detalhamento de itens para o texto do WhatsApp
                     msg = f"Olá, {cliente_selecionado}! 🌸\n\n"
                     msg += f"Aqui está o recibo da sua compra realizada em *{data_venda_formatada}*:\n"
                     msg += f"🧾 *Venda Nº {novo_codigo_venda}*\n\n"
@@ -486,7 +471,6 @@ with aba_vendas:
                     msg += f"💳 *Forma de Pagto:* {forma_pag} ({prazo})\n\n"
                     msg += "Muito obrigada pela preferência e confiança! ✨"
                     
-                    # Tratar o link com o número de celular
                     import urllib.parse
                     msg_url = urllib.parse.quote(msg)
                     if tel_cliente:
@@ -497,13 +481,11 @@ with aba_vendas:
                     else:
                         link_wpp = f"https://wa.me/?text={msg_url}"
                     
-                    # Guardar na memória para exibir após o rerun
                     st.session_state['zap_link'] = link_wpp
                     st.session_state['zap_msg'] = msg
                     st.session_state['zap_codigo'] = novo_codigo_venda
                     st.session_state['zap_total'] = total_venda
                     
-                    # Reseta o carrinho e recarrega para mostrar o recibo estruturado lá em cima
                     st.session_state['carrinho'] = []
                     st.rerun()
                     
@@ -511,8 +493,15 @@ with aba_vendas:
                     st.session_state['carrinho'] = []
                     st.rerun()
         else:
-            st.info("O carrinho está vazio. Adicione produtos acima para continuar e abrir as opções de pagamento.")
-
+            # --- MÁGICA: Onde seria apenas o aviso de carrinho vazio, exibimos o botão do Zap! ---
+            if 'zap_link' in st.session_state:
+                with st.container(border=True):
+                    st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada! Total: R$ {st.session_state['zap_total']:.2f}")
+                    st.markdown("👇 **Clique abaixo para enviar o recibo para a cliente:**")
+                    st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
+                    st.info("💡 Para iniciar uma nova venda, basta adicionar um produto lá em cima!")
+            else:
+                st.info("O carrinho está vazio. Adicione produtos acima para continuar e abrir as opções de pagamento.")
 
 # ==========================================
 # ABA 4: HISTÓRICO GERAL DE VENDAS E EDIÇÃO
