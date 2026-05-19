@@ -163,7 +163,7 @@ else:
         st.rerun()
 
     # ==========================================
-    # MÓDULO 1: ANÁLISES (Dashboard e Histórico RESTAURADO)
+    # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
     # ==========================================
     if modulo == "📊 Análises":
         st.title("📊 Gestão e Performance")
@@ -218,9 +218,6 @@ else:
                 else: st.warning("Sem dados no período")
             else: st.info("Faça vendas para ver gráficos.")
 
-        # ==========================================
-        # HISTÓRICO GERAL 100% RESTAURADO
-        # ==========================================
         with aba_hist:
             st.header("📜 Histórico Geral e Faturamento")
             
@@ -404,14 +401,91 @@ else:
                 if st.button("Remover", type="primary"):
                     conn = conectar_banco(); conn.cursor().execute("DELETE FROM categorias WHERE nome=%s AND empresa_id=%s",(cat_del, emp_id)); conn.commit(); conn.close(); st.rerun()
 
+        # ==========================================
+        # CLIENTES 100% RESTAURADO
+        # ==========================================
         with tab_cli:
-            with st.expander("➕ Novo Cliente"):
-                with st.form("f_cli", clear_on_submit=True):
-                    n_c = st.text_input("Nome")
-                    t_c = st.text_input("Telefone")
-                    if st.form_submit_button("Salvar"):
-                        conn = conectar_banco(); conn.cursor().execute("INSERT INTO clientes (nome, telefone, empresa_id) VALUES (%s,%s,%s)",(n_c, t_c, emp_id)); conn.commit(); conn.close(); st.rerun()
-            st.dataframe(carregar_dados("SELECT nome, telefone FROM clientes WHERE empresa_id=%s ORDER BY nome",(emp_id,)), use_container_width=True)
+            st.header("Gerenciamento de Clientes")
+            
+            # --- WIDGET ANIVERSARIANTES DO DIA ---
+            hoje_str = date.today().strftime("%d/%m")
+            df_aniv = carregar_dados("SELECT nome, telefone FROM clientes WHERE empresa_id=%s AND data_nascimento=%s", (emp_id, hoje_str))
+            if not df_aniv.empty:
+                st.success(f"🎉 Temos {len(df_aniv)} aniversariante(s) hoje ({hoje_str})!")
+                st.dataframe(df_aniv, use_container_width=True, hide_index=True)
+            else:
+                st.info(f"Nenhum aniversariante hoje ({hoje_str}).")
+            
+            st.markdown("---")
+            
+            sub_add_cli, sub_edit_cli, sub_del_cli, sub_hist_cli = st.tabs(["➕ Cadastrar", "✏️ Editar", "❌ Excluir", "🛍️ Histórico de Compras"])
+            
+            with sub_add_cli:
+                with st.form("form_cliente", clear_on_submit=True):
+                    col1, col2, col3 = st.columns(3)
+                    nome_cli = col1.text_input("Nome do Cliente")
+                    nasc_cli = col2.text_input("Dia de Aniversário (DD/MM)", placeholder="Ex: 25/12", max_chars=5)
+                    tel_cli = col3.text_input("Telefone")
+                    if st.form_submit_button("Cadastrar Cliente") and nome_cli:
+                        conn = conectar_banco()
+                        conn.cursor().execute("INSERT INTO clientes (nome, data_nascimento, telefone, empresa_id) VALUES (%s, %s, %s, %s)", (nome_cli, nasc_cli, tel_cli, emp_id))
+                        conn.commit()
+                        conn.close()
+                        st.success("Cliente cadastrado!")
+                        st.rerun()
+
+            df_clientes = carregar_dados("SELECT * FROM clientes WHERE empresa_id = %s ORDER BY nome", (emp_id,))
+            
+            with sub_edit_cli:
+                if not df_clientes.empty:
+                    clientes_dict = dict(zip(df_clientes['nome'], df_clientes['id']))
+                    cli_selecionado = st.selectbox("Selecione o Cliente", options=list(clientes_dict.keys()), key="sel_edit_cli")
+                    cli_id = clientes_dict[cli_selecionado]
+                    cli_atual = df_clientes[df_clientes['id'] == cli_id].iloc[0]
+                    
+                    with st.form("form_edit_cliente"):
+                        col1, col2, col3 = st.columns(3)
+                        novo_nome_cli = col1.text_input("Nome", value=cli_atual['nome'])
+                        novo_nasc_cli = col2.text_input("Aniversário", value=cli_atual['data_nascimento'], max_chars=5)
+                        novo_tel_cli = col3.text_input("Telefone", value=cli_atual['telefone'])
+                        if st.form_submit_button("Salvar Alterações"):
+                            conn = conectar_banco()
+                            conn.cursor().execute("UPDATE clientes SET nome=%s, data_nascimento=%s, telefone=%s WHERE id=%s AND empresa_id=%s", (novo_nome_cli, novo_nasc_cli, novo_tel_cli, cli_id, emp_id))
+                            conn.commit()
+                            conn.close()
+                            st.success("Atualizado com sucesso!")
+                            st.rerun()
+
+            with sub_del_cli:
+                if not df_clientes.empty:
+                    clientes_dict = dict(zip(df_clientes['nome'], df_clientes['id']))
+                    cli_del_selecionado = st.selectbox("Selecione para excluir", options=list(clientes_dict.keys()), key="sel_del_cli")
+                    with st.form("form_del_cliente"):
+                        if st.form_submit_button("Excluir Cliente", type="primary"):
+                            conn = conectar_banco()
+                            conn.cursor().execute("DELETE FROM clientes WHERE id=%s AND empresa_id=%s", (clientes_dict[cli_del_selecionado], emp_id))
+                            conn.commit()
+                            conn.close()
+                            st.success("Excluído com sucesso!")
+                            st.rerun()
+
+            with sub_hist_cli:
+                if not df_clientes.empty:
+                    clientes_dict_hist = dict(zip(df_clientes['nome'], df_clientes['id']))
+                    cli_hist_selecionado = st.selectbox("Selecione o Cliente", options=list(clientes_dict_hist.keys()), key="sel_hist_cli")
+                    df_h = carregar_dados("""
+                        SELECT v.codigo_venda AS "Nº Venda", p.nome AS "Produto", v.quantidade AS "Qtd", v.valor_total AS "Total (R$)", v.data_venda AS "Data"
+                        FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.cliente_id = %s AND v.empresa_id = %s ORDER BY v.id DESC
+                    """, (clientes_dict_hist[cli_hist_selecionado], emp_id))
+                    if not df_h.empty:
+                        st.dataframe(df_h, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Nenhuma compra registrada para este cliente ainda.")
+
+            if not df_clientes.empty:
+                st.markdown("---")
+                st.subheader("Lista de Clientes Cadastrados")
+                st.dataframe(df_clientes.drop(columns=['empresa_id']), use_container_width=True, hide_index=True)
 
         with tab_for:
             st.subheader("Gestão de Fornecedores")
@@ -481,7 +555,6 @@ else:
                         
                         conn.commit(); conn.close()
                         
-                        # PREPARANDO O RECIBO DO ZAP IMEDIATO
                         msg = f"Olá, {cliente_pdv}! 🌸\n\nResumo da sua compra (*{data_v}*):\n🧾 *Venda Nº {novo_cod}*\n"
                         msg += f"💰 *Total:* R$ {total_pdv:.2f}\n✅ Quitado à vista.\nMuito obrigada pela preferência! ✨"
                         
@@ -505,7 +578,6 @@ else:
                 
             else: st.warning("Cadastre clientes e produtos primeiro.")
             
-            # MOSTRAR LINK DO WHATSAPP DA ÚLTIMA VENDA
             if 'zap_link' in st.session_state:
                 st.markdown("---")
                 st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada! Total: R$ {st.session_state['zap_total']:.2f}")
