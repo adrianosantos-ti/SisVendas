@@ -1,6 +1,8 @@
 import streamlit as st
+import streamlit as st
 import psycopg2
 import pandas as pd
+import plotly.express as px
 from datetime import datetime, date, timedelta
 
 # ==========================================
@@ -192,7 +194,9 @@ else:
 
     lista_categorias = df_categorias['nome'].tolist() if not df_categorias.empty else ["Geral"]
 
-    aba_estoque, aba_clientes, aba_vendas, aba_historico, aba_categorias, aba_financeiro = st.tabs([
+    # --- LISTA DE ABAS ATUALIZADA (DASHBOARD PRIMEIRO) ---
+    aba_dashboard, aba_estoque, aba_clientes, aba_vendas, aba_historico, aba_categorias, aba_financeiro = st.tabs([
+        "📊 Dashboard",
         "📦 Estoque de Produtos", 
         "👥 Clientes", 
         "🛒 Registrar Venda (PDV)", 
@@ -200,6 +204,76 @@ else:
         "🏷️ Categorias",
         "💰 Financeiro"
     ])
+
+    # ==========================================
+    # ABA 0: DASHBOARD E MÉTRICAS
+    # ==========================================
+    with aba_dashboard:
+        st.header("📊 Painel de Desempenho")
+        
+        query_dash = """
+            SELECT v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria 
+            FROM vendas v 
+            JOIN produtos p ON v.produto_id = p.id 
+            WHERE v.empresa_id = %s
+        """
+        df_dash = carregar_dados(query_dash, (emp_id,))
+        
+        if not df_dash.empty:
+            df_dash['Data_Obj'] = pd.to_datetime(df_dash['data_venda'], format='%d/%m/%Y', errors='coerce')
+            df_dash = df_dash.dropna(subset=['Data_Obj'])
+            df_dash = df_dash.sort_values('Data_Obj')
+            
+            # Métricas Globais
+            faturamento_total = df_dash['valor_total'].sum()
+            total_vendas = len(df_dash)
+            ticket_medio = faturamento_total / total_vendas if total_vendas > 0 else 0
+            
+            col_d1, col_d2, col_d3 = st.columns(3)
+            col_d1.metric("💰 Faturamento Total", f"R$ {faturamento_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            col_d2.metric("🛍️ Total de Vendas (Itens)", f"{total_vendas}")
+            col_d3.metric("🎯 Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            
+            st.markdown("---")
+            
+            # Gráfico 1: Curva de Faturamento por Dia
+            st.subheader("📈 Evolução de Faturamento Diário")
+            df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
+            fig_fat = px.line(df_fat_dia, x='Data_Obj', y='valor_total', markers=True, 
+                              labels={'Data_Obj': 'Data', 'valor_total': 'Faturamento (R$)'},
+                              template='plotly_white', line_shape='spline')
+            fig_fat.update_traces(line_color='#1f77b4', line_width=3)
+            st.plotly_chart(fig_fat, use_container_width=True)
+            
+            st.markdown("---")
+            
+            col_graf1, col_graf2 = st.columns(2)
+            
+            # Gráfico 2: Top 5 Produtos Mais Vendidos
+            with col_graf1:
+                st.subheader("🏆 Top 5 Produtos")
+                df_top_prod = df_dash.groupby('produto')['quantidade'].sum().reset_index()
+                df_top_prod = df_top_prod.sort_values('quantidade', ascending=False).head(5)
+                # Ordenar invertido para o gráfico de barras horizontais ficar com o maior no topo
+                df_top_prod = df_top_prod.sort_values('quantidade', ascending=True) 
+                
+                fig_top = px.bar(df_top_prod, x='quantidade', y='produto', orientation='h',
+                                 labels={'quantidade': 'Unidades Vendidas', 'produto': 'Produto'},
+                                 template='plotly_white', color='quantidade', color_continuous_scale='Blues')
+                fig_top.update_layout(coloraxis_showscale=False)
+                st.plotly_chart(fig_top, use_container_width=True)
+                
+            # Gráfico 3: Vendas por Categoria (Pizza)
+            with col_graf2:
+                st.subheader("🍕 Vendas por Categoria")
+                df_cat = df_dash.groupby('categoria')['valor_total'].sum().reset_index()
+                fig_cat = px.pie(df_cat, values='valor_total', names='categoria', hole=0.4,
+                                 template='plotly_white')
+                fig_cat.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_cat, use_container_width=True)
+                
+        else:
+            st.info("📊 Não há dados de vendas suficientes para gerar os gráficos. Registre suas primeiras vendas para acompanhar seu desempenho!")
 
     # ABA: CATEGORIAS
     with aba_categorias:
@@ -303,14 +377,13 @@ else:
             st.subheader("Tabela de Estoque Atual")
             st.dataframe(df_produtos.drop(columns=['empresa_id']), use_container_width=True, hide_index=True)
             
-            # --- CÓDIGO RESTAURADO: MÉTRICAS DE ESTOQUE ---
             total_itens = int(df_produtos['quantidade'].sum())
             valor_total_estoque = float((df_produtos['quantidade'] * df_produtos['valor']).sum())
             
             st.markdown("---")
             col_m1, col_m2 = st.columns(2)
             col_m1.metric("📦 Quantidade Total (Unidades)", f"{total_itens}")
-            col_m2.metric("💰 Valor Total Investido no Estoque", f"R$ {valor_total_estoque:.2f}")
+            col_m2.metric("💰 Valor Total Investido no Estoque", f"R$ {valor_total_estoque:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
         else:
             st.info("Estoque vazio.")
 
@@ -669,8 +742,8 @@ else:
                 
                 st.markdown("### 📊 Resumo do Período")
                 col_res1, col_res2, col_res3, col_res4 = st.columns(4)
-                col_res1.metric("💰 Faturamento Total", f"R$ {df_filtrado['Total (R$)'].sum():.2f}")
-                col_res2.metric("⏳ A Receber", f"R$ {df_filtrado['Restante (R$)'].sum():.2f}")
+                col_res1.metric("💰 Faturamento Total", f"R$ {df_filtrado['Total (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col_res2.metric("⏳ A Receber", f"R$ {df_filtrado['Restante (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                 col_res3.metric("🛒 Total de Vendas", f"{df_filtrado['Nº Venda'].nunique()}")
                 col_res4.metric("🧴 Produtos Vendidos", f"{df_filtrado['Qtd'].sum()}")
             else:
@@ -693,18 +766,20 @@ else:
             df_financeiro['Data_Venc_Obj'] = pd.to_datetime(df_financeiro['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
             hoje = date.today()
             
+            # --- MÉTRICAS RESTAURADAS ---
             v_rec = df_financeiro[df_financeiro['Status'] == 'Pago']['Valor (R$)'].sum()
             v_pend = df_financeiro[df_financeiro['Status'] == 'Pendente']['Valor (R$)'].sum()
             mask_atraso = (df_financeiro['Status'] == 'Pendente') & (df_financeiro['Data_Venc_Obj'] < hoje)
             v_atr = df_financeiro[mask_atraso]['Valor (R$)'].sum()
             
             col_met1, col_met2, col_met3 = st.columns(3)
-            col_met1.metric("✅ Total Já Recebido", f"R$ {v_rec:.2f}")
-            col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(v_pend - v_atr):.2f}")
-            col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atr:.2f}", delta="- Atenção" if v_atr > 0 else "Tudo em dia!", delta_color="inverse")
+            col_met1.metric("✅ Total Já Recebido", f"R$ {v_rec:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(v_pend - v_atr):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atr:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Atenção" if v_atr > 0 else "Tudo em dia!", delta_color="inverse")
             
             st.markdown("---")
             
+            # --- ÁREA DE BAIXA RESTAURADA ---
             df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
             with st.expander("✅ Registrar Recebimento de Parcela", expanded=True):
                 if not df_p.empty:
@@ -728,6 +803,7 @@ else:
             
             st.markdown("---")
             
+            # --- FILTROS DE RADIO RESTAURADOS ---
             st.subheader("📋 Relatório de Parcelas e Boletos")
             filtro_status = st.radio("Filtrar por Status:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True)
             
