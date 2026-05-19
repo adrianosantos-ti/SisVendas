@@ -193,7 +193,6 @@ else:
 
     lista_categorias = df_categorias['nome'].tolist() if not df_categorias.empty else ["Geral"]
 
-    # --- LISTA DE ABAS ATUALIZADA (DASHBOARD PRIMEIRO) ---
     aba_dashboard, aba_estoque, aba_clientes, aba_vendas, aba_historico, aba_categorias, aba_financeiro = st.tabs([
         "📊 Dashboard",
         "📦 Estoque de Produtos", 
@@ -272,7 +271,7 @@ else:
                 fig_fat = px.line(df_fat_dia, x='Data_Obj', y='valor_total', markers=True, 
                                   labels={'Data_Obj': 'Data', 'valor_total': 'Faturamento (R$)'},
                                   template='plotly_white', line_shape='spline')
-                fig_fat.update_traces(line_color='#1f77b4', line_width=3)
+                fig_fat.update_traces(line_color='#0068c9', line_width=3)
                 st.plotly_chart(fig_fat, use_container_width=True)
                 
                 st.markdown("---")
@@ -287,28 +286,31 @@ else:
                     
                     df_top_prod['produto_curto'] = df_top_prod['produto'].apply(lambda x: (str(x)[:22] + '...') if len(str(x)) > 22 else str(x))
                     
-                    # CORREÇÃO: Usamos o nome original ('produto') no eixo Y para não empilhar duplicadas
+                    # CORREÇÃO DE COR: Usando cor vibrante sólida e removendo o "esmaecimento" (fading)
                     fig_top = px.bar(df_top_prod, x='quantidade', y='produto', orientation='h',
                                      labels={'quantidade': 'Qtd', 'produto': ''},
-                                     template='plotly_white', color='quantidade', color_continuous_scale='Blues',
+                                     template='plotly_white',
                                      text='quantidade',
-                                     custom_data=['produto'])
+                                     custom_data=['produto'],
+                                     color_discrete_sequence=['#0068c9']) # Azul vibrante puro!
                     
-                    # CORREÇÃO: Mas mandamos o gráfico exibir apenas a versão encurtada ('produto_curto') visualmente
                     fig_top.update_yaxes(tickmode='array', tickvals=df_top_prod['produto'], ticktext=df_top_prod['produto_curto'])
-                    
                     fig_top.update_traces(hovertemplate="<b>%{customdata[0]}</b><br>Unidades vendidas: %{x}", textposition='outside')
-                    fig_top.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=20, t=30, b=0))
+                    fig_top.update_layout(margin=dict(l=0, r=20, t=30, b=0))
                     
                     st.plotly_chart(fig_top, use_container_width=True)
                     
                 with col_graf2:
                     st.subheader("🍕 Vendas por Categoria")
                     df_cat = df_dash.groupby('categoria')['valor_total'].sum().reset_index()
+                    
+                    # CORREÇÃO DE COR: Usando uma paleta mais viva (Bold)
                     fig_cat = px.pie(df_cat, values='valor_total', names='categoria', hole=0.4,
-                                     template='plotly_white')
+                                     template='plotly_white',
+                                     color_discrete_sequence=px.colors.qualitative.Bold) 
+                                     
                     fig_cat.update_traces(textposition='inside', textinfo='percent+label')
-                    fig_cat.update_layout(margin=dict(l=0, r=0, t=30, b=0))
+                    fig_cat.update_layout(margin=dict(l=0, r=0, t=30, b=0), showlegend=False)
                     st.plotly_chart(fig_cat, use_container_width=True)
             else:
                 st.warning(f"Não há vendas registradas para o período selecionado ({periodo_selecionado}).")
