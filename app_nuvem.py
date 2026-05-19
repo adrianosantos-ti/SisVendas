@@ -300,7 +300,19 @@ else:
                         
         if not df_produtos.empty:
             st.markdown("---")
+            st.subheader("Tabela de Estoque Atual")
             st.dataframe(df_produtos.drop(columns=['empresa_id']), use_container_width=True, hide_index=True)
+            
+            # --- CÓDIGO RESTAURADO: MÉTRICAS DE ESTOQUE ---
+            total_itens = int(df_produtos['quantidade'].sum())
+            valor_total_estoque = float((df_produtos['quantidade'] * df_produtos['valor']).sum())
+            
+            st.markdown("---")
+            col_m1, col_m2 = st.columns(2)
+            col_m1.metric("📦 Quantidade Total (Unidades)", f"{total_itens}")
+            col_m2.metric("💰 Valor Total Investido no Estoque", f"R$ {valor_total_estoque:.2f}")
+        else:
+            st.info("Estoque vazio.")
 
     # ABA: CLIENTES
     with aba_clientes:
@@ -492,7 +504,7 @@ else:
                         st.session_state['carrinho'] = []
                         st.rerun()
 
-    # ABA: HISTÓRICO GERAL DE VENDAS E EDIÇÃO RESTAURADA
+    # ABA: HISTÓRICO GERAL DE VENDAS E EDIÇÃO
     with aba_historico:
         st.header("📜 Histórico Geral e Faturamento")
         
@@ -667,7 +679,7 @@ else:
         else:
             st.info("Nenhuma venda registrada no sistema até o momento.")
 
-    # ABA: CONTROLE FINANCEIRO (CONTAS A RECEBER) RESTAURADA
+    # ABA: CONTROLE FINANCEIRO (CONTAS A RECEBER)
     with aba_financeiro:
         st.header("💰 Controle Financeiro de Parcelas")
         df_financeiro = carregar_dados("""
@@ -681,7 +693,6 @@ else:
             df_financeiro['Data_Venc_Obj'] = pd.to_datetime(df_financeiro['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
             hoje = date.today()
             
-            # --- MÉTRICAS RESTAURADAS ---
             v_rec = df_financeiro[df_financeiro['Status'] == 'Pago']['Valor (R$)'].sum()
             v_pend = df_financeiro[df_financeiro['Status'] == 'Pendente']['Valor (R$)'].sum()
             mask_atraso = (df_financeiro['Status'] == 'Pendente') & (df_financeiro['Data_Venc_Obj'] < hoje)
@@ -694,7 +705,6 @@ else:
             
             st.markdown("---")
             
-            # --- ÁREA DE BAIXA RESTAURADA ---
             df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
             with st.expander("✅ Registrar Recebimento de Parcela", expanded=True):
                 if not df_p.empty:
@@ -718,7 +728,6 @@ else:
             
             st.markdown("---")
             
-            # --- FILTROS DE RADIO RESTAURADOS ---
             st.subheader("📋 Relatório de Parcelas e Boletos")
             filtro_status = st.radio("Filtrar por Status:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True)
             
