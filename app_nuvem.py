@@ -125,7 +125,6 @@ elif st.session_state['perfil'] == 'master':
             
         st.markdown("---")
         st.subheader("Todos os Usuários do Sistema")
-        # Removido o filtro que ocultava o administrador mestre do relatório
         df_usuarios = carregar_dados("""
             SELECT u.id AS "ID", u.nome AS "Nome", u.login AS "Login", e.nome AS "Empresa", u.perfil AS "Perfil" 
             FROM usuarios u JOIN empresas e ON u.empresa_id = e.id ORDER BY e.nome, u.nome
@@ -164,7 +163,6 @@ else:
     
     st.sidebar.markdown(f"👤 **Operador:** {st.session_state['usuario_nome']}")
     
-    # Opção para o próprio funcionário alterar sua senha na barra lateral
     with st.sidebar.expander("🔒 Alterar Minha Senha"):
         with st.form("form_alterar_senha_propria", clear_on_submit=True):
             senha_atual = st.text_input("Senha Atual", type="password")
@@ -188,7 +186,6 @@ else:
         
     st.title("📦 Sistema de Gestão Comercial")
     
-    # Carregando dados filtrados exclusivamente pela empresa logada
     df_produtos = carregar_dados("SELECT * FROM produtos WHERE empresa_id = %s ORDER BY nome", (emp_id,))
     df_clientes = carregar_dados("SELECT * FROM clientes WHERE empresa_id = %s ORDER BY nome", (emp_id,))
     df_categorias = carregar_dados("SELECT * FROM categorias WHERE empresa_id = %s ORDER BY nome", (emp_id,))
@@ -495,40 +492,182 @@ else:
                         st.session_state['carrinho'] = []
                         st.rerun()
 
-    # ABA: HISTÓRICO GERAL DE VENDAS E EDIÇÃO
+    # ABA: HISTÓRICO GERAL DE VENDAS E EDIÇÃO RESTAURADA
     with aba_historico:
-        st.header("📜 Histórico Geral")
-        df_todas_vendas = carregar_dados("""
-            SELECT v.id AS "ID Item", v.codigo_venda AS "Nº Venda", c.nome AS "Cliente", p.nome AS "Produto", v.quantidade AS "Qtd", v.valor_total AS "Total (R$)", v.data_venda AS "Data"
-            FROM vendas v JOIN clientes c ON v.cliente_id = c.id JOIN produtos p ON v.produto_id = p.id WHERE v.empresa_id = %s ORDER BY v.codigo_venda DESC
-        """, (emp_id,))
+        st.header("📜 Histórico Geral e Faturamento")
+        
+        query_todas_vendas = """
+            SELECT v.id AS "ID Item", v.codigo_venda AS "Nº Venda", COALESCE(c.nome, 'Cliente Excluído') AS "Cliente", 
+                   COALESCE(p.nome, 'Produto Excluído') AS "Produto", v.quantidade AS "Qtd",
+                   v.valor_unitario AS "Preço Tabela", v.desconto AS "Desconto Unit",
+                   v.valor_total AS "Total (R$)", v.valor_entrada AS "Entrada (R$)", v.valor_restante AS "Restante (R$)",
+                   v.data_venda AS "Data", v.forma_pagamento AS "Pagamento", v.prazo AS "Prazo" 
+            FROM vendas v 
+            LEFT JOIN clientes c ON v.cliente_id = c.id 
+            LEFT JOIN produtos p ON v.produto_id = p.id 
+            WHERE v.empresa_id = %s
+            ORDER BY v.codigo_venda DESC, v.id DESC
+        """
+        df_todas_vendas = carregar_dados(query_todas_vendas, (emp_id,))
         
         if not df_todas_vendas.empty:
-            with st.expander("❌ Cancelar / Estornar Item", expanded=False):
-                with st.form("form_del_venda"):
-                    opcoes_venda_del = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
-                    venda_para_apagar = st.selectbox("Selecione o item lançado por engano", options=opcoes_venda_del)
+            col_opcoes1, col_opcoes2 = st.columns(2)
+            
+            with col_opcoes1:
+                with st.expander("✏️ Editar Item de Venda (Valores e Datas)", expanded=False):
+                    opcoes_venda_edit = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+                    venda_edit_selecionada = st.selectbox("Selecione a venda para editar", options=opcoes_venda_edit, key="sel_edit_venda")
                     
-                    if st.form_submit_button("🚨 Confirmar Cancelamento", type="primary"):
-                        venda_id_del = int(venda_para_apagar.split("Item ")[1].split(")")[0])
+                    if venda_edit_selecionada:
+                        venda_id_edit = int(venda_edit_selecionada.split("Item ")[1].split(")")[0])
                         conn = conectar_banco()
                         cursor = conn.cursor()
-                        cursor.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
-                        v_info = cursor.fetchone()
+                        cursor.execute("SELECT data_venda, forma_pagamento, prazo, valor_unitario, desconto, valor_entrada, quantidade FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_edit, emp_id))
+                        dados_v_edit = cursor.fetchone()
                         
-                        if v_info:
-                            p_id, p_qtd, cod_venda = v_info
-                            # Correção do termo fixo 'quantity' para 'quantidade'
-                            cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
-                            cursor.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
-                            cursor.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
-                            conn.commit()
-                            st.success("Item e pendências financeiras removidos!")
-                        conn.close()
-                        st.rerun()
-            st.dataframe(df_todas_vendas, use_container_width=True, hide_index=True)
+                        if dados_v_edit:
+                            v_data_str, v_pag, v_prazo, v_tabela, v_desc, v_ent, v_qtd = dados_v_edit
+                            
+                            try:
+                                v_data_obj = datetime.strptime(v_data_str, "%d/%m/%Y").date()
+                            except:
+                                v_data_obj = date.today()
+                                
+                            with st.form("form_update_venda"):
+                                c1, c2, c3 = st.columns(3)
+                                nova_data = c1.date_input("Data da Venda", value=v_data_obj, format="DD/MM/YYYY")
+                                
+                                lista_pag = ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"]
+                                idx_pag = lista_pag.index(v_pag) if v_pag in lista_pag else 0
+                                novo_pag = c2.selectbox("Pagamento", lista_pag, index=idx_pag)
+                                
+                                lista_prazo = ["À vista", "30 dias", "60 dias", "3x sem juros", "A Combinar"]
+                                idx_prazo = lista_prazo.index(v_prazo) if v_prazo in lista_prazo else 0
+                                novo_prazo = c3.selectbox("Prazo", lista_prazo, index=idx_prazo)
+                                
+                                st.caption(f"Quantidade vendida nesta linha: {v_qtd}")
+                                
+                                c4, c5, c6 = st.columns(3)
+                                novo_tabela = c4.number_input("Preço Tabela (R$)", min_value=0.0, value=float(v_tabela), step=1.0, format="%.2f")
+                                novo_desc = c5.number_input("Desconto Unit. (R$)", min_value=0.0, value=float(v_desc), step=1.0, format="%.2f")
+                                nova_entrada = c6.number_input("Entrada Total (R$)", min_value=0.0, value=float(v_ent), step=10.0, format="%.2f")
+                                
+                                if st.form_submit_button("💾 Salvar Alterações"):
+                                    novo_total = (novo_tabela - novo_desc) * v_qtd
+                                    novo_restante = novo_total - nova_entrada
+                                    
+                                    cursor.execute("UPDATE vendas SET data_venda=%s, forma_pagamento=%s, prazo=%s, valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s, valor_restante=%s WHERE id=%s AND empresa_id=%s", 
+                                                 (nova_data.strftime("%d/%m/%Y"), novo_pag, novo_prazo, novo_tabela, novo_desc, novo_total, nova_entrada, novo_restante, venda_id_edit, emp_id))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success("Item atualizado com sucesso!")
+                                    st.rerun()
+                        else:
+                            conn.close()
 
-    # ABA: CONTROLE FINANCEIRO (CONTAS A RECEBER)
+            with col_opcoes2:
+                with st.expander("❌ Cancelar / Estornar Item", expanded=False):
+                    with st.form("form_del_venda"):
+                        opcoes_venda_del = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+                        venda_para_apagar = st.selectbox("Selecione o item lançado por engano", options=opcoes_venda_del, key="sel_del_venda")
+                        
+                        if st.form_submit_button("🚨 Confirmar Cancelamento", type="primary"):
+                            venda_id_del = int(venda_para_apagar.split("Item ")[1].split(")")[0])
+                            conn = conectar_banco()
+                            cursor = conn.cursor()
+                            
+                            cursor.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
+                            venda_info = cursor.fetchone()
+                            
+                            if venda_info:
+                                p_id, p_qtd, cod_venda = venda_info
+                                cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
+                                cursor.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
+                                cursor.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
+                                conn.commit()
+                                conn.close()
+                                st.success("Item cancelado, estoque atualizado e pendências removidas!")
+                            else:
+                                conn.close()
+                                st.error("Erro ao encontrar os dados da venda.")
+                            st.rerun()
+            
+            st.markdown("---")
+
+            # --- RECIBO VIA WHATSAPP NO HISTÓRICO ---
+            st.subheader("📲 Enviar Recibo via WhatsApp")
+            opcoes_recibo = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+            venda_recibo_sel = st.selectbox("Selecione a venda para gerar o recibo", options=opcoes_recibo, key="sel_recibo")
+
+            if venda_recibo_sel:
+                venda_id_recibo = int(venda_recibo_sel.split("Item ")[1].split(")")[0])
+                
+                conn = conectar_banco()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, v.valor_total, v.valor_entrada, v.valor_restante, v.forma_pagamento
+                    FROM vendas v JOIN clientes c ON v.cliente_id = c.id JOIN produtos p ON v.produto_id = p.id
+                    WHERE v.id = %s AND v.empresa_id = %s
+                """, (venda_id_recibo, emp_id))
+                dados_recibo = cursor.fetchone()
+                conn.close()
+
+                if dados_recibo:
+                    tel, nome_cli, data_v, nome_prod, qtd, v_total, v_ent, v_rest, forma_pag = dados_recibo
+
+                    msg = f"Olá, {nome_cli}! 🌸\n\nAqui está o resumo da sua compra do dia *{data_v}*:\n\n"
+                    msg += f"🛍️ *Produto:* {qtd}x {nome_prod}\n💰 *Valor Total:* R$ {v_total:.2f}\n"
+                    if v_ent > 0:
+                        msg += f"💸 *Entrada Paga:* R$ {v_ent:.2f}\n⏳ *Restante:* R$ {v_rest:.2f}\n"
+                    msg += f"💳 *Forma de Pagto:* {forma_pag}\n\nMuito obrigada pela preferência! ✨"
+
+                    st.text_area("Pré-visualização da Mensagem:", value=msg, height=200, disabled=True)
+
+                    if tel:
+                        tel_limpo = ''.join(filter(str.isdigit, str(tel)))
+                        if len(tel_limpo) >= 10:
+                            if not tel_limpo.startswith('55'):
+                                tel_limpo = '55' + tel_limpo 
+                            import urllib.parse
+                            link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                            st.link_button("🟢 Abrir no WhatsApp", link_wpp, type="primary")
+                        else:
+                            st.warning("⚠️ O telefone do cliente parece incompleto.")
+                    else:
+                        st.warning("⚠️ Este cliente não possui telefone cadastrado.")
+                        
+            st.markdown("---")
+            
+            # --- FILTRO POR DATA E TABELA ---
+            df_todas_vendas['Data_Filtro'] = pd.to_datetime(df_todas_vendas['Data'], dayfirst=True, errors='coerce').dt.date
+            data_min = df_todas_vendas['Data_Filtro'].min() if not pd.isna(df_todas_vendas['Data_Filtro'].min()) else date.today()
+            data_max = df_todas_vendas['Data_Filtro'].max() if not pd.isna(df_todas_vendas['Data_Filtro'].max()) else date.today()
+            
+            st.subheader("🔍 Filtrar por Período")
+            col_data1, col_data2 = st.columns(2)
+            data_inicio = col_data1.date_input("Data Inicial", value=data_min, format="DD/MM/YYYY")
+            data_fim = col_data2.date_input("Data Final", value=data_max, format="DD/MM/YYYY")
+            
+            mask = (df_todas_vendas['Data_Filtro'] >= data_inicio) & (df_todas_vendas['Data_Filtro'] <= data_fim)
+            df_filtrado = df_todas_vendas.loc[mask].drop(columns=['Data_Filtro'])
+            
+            if not df_filtrado.empty:
+                colunas_exibicao = ['Nº Venda', 'Cliente', 'Produto', 'Qtd', 'Preço Tabela', 'Desconto Unit', 'Total (R$)', 'Entrada (R$)', 'Restante (R$)', 'Data', 'Pagamento', 'Prazo']
+                st.dataframe(df_filtrado[colunas_exibicao], use_container_width=True, hide_index=True)
+                
+                st.markdown("### 📊 Resumo do Período")
+                col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+                col_res1.metric("💰 Faturamento Total", f"R$ {df_filtrado['Total (R$)'].sum():.2f}")
+                col_res2.metric("⏳ A Receber", f"R$ {df_filtrado['Restante (R$)'].sum():.2f}")
+                col_res3.metric("🛒 Total de Vendas", f"{df_filtrado['Nº Venda'].nunique()}")
+                col_res4.metric("🧴 Produtos Vendidos", f"{df_filtrado['Qtd'].sum()}")
+            else:
+                st.warning("Nenhuma venda encontrada para este período.")
+                
+        else:
+            st.info("Nenhuma venda registrada no sistema até o momento.")
+
+    # ABA: CONTROLE FINANCEIRO (CONTAS A RECEBER) RESTAURADA
     with aba_financeiro:
         st.header("💰 Controle Financeiro de Parcelas")
         df_financeiro = carregar_dados("""
@@ -542,28 +681,55 @@ else:
             df_financeiro['Data_Venc_Obj'] = pd.to_datetime(df_financeiro['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
             hoje = date.today()
             
+            # --- MÉTRICAS RESTAURADAS ---
             v_rec = df_financeiro[df_financeiro['Status'] == 'Pago']['Valor (R$)'].sum()
+            v_pend = df_financeiro[df_financeiro['Status'] == 'Pendente']['Valor (R$)'].sum()
             mask_atraso = (df_financeiro['Status'] == 'Pendente') & (df_financeiro['Data_Venc_Obj'] < hoje)
             v_atr = df_financeiro[mask_atraso]['Valor (R$)'].sum()
             
-            cm1, cm2 = st.columns(2)
-            cm1.metric("✅ Total Recebido", f"R$ {v_rec:.2f}")
-            cm2.metric("🚨 Atrasado (Inadimplência)", f"R$ {v_atr:.2f}")
+            col_met1, col_met2, col_met3 = st.columns(3)
+            col_met1.metric("✅ Total Já Recebido", f"R$ {v_rec:.2f}")
+            col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(v_pend - v_atr):.2f}")
+            col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atr:.2f}", delta="- Atenção" if v_atr > 0 else "Tudo em dia!", delta_color="inverse")
             
+            st.markdown("---")
+            
+            # --- ÁREA DE BAIXA RESTAURADA ---
             df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
-            if not df_p.empty:
-                with st.expander("✅ Registrar Recebimento de Parcela", expanded=True):
+            with st.expander("✅ Registrar Recebimento de Parcela", expanded=True):
+                if not df_p.empty:
                     with st.form("form_baixa"):
-                        op_b = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f}", axis=1).tolist()
+                        op_b = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
                         p_sel = st.selectbox("Selecione a parcela paga:", options=op_b)
-                        idx_b = df_p['ID Parcela'].tolist()[op_b.index(p_sel)]
+                        
+                        col_b1, col_b2 = st.columns([1, 2])
+                        data_pag_real = col_b1.date_input("Data do Pagamento", value=hoje, format="DD/MM/YYYY")
                         
                         if st.form_submit_button("💰 Confirmar Baixa", type="primary"):
+                            idx_b = df_p['ID Parcela'].tolist()[op_b.index(p_sel)]
                             conn = conectar_banco()
-                            conn.cursor().execute("UPDATE contas_receber SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (hoje.strftime("%d/%m/%Y"), idx_b, emp_id))
+                            conn.cursor().execute("UPDATE contas_receber SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
                             conn.commit()
                             conn.close()
-                            st.success("Registrado!")
+                            st.success("Pagamento registrado com sucesso!")
                             st.rerun()
+                else:
+                    st.success("🎉 Nenhuma parcela pendente! Todos os clientes estão em dia.")
             
-            st.dataframe(df_financeiro.drop(columns=['Data_Venc_Obj', 'ID Parcela']), use_container_width=True, hide_index=True)
+            st.markdown("---")
+            
+            # --- FILTROS DE RADIO RESTAURADOS ---
+            st.subheader("📋 Relatório de Parcelas e Boletos")
+            filtro_status = st.radio("Filtrar por Status:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True)
+            
+            df_view = df_financeiro.copy()
+            if filtro_status == "Pendentes":
+                df_view = df_view[df_view['Status'] == 'Pendente']
+            elif filtro_status == "Pagos":
+                df_view = df_view[df_view['Status'] == 'Pago']
+            elif filtro_status == "Atrasados":
+                df_view = df_view[(df_view['Status'] == 'Pendente') & (df_view['Data_Venc_Obj'] < hoje)]
+                
+            st.dataframe(df_view.drop(columns=['Data_Venc_Obj', 'ID Parcela']), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhuma movimentação financeira registrada ainda. Faça sua primeira venda para alimentar o caixa!")
