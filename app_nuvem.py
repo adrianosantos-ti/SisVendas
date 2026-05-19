@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit as st
 import psycopg2
 import pandas as pd
 import plotly.express as px
@@ -220,57 +219,94 @@ else:
         df_dash = carregar_dados(query_dash, (emp_id,))
         
         if not df_dash.empty:
-            df_dash['Data_Obj'] = pd.to_datetime(df_dash['data_venda'], format='%d/%m/%Y', errors='coerce')
+            df_dash['Data_Obj'] = pd.to_datetime(df_dash['data_venda'], format='%d/%m/%Y', errors='coerce').dt.date
             df_dash = df_dash.dropna(subset=['Data_Obj'])
             df_dash = df_dash.sort_values('Data_Obj')
             
-            # Métricas Globais
-            faturamento_total = df_dash['valor_total'].sum()
-            total_vendas = len(df_dash)
-            ticket_medio = faturamento_total / total_vendas if total_vendas > 0 else 0
+            # --- INTELIGÊNCIA DE FILTRO DE DATAS ---
+            st.markdown("### 🔍 Período de Análise")
+            opcoes_periodo = ["Mês Atual", "Hoje", "Últimos 7 Dias", "Últimos 15 Dias", "Últimos 30 Dias", "Mês Anterior", "Todo o Período", "Personalizado"]
+            periodo_selecionado = st.selectbox("Selecione o filtro:", opcoes_periodo)
             
-            col_d1, col_d2, col_d3 = st.columns(3)
-            col_d1.metric("💰 Faturamento Total", f"R$ {faturamento_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            col_d2.metric("🛍️ Total de Vendas (Itens)", f"{total_vendas}")
-            col_d3.metric("🎯 Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            
+            hoje = date.today()
+            if periodo_selecionado == "Hoje":
+                d_ini, d_fim = hoje, hoje
+            elif periodo_selecionado == "Últimos 7 Dias":
+                d_ini, d_fim = hoje - timedelta(days=7), hoje
+            elif periodo_selecionado == "Últimos 15 Dias":
+                d_ini, d_fim = hoje - timedelta(days=15), hoje
+            elif periodo_selecionado == "Últimos 30 Dias":
+                d_ini, d_fim = hoje - timedelta(days=30), hoje
+            elif periodo_selecionado == "Mês Atual":
+                d_ini, d_fim = hoje.replace(day=1), hoje
+            elif periodo_selecionado == "Mês Anterior":
+                primeiro_dia_mes_atual = hoje.replace(day=1)
+                d_fim = primeiro_dia_mes_atual - timedelta(days=1)
+                d_ini = d_fim.replace(day=1)
+            elif periodo_selecionado == "Personalizado":
+                col_d_ini, col_d_fim = st.columns(2)
+                d_ini = col_d_ini.date_input("Data Inicial (Dashboard)", value=hoje - timedelta(days=30), format="DD/MM/YYYY")
+                d_fim = col_d_fim.date_input("Data Final (Dashboard)", value=hoje, format="DD/MM/YYYY")
+            else:
+                d_ini, d_fim = None, None
+                
+            # Aplica o filtro no dataframe do dashboard
+            if d_ini and d_fim:
+                mask_dash = (df_dash['Data_Obj'] >= d_ini) & (df_dash['Data_Obj'] <= d_fim)
+                df_dash = df_dash.loc[mask_dash]
+                
             st.markdown("---")
             
-            # Gráfico 1: Curva de Faturamento por Dia
-            st.subheader("📈 Evolução de Faturamento Diário")
-            df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
-            fig_fat = px.line(df_fat_dia, x='Data_Obj', y='valor_total', markers=True, 
-                              labels={'Data_Obj': 'Data', 'valor_total': 'Faturamento (R$)'},
-                              template='plotly_white', line_shape='spline')
-            fig_fat.update_traces(line_color='#1f77b4', line_width=3)
-            st.plotly_chart(fig_fat, use_container_width=True)
-            
-            st.markdown("---")
-            
-            col_graf1, col_graf2 = st.columns(2)
-            
-            # Gráfico 2: Top 5 Produtos Mais Vendidos
-            with col_graf1:
-                st.subheader("🏆 Top 5 Produtos")
-                df_top_prod = df_dash.groupby('produto')['quantidade'].sum().reset_index()
-                df_top_prod = df_top_prod.sort_values('quantidade', ascending=False).head(5)
-                # Ordenar invertido para o gráfico de barras horizontais ficar com o maior no topo
-                df_top_prod = df_top_prod.sort_values('quantidade', ascending=True) 
+            if not df_dash.empty:
+                # Métricas Globais Filtras
+                faturamento_total = df_dash['valor_total'].sum()
+                total_vendas = len(df_dash)
+                ticket_medio = faturamento_total / total_vendas if total_vendas > 0 else 0
                 
-                fig_top = px.bar(df_top_prod, x='quantidade', y='produto', orientation='h',
-                                 labels={'quantidade': 'Unidades Vendidas', 'produto': 'Produto'},
-                                 template='plotly_white', color='quantidade', color_continuous_scale='Blues')
-                fig_top.update_layout(coloraxis_showscale=False)
-                st.plotly_chart(fig_top, use_container_width=True)
+                col_d1, col_d2, col_d3 = st.columns(3)
+                col_d1.metric("💰 Faturamento do Período", f"R$ {faturamento_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col_d2.metric("🛍️ Total de Vendas (Itens)", f"{total_vendas}")
+                col_d3.metric("🎯 Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                 
-            # Gráfico 3: Vendas por Categoria (Pizza)
-            with col_graf2:
-                st.subheader("🍕 Vendas por Categoria")
-                df_cat = df_dash.groupby('categoria')['valor_total'].sum().reset_index()
-                fig_cat = px.pie(df_cat, values='valor_total', names='categoria', hole=0.4,
-                                 template='plotly_white')
-                fig_cat.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig_cat, use_container_width=True)
+                st.markdown("---")
+                
+                # Gráfico 1: Curva de Faturamento por Dia
+                st.subheader("📈 Evolução de Faturamento Diário")
+                df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
+                fig_fat = px.line(df_fat_dia, x='Data_Obj', y='valor_total', markers=True, 
+                                  labels={'Data_Obj': 'Data', 'valor_total': 'Faturamento (R$)'},
+                                  template='plotly_white', line_shape='spline')
+                fig_fat.update_traces(line_color='#1f77b4', line_width=3)
+                st.plotly_chart(fig_fat, use_container_width=True)
+                
+                st.markdown("---")
+                
+                col_graf1, col_graf2 = st.columns(2)
+                
+                # Gráfico 2: Top 5 Produtos Mais Vendidos
+                with col_graf1:
+                    st.subheader("🏆 Top Produtos")
+                    df_top_prod = df_dash.groupby('produto')['quantidade'].sum().reset_index()
+                    df_top_prod = df_top_prod.sort_values('quantidade', ascending=False).head(5)
+                    # Ordenar invertido para o gráfico de barras horizontais ficar com o maior no topo
+                    df_top_prod = df_top_prod.sort_values('quantidade', ascending=True) 
+                    
+                    fig_top = px.bar(df_top_prod, x='quantidade', y='produto', orientation='h',
+                                     labels={'quantidade': 'Unidades Vendidas', 'produto': 'Produto'},
+                                     template='plotly_white', color='quantidade', color_continuous_scale='Blues')
+                    fig_top.update_layout(coloraxis_showscale=False)
+                    st.plotly_chart(fig_top, use_container_width=True)
+                    
+                # Gráfico 3: Vendas por Categoria (Pizza)
+                with col_graf2:
+                    st.subheader("🍕 Vendas por Categoria")
+                    df_cat = df_dash.groupby('categoria')['valor_total'].sum().reset_index()
+                    fig_cat = px.pie(df_cat, values='valor_total', names='categoria', hole=0.4,
+                                     template='plotly_white')
+                    fig_cat.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_cat, use_container_width=True)
+            else:
+                st.warning(f"Não há vendas registradas para o período selecionado ({periodo_selecionado}).")
                 
         else:
             st.info("📊 Não há dados de vendas suficientes para gerar os gráficos. Registre suas primeiras vendas para acompanhar seu desempenho!")
@@ -766,7 +802,6 @@ else:
             df_financeiro['Data_Venc_Obj'] = pd.to_datetime(df_financeiro['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
             hoje = date.today()
             
-            # --- MÉTRICAS RESTAURADAS ---
             v_rec = df_financeiro[df_financeiro['Status'] == 'Pago']['Valor (R$)'].sum()
             v_pend = df_financeiro[df_financeiro['Status'] == 'Pendente']['Valor (R$)'].sum()
             mask_atraso = (df_financeiro['Status'] == 'Pendente') & (df_financeiro['Data_Venc_Obj'] < hoje)
@@ -779,7 +814,6 @@ else:
             
             st.markdown("---")
             
-            # --- ÁREA DE BAIXA RESTAURADA ---
             df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
             with st.expander("✅ Registrar Recebimento de Parcela", expanded=True):
                 if not df_p.empty:
@@ -803,7 +837,6 @@ else:
             
             st.markdown("---")
             
-            # --- FILTROS DE RADIO RESTAURADOS ---
             st.subheader("📋 Relatório de Parcelas e Boletos")
             filtro_status = st.radio("Filtrar por Status:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True)
             
