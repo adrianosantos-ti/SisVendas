@@ -76,7 +76,7 @@ elif st.session_state['perfil'] == 'master':
         st.session_state.clear()
         st.rerun()
         
-    aba_cad_empresa, aba_cad_usuario = st.tabs(["🏢 Empresas Cadastradas", "👤 Logins de Funcionários"])
+    aba_cad_empresa, aba_cad_usuario, aba_senhas = st.tabs(["🏢 Empresas Cadastradas", "👤 Logins de Funcionários", "🔒 Gerenciar Senhas"])
     
     with aba_cad_empresa:
         st.subheader("Cadastrar Nova Empresa Parceira")
@@ -124,22 +124,64 @@ elif st.session_state['perfil'] == 'master':
             st.warning("Cadastre ao menos uma empresa antes de criar contas de acesso.")
             
         st.markdown("---")
-        st.subheader("Usuários do Sistema")
+        st.subheader("Todos os Usuários do Sistema")
+        # Removido o filtro que ocultava o administrador mestre do relatório
         df_usuarios = carregar_dados("""
-            SELECT u.id AS "ID", u.nome AS "Nome", u.login AS "Login", e.nome AS "Empresa" 
-            FROM usuarios u JOIN empresas e ON u.empresa_id = e.id WHERE u.perfil != 'master' ORDER BY e.nome
+            SELECT u.id AS "ID", u.nome AS "Nome", u.login AS "Login", e.nome AS "Empresa", u.perfil AS "Perfil" 
+            FROM usuarios u JOIN empresas e ON u.empresa_id = e.id ORDER BY e.nome, u.nome
         """)
         
         if not df_usuarios.empty:
             st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhum funcionário cadastrado ainda.")
+            st.info("Nenhum usuário cadastrado ainda.")
+
+    with aba_senhas:
+        st.subheader("Alterar Senha de Contas")
+        st.caption("Como Administrador Master, você pode redefinir a senha de qualquer conta do sistema.")
+        df_todos_usu = carregar_dados("SELECT id, nome, login FROM usuarios ORDER BY nome")
+        
+        if not df_todos_usu.empty:
+            dict_todos_usu = {f"{row['nome']} ({row['login']})": row['id'] for _, row in df_todos_usu.iterrows()}
+            usu_sel_senha = st.selectbox("Selecione o Usuário para Alterar a Senha", options=list(dict_todos_usu.keys()))
+            id_usu_senha = dict_todos_usu[usu_sel_senha]
+            
+            with st.form("form_master_alterar_senha", clear_on_submit=True):
+                nova_senha_master = st.text_input("Nova Senha", type="password")
+                if st.form_submit_button("Confirmar Alteração de Senha"):
+                    conn = conectar_banco()
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE usuarios SET senha = %s WHERE id = %s", (nova_senha_master, id_usu_senha))
+                    conn.commit()
+                    conn.close()
+                    st.success("Senha atualizada com sucesso!")
+        else:
+            st.info("Nenhum usuário encontrado.")
 
 # --- TELA OPERACIONAL DO ERP (FUNCIONÁRIOS / EMPRESAS) ---
 else:
     emp_id = st.session_state['empresa_id']
     
     st.sidebar.markdown(f"👤 **Operador:** {st.session_state['usuario_nome']}")
+    
+    # Opção para o próprio funcionário alterar sua senha na barra lateral
+    with st.sidebar.expander("🔒 Alterar Minha Senha"):
+        with st.form("form_alterar_senha_propria", clear_on_submit=True):
+            senha_atual = st.text_input("Senha Atual", type="password")
+            nova_senha = st.text_input("Nova Senha", type="password")
+            if st.form_submit_button("Atualizar Senha"):
+                conn = conectar_banco()
+                cursor = conn.cursor()
+                cursor.execute("SELECT senha FROM usuarios WHERE id = %s", (st.session_state['usuario_id'],))
+                senha_banco = cursor.fetchone()[0]
+                if senha_banco == senha_atual:
+                    cursor.execute("UPDATE usuarios SET senha = %s WHERE id = %s", (nova_senha, st.session_state['usuario_id']))
+                    conn.commit()
+                    st.success("Senha alterada com sucesso!")
+                else:
+                    st.error("Senha atual incorreta.")
+                conn.close()
+
     if st.sidebar.button("🚪 Sair do Sistema"):
         st.session_state.clear()
         st.rerun()
@@ -476,6 +518,7 @@ else:
                         
                         if v_info:
                             p_id, p_qtd, cod_venda = v_info
+                            # Correção do termo fixo 'quantity' para 'quantidade'
                             cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
                             cursor.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
                             cursor.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
