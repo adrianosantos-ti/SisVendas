@@ -193,7 +193,6 @@ else:
 
     lista_categorias = df_categorias['nome'].tolist() if not df_categorias.empty else ["Geral"]
 
-    # --- LISTA DE ABAS ATUALIZADA (DASHBOARD PRIMEIRO) ---
     aba_dashboard, aba_estoque, aba_clientes, aba_vendas, aba_historico, aba_categorias, aba_financeiro = st.tabs([
         "📊 Dashboard",
         "📦 Estoque de Produtos", 
@@ -223,7 +222,6 @@ else:
             df_dash = df_dash.dropna(subset=['Data_Obj'])
             df_dash = df_dash.sort_values('Data_Obj')
             
-            # --- INTELIGÊNCIA DE FILTRO DE DATAS ---
             st.markdown("### 🔍 Período de Análise")
             opcoes_periodo = ["Mês Atual", "Hoje", "Últimos 7 Dias", "Últimos 15 Dias", "Últimos 30 Dias", "Mês Anterior", "Todo o Período", "Personalizado"]
             periodo_selecionado = st.selectbox("Selecione o filtro:", opcoes_periodo)
@@ -250,7 +248,6 @@ else:
             else:
                 d_ini, d_fim = None, None
                 
-            # Aplica o filtro no dataframe do dashboard
             if d_ini and d_fim:
                 mask_dash = (df_dash['Data_Obj'] >= d_ini) & (df_dash['Data_Obj'] <= d_fim)
                 df_dash = df_dash.loc[mask_dash]
@@ -258,7 +255,6 @@ else:
             st.markdown("---")
             
             if not df_dash.empty:
-                # Métricas Globais Filtras
                 faturamento_total = df_dash['valor_total'].sum()
                 total_vendas = len(df_dash)
                 ticket_medio = faturamento_total / total_vendas if total_vendas > 0 else 0
@@ -270,7 +266,6 @@ else:
                 
                 st.markdown("---")
                 
-                # Gráfico 1: Curva de Faturamento por Dia
                 st.subheader("📈 Evolução de Faturamento Diário")
                 df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
                 fig_fat = px.line(df_fat_dia, x='Data_Obj', y='valor_total', markers=True, 
@@ -283,27 +278,34 @@ else:
                 
                 col_graf1, col_graf2 = st.columns(2)
                 
-                # Gráfico 2: Top 5 Produtos Mais Vendidos
                 with col_graf1:
                     st.subheader("🏆 Top Produtos")
                     df_top_prod = df_dash.groupby('produto')['quantidade'].sum().reset_index()
                     df_top_prod = df_top_prod.sort_values('quantidade', ascending=False).head(5)
-                    # Ordenar invertido para o gráfico de barras horizontais ficar com o maior no topo
                     df_top_prod = df_top_prod.sort_values('quantidade', ascending=True) 
                     
-                    fig_top = px.bar(df_top_prod, x='quantidade', y='produto', orientation='h',
-                                     labels={'quantidade': 'Unidades Vendidas', 'produto': 'Produto'},
-                                     template='plotly_white', color='quantidade', color_continuous_scale='Blues')
-                    fig_top.update_layout(coloraxis_showscale=False)
+                    # CÓDIGO NOVO: Trunca nomes longos para ficar perfeito no celular
+                    df_top_prod['produto_curto'] = df_top_prod['produto'].apply(lambda x: (str(x)[:22] + '...') if len(str(x)) > 22 else str(x))
+                    
+                    fig_top = px.bar(df_top_prod, x='quantidade', y='produto_curto', orientation='h',
+                                     labels={'quantidade': 'Qtd', 'produto_curto': ''}, # Remove a palavra "produto" do eixo
+                                     template='plotly_white', color='quantidade', color_continuous_scale='Blues',
+                                     text='quantidade', # Adiciona o número direto na barra
+                                     custom_data=['produto']) # Guarda o nome completo para o hover
+                    
+                    # Formata o balãozinho que aparece ao clicar/passar o mouse e posiciona o texto
+                    fig_top.update_traces(hovertemplate="<b>%{customdata[0]}</b><br>Unidades vendidas: %{x}", textposition='outside')
+                    fig_top.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=20, t=30, b=0))
+                    
                     st.plotly_chart(fig_top, use_container_width=True)
                     
-                # Gráfico 3: Vendas por Categoria (Pizza)
                 with col_graf2:
                     st.subheader("🍕 Vendas por Categoria")
                     df_cat = df_dash.groupby('categoria')['valor_total'].sum().reset_index()
                     fig_cat = px.pie(df_cat, values='valor_total', names='categoria', hole=0.4,
                                      template='plotly_white')
                     fig_cat.update_traces(textposition='inside', textinfo='percent+label')
+                    fig_cat.update_layout(margin=dict(l=0, r=0, t=30, b=0)) # Ajusta as margens para o celular
                     st.plotly_chart(fig_cat, use_container_width=True)
             else:
                 st.warning(f"Não há vendas registradas para o período selecionado ({periodo_selecionado}).")
