@@ -129,7 +129,7 @@ else:
     emp_id = st.session_state['empresa_id']
     
     # ---------------------------------------------------------
-    # NOVO MENU LATERAL DE MÓDULOS
+    # MENU LATERAL DE MÓDULOS
     # ---------------------------------------------------------
     st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1063/1063376.png", width=80)
     st.sidebar.title(f"Módulos")
@@ -163,26 +163,31 @@ else:
         st.rerun()
 
     # ==========================================
-    # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
+    # MÓDULO 1: ANÁLISES (Dashboard e Histórico RESTAURADO)
     # ==========================================
     if modulo == "📊 Análises":
         st.title("📊 Gestão e Performance")
         aba_dash, aba_hist = st.tabs(["Painel Visual", "Histórico de Movimentação"])
         
         with aba_dash:
-            # Reutilizando a lógica do Dashboard anterior com filtro de datas
             query_dash = "SELECT v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.empresa_id = %s"
             df_dash = carregar_dados(query_dash, (emp_id,))
             if not df_dash.empty:
                 df_dash['Data_Obj'] = pd.to_datetime(df_dash['data_venda'], format='%d/%m/%Y', errors='coerce').dt.date
                 st.subheader("🔍 Período de Análise")
-                op_per = ["Mês Atual", "Hoje", "Últimos 30 Dias", "Todo o Período", "Personalizado"]
+                op_per = ["Mês Atual", "Hoje", "Últimos 7 Dias", "Últimos 15 Dias", "Últimos 30 Dias", "Mês Anterior", "Todo o Período", "Personalizado"]
                 per_sel = st.selectbox("Filtrar:", op_per)
                 hoje = date.today()
                 d_ini, d_fim = None, None
                 if per_sel == "Hoje": d_ini, d_fim = hoje, hoje
+                elif per_sel == "Últimos 7 Dias": d_ini, d_fim = hoje - timedelta(days=7), hoje
+                elif per_sel == "Últimos 15 Dias": d_ini, d_fim = hoje - timedelta(days=15), hoje
                 elif per_sel == "Últimos 30 Dias": d_ini, d_fim = hoje - timedelta(days=30), hoje
                 elif per_sel == "Mês Atual": d_ini, d_fim = hoje.replace(day=1), hoje
+                elif per_sel == "Mês Anterior":
+                    p_dia = hoje.replace(day=1)
+                    d_fim = p_dia - timedelta(days=1)
+                    d_ini = d_fim.replace(day=1)
                 elif per_sel == "Personalizado":
                     c1, c2 = st.columns(2)
                     d_ini = c1.date_input("Início", hoje - timedelta(days=30))
@@ -207,33 +212,154 @@ else:
                     fig_top = px.bar(df_top, x='quantidade', y='produto', orientation='h', text='quantidade', color_discrete_sequence=['#0068c9'], title="Top 5 Produtos")
                     fig_top.update_yaxes(tickmode='array', tickvals=df_top['produto'], ticktext=df_top['produto_curto'])
                     c1.plotly_chart(fig_top, use_container_width=True)
-                    c2.plotly_chart(px.pie(df_dash.groupby('categoria')['valor_total'].sum().reset_index(), values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria"), use_container_width=True)
+                    
+                    fig_cat = px.pie(df_dash.groupby('categoria')['valor_total'].sum().reset_index(), values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria", color_discrete_sequence=px.colors.qualitative.Bold)
+                    c2.plotly_chart(fig_cat, use_container_width=True)
                 else: st.warning("Sem dados no período")
             else: st.info("Faça vendas para ver gráficos.")
 
+        # ==========================================
+        # HISTÓRICO GERAL 100% RESTAURADO
+        # ==========================================
         with aba_hist:
-            # Reutilizando histórico com Edição e Estorno
-            st.subheader("Histórico Geral de Vendas")
-            df_hist = carregar_dados("""
-                SELECT v.id, v.codigo_venda, COALESCE(c.nome, 'Excluído') as cliente, COALESCE(p.nome, 'Excluído') as produto, v.quantidade, v.valor_total, v.data_venda
-                FROM vendas v LEFT JOIN clientes c ON v.cliente_id = c.id LEFT JOIN produtos p ON v.produto_id = p.id WHERE v.empresa_id = %s ORDER BY v.id DESC
-            """, (emp_id,))
-            if not df_hist.empty:
-                st.dataframe(df_hist, use_container_width=True, hide_index=True)
-                with st.expander("❌ Cancelar Item"):
-                    op_venda = df_hist.apply(lambda x: f"ID {x['id']} | Venda {x['codigo_venda']} | {x['produto']}", axis=1).tolist()
-                    sel_del = st.selectbox("Item para estornar:", op_venda)
-                    if st.button("Confirmar Estorno", type="primary"):
-                        id_del = int(sel_del.split("ID ")[1].split(" |")[0])
-                        conn = conectar_banco(); cur = conn.cursor()
-                        cur.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id=%s AND empresa_id=%s",(id_del, emp_id))
-                        inf = cur.fetchone()
-                        if inf:
-                            cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id=%s",(inf[1], inf[0]))
-                            cur.execute("DELETE FROM vendas WHERE id=%s",(id_del,))
-                            cur.execute("DELETE FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s",(inf[2], emp_id))
-                            conn.commit(); st.success("Cancelado!"); st.rerun()
-                        conn.close()
+            st.header("📜 Histórico Geral e Faturamento")
+            
+            query_todas_vendas = """
+                SELECT v.id AS "ID Item", v.codigo_venda AS "Nº Venda", COALESCE(c.nome, 'Cliente Excluído') AS "Cliente", 
+                       COALESCE(p.nome, 'Produto Excluído') AS "Produto", v.quantidade AS "Qtd",
+                       v.valor_unitario AS "Preço Tabela", v.desconto AS "Desconto Unit",
+                       v.valor_total AS "Total (R$)", v.valor_entrada AS "Entrada (R$)", v.valor_restante AS "Restante (R$)",
+                       v.data_venda AS "Data", v.forma_pagamento AS "Pagamento", v.prazo AS "Prazo" 
+                FROM vendas v 
+                LEFT JOIN clientes c ON v.cliente_id = c.id 
+                LEFT JOIN produtos p ON v.produto_id = p.id 
+                WHERE v.empresa_id = %s
+                ORDER BY v.codigo_venda DESC, v.id DESC
+            """
+            df_todas_vendas = carregar_dados(query_todas_vendas, (emp_id,))
+            
+            if not df_todas_vendas.empty:
+                col_opcoes1, col_opcoes2 = st.columns(2)
+                
+                with col_opcoes1:
+                    with st.expander("✏️ Editar Item de Venda", expanded=False):
+                        opcoes_venda_edit = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+                        venda_edit_selecionada = st.selectbox("Selecione a venda para editar", options=opcoes_venda_edit, key="sel_edit_venda")
+                        
+                        if venda_edit_selecionada:
+                            venda_id_edit = int(venda_edit_selecionada.split("Item ")[1].split(")")[0])
+                            conn = conectar_banco()
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT data_venda, forma_pagamento, prazo, valor_unitario, desconto, valor_entrada, quantidade FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_edit, emp_id))
+                            dados_v_edit = cursor.fetchone()
+                            
+                            if dados_v_edit:
+                                v_data_str, v_pag, v_prazo, v_tabela, v_desc, v_ent, v_qtd = dados_v_edit
+                                try: v_data_obj = datetime.strptime(v_data_str, "%d/%m/%Y").date()
+                                except: v_data_obj = date.today()
+                                    
+                                with st.form("form_update_venda"):
+                                    c1, c2, c3 = st.columns(3)
+                                    nova_data = c1.date_input("Data da Venda", value=v_data_obj, format="DD/MM/YYYY")
+                                    
+                                    lista_pag = ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"]
+                                    idx_pag = lista_pag.index(v_pag) if v_pag in lista_pag else 0
+                                    novo_pag = c2.selectbox("Pagamento", lista_pag, index=idx_pag)
+                                    
+                                    lista_prazo = ["À vista", "30 dias", "60 dias", "3x sem juros", "A Combinar"]
+                                    idx_prazo = lista_prazo.index(v_prazo) if v_prazo in lista_prazo else 0
+                                    novo_prazo = c3.selectbox("Prazo", lista_prazo, index=idx_prazo)
+                                    
+                                    c4, c5, c6 = st.columns(3)
+                                    novo_tabela = c4.number_input("Preço Tabela (R$)", min_value=0.0, value=float(v_tabela), step=1.0, format="%.2f")
+                                    novo_desc = c5.number_input("Desconto Unit. (R$)", min_value=0.0, value=float(v_desc), step=1.0, format="%.2f")
+                                    nova_entrada = c6.number_input("Entrada Total (R$)", min_value=0.0, value=float(v_ent), step=10.0, format="%.2f")
+                                    
+                                    if st.form_submit_button("💾 Salvar Alterações"):
+                                        novo_total = (novo_tabela - novo_desc) * v_qtd
+                                        novo_restante = novo_total - nova_entrada
+                                        cursor.execute("UPDATE vendas SET data_venda=%s, forma_pagamento=%s, prazo=%s, valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s, valor_restante=%s WHERE id=%s AND empresa_id=%s", 
+                                                     (nova_data.strftime("%d/%m/%Y"), novo_pag, novo_prazo, novo_tabela, novo_desc, novo_total, nova_entrada, novo_restante, venda_id_edit, emp_id))
+                                        conn.commit(); conn.close(); st.success("Atualizado!"); st.rerun()
+                            else: conn.close()
+
+                with col_opcoes2:
+                    with st.expander("❌ Cancelar / Estornar Item", expanded=False):
+                        with st.form("form_del_venda"):
+                            opcoes_venda_del = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+                            venda_para_apagar = st.selectbox("Selecione o item lançado por engano", options=opcoes_venda_del, key="sel_del_venda")
+                            
+                            if st.form_submit_button("🚨 Confirmar Cancelamento", type="primary"):
+                                venda_id_del = int(venda_para_apagar.split("Item ")[1].split(")")[0])
+                                conn = conectar_banco()
+                                cursor = conn.cursor()
+                                cursor.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
+                                venda_info = cursor.fetchone()
+                                
+                                if venda_info:
+                                    p_id, p_qtd, cod_venda = venda_info
+                                    cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
+                                    cursor.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
+                                    cursor.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
+                                    conn.commit(); conn.close(); st.success("Cancelado!"); st.rerun()
+                                else: conn.close(); st.error("Erro.")
+                
+                st.markdown("---")
+
+                st.subheader("📲 Enviar Recibo via WhatsApp")
+                opcoes_recibo = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+                venda_recibo_sel = st.selectbox("Selecione a venda para gerar o recibo", options=opcoes_recibo, key="sel_recibo")
+
+                if venda_recibo_sel:
+                    venda_id_recibo = int(venda_recibo_sel.split("Item ")[1].split(")")[0])
+                    conn = conectar_banco(); cursor = conn.cursor()
+                    cursor.execute("SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, v.valor_total, v.valor_entrada, v.valor_restante, v.forma_pagamento FROM vendas v JOIN clientes c ON v.cliente_id = c.id JOIN produtos p ON v.produto_id = p.id WHERE v.id = %s AND v.empresa_id = %s", (venda_id_recibo, emp_id))
+                    dados_recibo = cursor.fetchone()
+                    conn.close()
+
+                    if dados_recibo:
+                        tel, nome_cli, data_v, nome_prod, qtd, v_total, v_ent, v_rest, forma_pag = dados_recibo
+                        msg = f"Olá, {nome_cli}! 🌸\n\nAqui está o resumo da sua compra do dia *{data_v}*:\n\n"
+                        msg += f"🛍️ *Produto:* {qtd}x {nome_prod}\n💰 *Valor Total:* R$ {v_total:.2f}\n"
+                        if v_ent > 0: msg += f"💸 *Entrada Paga:* R$ {v_ent:.2f}\n⏳ *Restante:* R$ {v_rest:.2f}\n"
+                        msg += f"💳 *Forma de Pagto:* {forma_pag}\n\nMuito obrigada pela preferência! ✨"
+                        st.text_area("Pré-visualização da Mensagem:", value=msg, height=200, disabled=True)
+
+                        if tel:
+                            tel_limpo = ''.join(filter(str.isdigit, str(tel)))
+                            if len(tel_limpo) >= 10:
+                                if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
+                                link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                st.link_button("🟢 Abrir no WhatsApp", link_wpp, type="primary")
+                            else: st.warning("⚠️ Telefone incompleto.")
+                        else: st.warning("⚠️ Cliente sem telefone.")
+                            
+                st.markdown("---")
+                
+                df_todas_vendas['Data_Filtro'] = pd.to_datetime(df_todas_vendas['Data'], dayfirst=True, errors='coerce').dt.date
+                data_min = df_todas_vendas['Data_Filtro'].min() if not pd.isna(df_todas_vendas['Data_Filtro'].min()) else date.today()
+                data_max = df_todas_vendas['Data_Filtro'].max() if not pd.isna(df_todas_vendas['Data_Filtro'].max()) else date.today()
+                
+                st.subheader("🔍 Filtrar Tabela por Período")
+                col_data1, col_data2 = st.columns(2)
+                data_inicio = col_data1.date_input("Data Inicial", value=data_min, format="DD/MM/YYYY")
+                data_fim = col_data2.date_input("Data Final", value=data_max, format="DD/MM/YYYY")
+                
+                mask = (df_todas_vendas['Data_Filtro'] >= data_inicio) & (df_todas_vendas['Data_Filtro'] <= data_fim)
+                df_filtrado = df_todas_vendas.loc[mask].drop(columns=['Data_Filtro'])
+                
+                if not df_filtrado.empty:
+                    colunas_exibicao = ['Nº Venda', 'Cliente', 'Produto', 'Qtd', 'Preço Tabela', 'Desconto Unit', 'Total (R$)', 'Entrada (R$)', 'Restante (R$)', 'Data', 'Pagamento', 'Prazo']
+                    st.dataframe(df_filtrado[colunas_exibicao], use_container_width=True, hide_index=True)
+                    
+                    st.markdown("### 📊 Resumo do Período Filtrado")
+                    col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+                    col_res1.metric("💰 Faturamento", f"R$ {df_filtrado['Total (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    col_res2.metric("⏳ A Receber", f"R$ {df_filtrado['Restante (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    col_res3.metric("🛒 Vendas", f"{df_filtrado['Nº Venda'].nunique()}")
+                    col_res4.metric("🧴 Produtos", f"{df_filtrado['Qtd'].sum()}")
+                else: st.warning("Nenhuma venda neste período.")
+            else: st.info("Nenhuma venda registrada.")
 
     # ==========================================
     # MÓDULO 2: CADASTROS (Produtos, Categorias, Clientes, Fornecedores)
@@ -306,7 +432,6 @@ else:
         tab_venda, tab_compra = st.tabs(["🛒 PDV (Vendas)", "📥 Entrada de Notas (Compras)"])
         
         with tab_venda:
-            # Lógica completa do PDV (Carrinho + WhatsApp)
             st.subheader("🛒 Frente de Caixa")
             df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome",(emp_id,))
             df_pro = carregar_dados("SELECT id, nome, valor, quantidade FROM produtos WHERE empresa_id=%s ORDER BY nome",(emp_id,))
@@ -351,16 +476,43 @@ else:
                                        (novo_cod, cli_id_v, it['id'], it['qtd'], data_v, it['total'], emp_id, it['unit'], it['desc']))
                             cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s",(it['qtd'], it['id']))
                         
-                        # Gera parcela única no financeiro se for venda simples
                         cur.execute("INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                                    (novo_cod, cli_id_v, 1, 1, total_pdv, data_v, 'Pago' if f_pag != "Crediário" else "Pendente", emp_id))
                         
                         conn.commit(); conn.close()
+                        
+                        # PREPARANDO O RECIBO DO ZAP IMEDIATO
+                        msg = f"Olá, {cliente_pdv}! 🌸\n\nResumo da sua compra (*{data_v}*):\n🧾 *Venda Nº {novo_cod}*\n"
+                        msg += f"💰 *Total:* R$ {total_pdv:.2f}\n✅ Quitado à vista.\nMuito obrigada pela preferência! ✨"
+                        
+                        import urllib.parse
+                        cur = conectar_banco().cursor()
+                        cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
+                        tel_cli = cur.fetchone()[0]
+                        
+                        if tel_cli:
+                            tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
+                            if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
+                            st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                        
+                        st.session_state['zap_msg'] = msg
+                        st.session_state['zap_codigo'] = novo_cod
+                        st.session_state['zap_total'] = total_pdv
                         st.session_state['carrinho'] = []
                         st.success("Venda Finalizada!")
                         st.rerun()
                 if st.button("🗑️ Limpar Carrinho"): st.session_state['carrinho'] = []; st.rerun()
+                
             else: st.warning("Cadastre clientes e produtos primeiro.")
+            
+            # MOSTRAR LINK DO WHATSAPP DA ÚLTIMA VENDA
+            if 'zap_link' in st.session_state:
+                st.markdown("---")
+                st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada! Total: R$ {st.session_state['zap_total']:.2f}")
+                with st.container(border=True):
+                    st.subheader("📲 Enviar Recibo via WhatsApp")
+                    st.text_area("Prévia:", value=st.session_state['zap_msg'], height=150, disabled=True)
+                    st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
 
         with tab_compra:
             st.subheader("📥 Entrada de Mercadorias")
@@ -371,10 +523,8 @@ else:
                 try:
                     tree = ET.parse(arquivo_xml)
                     root = tree.getroot()
-                    # Namespace padrão da NF-e
                     ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
                     
-                    # Lógica de leitura básica para teste
                     n_nota = root.find('.//nfe:ide/nfe:nNF', ns).text
                     v_nota = root.find('.//nfe:total/nfe:ICMSTot/nfe:vNF', ns).text
                     emitente = root.find('.//nfe:emit/nfe:xNome', ns).text
@@ -384,7 +534,6 @@ else:
                     st.write(f"**Valor Total:** R$ {v_nota}")
                     
                     if st.button("Confirmar Importação"):
-                        # No próximo passo, faremos o loop pelos produtos e o registro no banco
                         st.warning("Processamento detalhado de itens em desenvolvimento para testes.")
                 except Exception as e:
                     st.error(f"Erro ao ler XML: {e}")
@@ -421,5 +570,4 @@ else:
             """, (emp_id,))
             if not df_p.empty:
                 st.dataframe(df_p, use_container_width=True)
-                # Lógica de baixa similar ao receber...
             else: st.info("Nenhuma conta a pagar registrada.")
