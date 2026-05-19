@@ -401,13 +401,9 @@ else:
                 if st.button("Remover", type="primary"):
                     conn = conectar_banco(); conn.cursor().execute("DELETE FROM categorias WHERE nome=%s AND empresa_id=%s",(cat_del, emp_id)); conn.commit(); conn.close(); st.rerun()
 
-        # ==========================================
-        # CLIENTES 100% RESTAURADO
-        # ==========================================
         with tab_cli:
             st.header("Gerenciamento de Clientes")
             
-            # --- WIDGET ANIVERSARIANTES DO DIA ---
             hoje_str = date.today().strftime("%d/%m")
             df_aniv = carregar_dados("SELECT nome, telefone FROM clientes WHERE empresa_id=%s AND data_nascimento=%s", (emp_id, hoje_str))
             if not df_aniv.empty:
@@ -611,35 +607,49 @@ else:
                     st.error(f"Erro ao ler XML: {e}")
 
     # ==========================================
-    # MÓDULO 4: FINANCEIRO (Contas a Receber e Pagar)
+    # MÓDULO 4: FINANCEIRO (Contas a Receber e Pagar COMPLETOS)
     # ==========================================
     elif modulo == "💰 Financeiro":
         st.title("💰 Gestão Financeira")
         tab_rec, tab_pag = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)"])
         
+        # --- CONTAS A RECEBER 100% RESTAURADO ---
         with tab_rec:
-            st.subheader("Cobranças e Recebimentos")
-            df_r = carregar_dados("""
-                SELECT cr.id, c.nome as cliente, cr.valor_parcela, cr.data_vencimento, cr.status 
-                FROM contas_receber cr JOIN clientes c ON cr.cliente_id = c.id WHERE cr.empresa_id = %s ORDER BY cr.id DESC
+            st.header("💰 Controle Financeiro de Parcelas")
+            df_financeiro = carregar_dados("""
+                SELECT cr.id AS "ID Parcela", cr.venda_codigo AS "Nº Venda", c.nome AS "Cliente",
+                       cr.num_parcela AS "Parcela", cr.total_parcelas AS "De",
+                       cr.valor_parcela AS "Valor (R$)", cr.data_vencimento AS "Vencimento", cr.status AS "Status"
+                FROM contas_receber cr JOIN clientes c ON cr.cliente_id = c.id WHERE cr.empresa_id = %s ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') ASC
             """, (emp_id,))
-            if not df_r.empty:
-                st.dataframe(df_r, use_container_width=True)
-                with st.expander("💰 Dar Baixa em Recebimento"):
-                    pend = df_r[df_r['status'] == 'Pendente']
-                    if not pend.empty:
-                        op_r = pend.apply(lambda x: f"ID {x['id']} | {x['cliente']} | R$ {x['valor_parcela']}", axis=1).tolist()
-                        sel_r = st.selectbox("Parcela recebida:", op_r)
-                        if st.button("Confirmar Recebimento"):
-                            id_r = int(sel_r.split("ID ")[1].split(" |")[0])
-                            conn = conectar_banco(); conn.cursor().execute("UPDATE contas_receber SET status='Pago', data_pagamento=%s WHERE id=%s",(date.today().strftime("%d/%m/%Y"), id_r)); conn.commit(); conn.close(); st.rerun()
-
-        with tab_pag:
-            st.subheader("Compromissos e Pagamentos")
-            df_p = carregar_dados("""
-                SELECT cp.id, f.nome as fornecedor, cp.valor_parcela, cp.data_vencimento, cp.status 
-                FROM contas_pagar cp JOIN fornecedores f ON cp.fornecedor_id = f.id WHERE cp.empresa_id = %s ORDER BY cp.id DESC
-            """, (emp_id,))
-            if not df_p.empty:
-                st.dataframe(df_p, use_container_width=True)
-            else: st.info("Nenhuma conta a pagar registrada.")
+            
+            if not df_financeiro.empty:
+                df_financeiro['Data_Venc_Obj'] = pd.to_datetime(df_financeiro['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
+                hoje = date.today()
+                
+                v_rec = df_financeiro[df_financeiro['Status'] == 'Pago']['Valor (R$)'].sum()
+                v_pend = df_financeiro[df_financeiro['Status'] == 'Pendente']['Valor (R$)'].sum()
+                mask_atraso = (df_financeiro['Status'] == 'Pendente') & (df_financeiro['Data_Venc_Obj'] < hoje)
+                v_atr = df_financeiro[mask_atraso]['Valor (R$)'].sum()
+                
+                col_met1, col_met2, col_met3 = st.columns(3)
+                col_met1.metric("✅ Total Já Recebido", f"R$ {v_rec:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(v_pend - v_atr):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atr:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Atenção" if v_atr > 0 else "Tudo em dia!", delta_color="inverse")
+                
+                st.markdown("---")
+                
+                df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
+                with st.expander("✅ Registrar Recebimento de Parcela", expanded=True):
+                    if not df_p.empty:
+                        with st.form("form_baixa"):
+                            op_b = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
+                            p_sel = st.selectbox("Selecione a parcela paga:", options=op_b)
+                            
+                            col_b1, col_b2 = st.columns([1, 2])
+                            data_pag_real = col_b1.date_input("Data do Pagamento", value=hoje, format="DD/MM/YYYY")
+                            
+                            if st.form_submit_button("💰 Confirmar Baixa", type="primary"):
+                                idx_b = df_p['ID Parcela'].tolist()[op_b.index(p_sel)]
+                                conn = conectar_banco()
+                                conn.cursor().execute("UPDATE contas_
