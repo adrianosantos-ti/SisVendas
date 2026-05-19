@@ -122,6 +122,18 @@ elif st.session_state['perfil'] == 'master':
                         st.error("Erro: Este login já está sendo utilizado por outra pessoa no sistema.")
         else:
             st.warning("Cadastre ao menos uma empresa antes de criar contas de acesso.")
+            
+        st.markdown("---")
+        st.subheader("Usuários do Sistema")
+        df_usuarios = carregar_dados("""
+            SELECT u.id AS "ID", u.nome AS "Nome", u.login AS "Login", e.nome AS "Empresa" 
+            FROM usuarios u JOIN empresas e ON u.empresa_id = e.id WHERE u.perfil != 'master' ORDER BY e.nome
+        """)
+        
+        if not df_usuarios.empty:
+            st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum funcionário cadastrado ainda.")
 
 # --- TELA OPERACIONAL DO ERP (FUNCIONÁRIOS / EMPRESAS) ---
 else:
