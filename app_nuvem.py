@@ -193,6 +193,7 @@ else:
 
     lista_categorias = df_categorias['nome'].tolist() if not df_categorias.empty else ["Geral"]
 
+    # --- LISTA DE ABAS ATUALIZADA (DASHBOARD PRIMEIRO) ---
     aba_dashboard, aba_estoque, aba_clientes, aba_vendas, aba_historico, aba_categorias, aba_financeiro = st.tabs([
         "📊 Dashboard",
         "📦 Estoque de Produtos", 
@@ -284,16 +285,18 @@ else:
                     df_top_prod = df_top_prod.sort_values('quantidade', ascending=False).head(5)
                     df_top_prod = df_top_prod.sort_values('quantidade', ascending=True) 
                     
-                    # CÓDIGO NOVO: Trunca nomes longos para ficar perfeito no celular
                     df_top_prod['produto_curto'] = df_top_prod['produto'].apply(lambda x: (str(x)[:22] + '...') if len(str(x)) > 22 else str(x))
                     
-                    fig_top = px.bar(df_top_prod, x='quantidade', y='produto_curto', orientation='h',
-                                     labels={'quantidade': 'Qtd', 'produto_curto': ''}, # Remove a palavra "produto" do eixo
+                    # CORREÇÃO: Usamos o nome original ('produto') no eixo Y para não empilhar duplicadas
+                    fig_top = px.bar(df_top_prod, x='quantidade', y='produto', orientation='h',
+                                     labels={'quantidade': 'Qtd', 'produto': ''},
                                      template='plotly_white', color='quantidade', color_continuous_scale='Blues',
-                                     text='quantidade', # Adiciona o número direto na barra
-                                     custom_data=['produto']) # Guarda o nome completo para o hover
+                                     text='quantidade',
+                                     custom_data=['produto'])
                     
-                    # Formata o balãozinho que aparece ao clicar/passar o mouse e posiciona o texto
+                    # CORREÇÃO: Mas mandamos o gráfico exibir apenas a versão encurtada ('produto_curto') visualmente
+                    fig_top.update_yaxes(tickmode='array', tickvals=df_top_prod['produto'], ticktext=df_top_prod['produto_curto'])
+                    
                     fig_top.update_traces(hovertemplate="<b>%{customdata[0]}</b><br>Unidades vendidas: %{x}", textposition='outside')
                     fig_top.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=20, t=30, b=0))
                     
@@ -305,7 +308,7 @@ else:
                     fig_cat = px.pie(df_cat, values='valor_total', names='categoria', hole=0.4,
                                      template='plotly_white')
                     fig_cat.update_traces(textposition='inside', textinfo='percent+label')
-                    fig_cat.update_layout(margin=dict(l=0, r=0, t=30, b=0)) # Ajusta as margens para o celular
+                    fig_cat.update_layout(margin=dict(l=0, r=0, t=30, b=0))
                     st.plotly_chart(fig_cat, use_container_width=True)
             else:
                 st.warning(f"Não há vendas registradas para o período selecionado ({periodo_selecionado}).")
