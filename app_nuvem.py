@@ -652,4 +652,38 @@ else:
                             if st.form_submit_button("💰 Confirmar Baixa", type="primary"):
                                 idx_b = df_p['ID Parcela'].tolist()[op_b.index(p_sel)]
                                 conn = conectar_banco()
-                                conn.cursor().execute("UPDATE contas_
+                                conn.cursor().execute("UPDATE contas_receber SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
+                                conn.commit()
+                                conn.close()
+                                st.success("Pagamento registrado com sucesso!")
+                                st.rerun()
+                    else:
+                        st.success("🎉 Nenhuma parcela pendente! Todos os clientes estão em dia.")
+                
+                st.markdown("---")
+                
+                st.subheader("📋 Relatório de Parcelas e Boletos")
+                filtro_status = st.radio("Filtrar por Status:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True)
+                
+                df_view = df_financeiro.copy()
+                if filtro_status == "Pendentes":
+                    df_view = df_view[df_view['Status'] == 'Pendente']
+                elif filtro_status == "Pagos":
+                    df_view = df_view[df_view['Status'] == 'Pago']
+                elif filtro_status == "Atrasados":
+                    df_view = df_view[(df_view['Status'] == 'Pendente') & (df_view['Data_Venc_Obj'] < hoje)]
+                    
+                st.dataframe(df_view.drop(columns=['Data_Venc_Obj', 'ID Parcela']), use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma movimentação financeira registrada ainda. Faça sua primeira venda para alimentar o caixa!")
+
+        # --- CONTAS A PAGAR ---
+        with tab_pag:
+            st.subheader("Compromissos e Pagamentos")
+            df_p = carregar_dados("""
+                SELECT cp.id, f.nome as fornecedor, cp.valor_parcela, cp.data_vencimento, cp.status 
+                FROM contas_pagar cp JOIN fornecedores f ON cp.fornecedor_id = f.id WHERE cp.empresa_id = %s ORDER BY cp.id DESC
+            """, (emp_id,))
+            if not df_p.empty:
+                st.dataframe(df_p, use_container_width=True)
+            else: st.info("Nenhuma conta a pagar registrada.")
