@@ -636,66 +636,54 @@ else:
                         st.rerun()                
         with tab_compra:
             st.subheader("📥 Entrada de Mercadorias (via PDF Direto)")
-            st.info("Faça o upload do PDF do seu pedido para processar as mercadorias automaticamente. Você poderá ajustar as quantidades antes de confirmar a entrada.")
+            st.info("Faça o upload do PDF do seu pedido. O sistema vai extrair os produtos e gerar uma planilha para você revisar as quantidades.")
 
-            # Componente de upload configurado exclusivamente para arquivos PDF
             arquivo_pdf = st.file_uploader("Selecione o arquivo PDF do Pedido", type=["pdf"])
 
             if arquivo_pdf:
-                if st.button("🔍 Processar PDF do Pedido", type="secondary"):
+                if st.button("🔍 Processar PDF do Pedido", type="primary"):
                     import pdfplumber
                     import re
                     
                     try:
                         texto_extraido = ""
-                        # O pdfplumber lê o arquivo carregado diretamente da memória
                         with pdfplumber.open(arquivo_pdf) as pdf:
                             for pagina in pdf.pages:
-                                texto_pagina = pagina.extract_text()
-                                if texto_pagina:
-                                    texto_extraido += texto_pagina + "\n"
+                                texto_extraido += pagina.extract_text() + " "
                         
                         if texto_extraido:
-                            linhas = [l.strip() for l in texto_extraido.split('\n') if l.strip()]
-                            produtos_extraidos = []
+                            # Transformamos tudo em um texto corrido para não dependermos de quebras de linha
+                            texto_limpo = texto_extraido.replace('\n', ' ')
                             
-                            # Varre o texto aplicando a regra de extração com base no padrão visual
-                            for i, linha in enumerate(linhas):
-                                match_codigo = re.match(r'^(\d{8})', linha)
-                                if match_codigo:
-                                    codigo = match_codigo.group(1)
-                                    nome_produto = linha[8:].strip()
-                                    preco_unitario = 0.0
-                                    quantidade = 1
-                                    
-                                    # Captura informações complementares nas linhas imediatamente seguintes
-                                    for j in range(i + 1, min(i + 6, len(linhas))):
-                                        if 'R$' in linhas[j] and 'Pontos' not in linhas[j] and not re.match(r'^\d+\s+R\$', linhas[j]):
-                                            preco_str = linhas[j].replace('R$', '').replace('.', '').replace(',', '.').strip()
-                                            try: preco_unitario = float(preco_str)
-                                            except: pass
-                                        elif re.match(r'^(\d+)\s+R\$', linhas[j]):
-                                            match_qtd = re.match(r'^(\d+)\s+R\$', linhas[j])
-                                            quantidade = int(match_qtd.group(1))
-                                            break
-                                        elif not linhas[j].startswith('Pontos') and 'R$' not in linhas[j] and not re.match(r'^\d{8}', linhas[j]) and "Total" not in linhas[j]:
-                                            nome_produto += " " + linhas[j]
-                                    
-                                    if "Folheto" not in nome_produto and "Preço com Desconto" not in nome_produto:
-                                        produtos_extraidos.append({
-                                            "Código": codigo,
-                                            "Produto": nome_produto.strip(),
-                                            "Preço Un. (R$)": preco_unitario,
-                                            "Quantidade": quantidade
-                                        })
+                            # O Padrão Ouro do pedido: Código -> Nome -> R$ Preço -> Pontos -> Qtd -> R$ Subtotal
+                            padrao = r'(\d{8})\s+(.*?)\s+R\$\s*([\d.,]+)\s+Pontos:\s*\d+\s+(\d+)\s+R\$'
+                            
+                            produtos_extraidos = []
+                            for match in re.finditer(padrao, texto_limpo):
+                                codigo = match.group(1)
+                                nome_produto = match.group(2).strip()
+                                preco_str = match.group(3).replace('.', '').replace(',', '.')
+                                quantidade = int(match.group(4))
+                                
+                                # Evitar que brindes vazios ou folhetos poluam o estoque
+                                if "Desconto" not in nome_produto and "Folheto" not in nome_produto:
+                                    produtos_extraidos.append({
+                                        "Código": codigo,
+                                        "Produto": nome_produto,
+                                        "Preço Un. (R$)": float(preco_str),
+                                        "Quantidade": quantidade
+                                    })
                             
                             if produtos_extraidos:
                                 st.session_state['produtos_pedido'] = produtos_extraidos
-                                st.success(f"📊 {len(produtos_extraidos)} produtos identificados com sucesso! Ajuste-os abaixo.")
+                                st.success(f"📊 {len(produtos_extraidos)} produtos identificados com perfeição! Ajuste-os abaixo.")
                             else:
-                                st.error("❌ O arquivo foi lido, mas nenhum item foi identificado no formato padrão de pedidos.")
+                                st.error("❌ Não encontramos produtos no padrão. Verifique se é o PDF oficial do pedido.")
+                                # Mostra um pedaço do texto para ajudar a entender o erro, se houver
+                                with st.expander("Ver texto extraído (Debug)"):
+                                    st.write(texto_extraido[:1000])
                         else:
-                            st.error("❌ Não foi possível extrair texto do documento. Certifique-se de que não é um PDF digitalizado como imagem.")
+                            st.error("❌ Não foi possível extrair texto do documento.")
                             
                     except Exception as erro_leitura:
                         st.error(f"Erro ao processar o arquivo PDF: {erro_leitura}")
@@ -703,11 +691,10 @@ else:
             # Exibição da planilha interativa caso os dados estejam carregados
             if 'produtos_pedido' in st.session_state and st.session_state['produtos_pedido']:
                 st.markdown("### ✏️ Planilha de Ajuste de Estoque")
-                st.caption("Dê um duplo clique na célula de quantidade para alterar o valor. Para remover um item, selecione a linha correspondente e pressione 'Delete'.")
+                st.caption("Dê um duplo clique na célula de 'Quantidade' para alterar. Para remover um item, clique no índice numérico à esquerda da linha e aperte 'Delete'.")
                 
                 df_original = pd.DataFrame(st.session_state['produtos_pedido'])
                 
-                # Exibe a tabela editável
                 df_editado = st.data_editor(
                     df_original,
                     num_rows="dynamic",
@@ -727,7 +714,6 @@ else:
                             v_qtd = int(row['Quantidade'])
                             v_valor = float(row['Preço Un. (R$)'])
                             
-                            # Verifica duplicidade para somar ao estoque existente ou abrir novo cadastro
                             cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
                             prod_existe = cur.fetchone()
                             
@@ -742,7 +728,7 @@ else:
                         conn.commit()
                         conn.close()
                         
-                        st.success(f"✅ Sucesso! Estoque atualizado para {itens_salvos} itens.")
+                        st.success(f"✅ Sucesso! {itens_salvos} produtos foram atualizados no estoque.")
                         del st.session_state['produtos_pedido']
                         st.rerun()
                         
@@ -752,7 +738,7 @@ else:
 
                 if st.button("❌ Cancelar Importação"):
                     del st.session_state['produtos_pedido']
-                    st.rerun()
+                    st.rerun()    
     # ==========================================
     # MÓDULO 4: FINANCEIRO (Contas a Receber e Pagar COMPLETOS)
     # ==========================================
