@@ -652,11 +652,11 @@ else:
                                 texto_extraido += pagina.extract_text() + " "
                         
                         if texto_extraido:
-                            # Transformamos tudo em um texto corrido para não dependermos de quebras de linha
                             texto_limpo = texto_extraido.replace('\n', ' ')
                             
-                            # O Padrão Ouro do pedido: Código -> Nome -> R$ Preço -> Pontos -> Qtd -> R$ Subtotal
-                            padrao = r'(\d{8})\s+(.*?)\s+R\$\s*([\d.,]+)\s+Pontos:\s*\d+\s+(\d+)\s+R\$'
+                            # NOVO PADRÃO: Ajustado exatamente para o que o pdfplumber extraiu
+                            # Busca: 8 dígitos -> Nome -> R$ Preço -> Quantidade
+                            padrao = r'(\d{8})\s+(.*?)\s+R\$\s*([\d.,]+)\s+(\d+)'
                             
                             produtos_extraidos = []
                             for match in re.finditer(padrao, texto_limpo):
@@ -665,7 +665,7 @@ else:
                                 preco_str = match.group(3).replace('.', '').replace(',', '.')
                                 quantidade = int(match.group(4))
                                 
-                                # Evitar que brindes vazios ou folhetos poluam o estoque
+                                # Filtro para evitar lixo
                                 if "Desconto" not in nome_produto and "Folheto" not in nome_produto:
                                     produtos_extraidos.append({
                                         "Código": codigo,
@@ -676,10 +676,9 @@ else:
                             
                             if produtos_extraidos:
                                 st.session_state['produtos_pedido'] = produtos_extraidos
-                                st.success(f"📊 {len(produtos_extraidos)} produtos identificados com perfeição! Ajuste-os abaixo.")
+                                st.success(f"📊 {len(produtos_extraidos)} produtos identificados! Ajuste-os abaixo.")
                             else:
                                 st.error("❌ Não encontramos produtos no padrão. Verifique se é o PDF oficial do pedido.")
-                                # Mostra um pedaço do texto para ajudar a entender o erro, se houver
                                 with st.expander("Ver texto extraído (Debug)"):
                                     st.write(texto_extraido[:1000])
                         else:
@@ -688,10 +687,10 @@ else:
                     except Exception as erro_leitura:
                         st.error(f"Erro ao processar o arquivo PDF: {erro_leitura}")
 
-            # Exibição da planilha interativa caso os dados estejam carregados
+            # Exibição da planilha interativa
             if 'produtos_pedido' in st.session_state and st.session_state['produtos_pedido']:
                 st.markdown("### ✏️ Planilha de Ajuste de Estoque")
-                st.caption("Dê um duplo clique na célula de 'Quantidade' para alterar. Para remover um item, clique no índice numérico à esquerda da linha e aperte 'Delete'.")
+                st.caption("Dê um duplo clique na célula de 'Quantidade' para alterar. Para remover um item, clique no número à esquerda da linha e aperte 'Delete'.")
                 
                 df_original = pd.DataFrame(st.session_state['produtos_pedido'])
                 
@@ -722,7 +721,7 @@ else:
                             else:
                                 cur.execute("""INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
                                                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                                           (v_nome, v_qtd, v_valor, "Mary Kay", "Geral", emp_id, v_cod))
+                                           (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
                             itens_salvos += 1
                         
                         conn.commit()
@@ -738,7 +737,8 @@ else:
 
                 if st.button("❌ Cancelar Importação"):
                     del st.session_state['produtos_pedido']
-                    st.rerun()    
+                    st.rerun()
+
     # ==========================================
     # MÓDULO 4: FINANCEIRO (Contas a Receber e Pagar COMPLETOS)
     # ==========================================
