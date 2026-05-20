@@ -550,7 +550,9 @@ else:
                     total_pdv = df_car['total'].sum()
                     st.header(f"Total da Venda: R$ {total_pdv:.2f}")
                     
-                    if st.button("✅ Finalizar Venda", type="primary"):
+                    c1_finalizar, c2_limpar = st.columns(2)
+                    
+                    if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
                         try:
                             conn = conectar_banco()
                             cur = conn.cursor()
@@ -560,8 +562,6 @@ else:
                             novo_cod = int(resultado + 1) if resultado else 1
                             
                             data_v = data_venda_input.strftime("%d/%m/%Y")
-                            
-                            # Convertendo o ID do cliente retirado do Pandas para inteiro puro do Python
                             cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
                             
                             # Inserção de itens
@@ -572,7 +572,7 @@ else:
                                 
                                 cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
                             
-                            # Inserção no Financeiro (Parcelado ou à vista)
+                            # Inserção no Financeiro
                             val_parc = float(total_pdv / qtd_parcelas)
                             dt_venc = data_1_venc
                             for i in range(1, int(qtd_parcelas) + 1):
@@ -581,12 +581,28 @@ else:
                                            (novo_cod, cli_id_v, int(i), int(qtd_parcelas), val_parc, dt_venc.strftime("%d/%m/%Y"), status_venda, int(emp_id)))
                                 dt_venc += timedelta(days=30)
                             
+                            # --- CAPTURA E MONTAGEM DO LINK DO WHATSAPP ---
+                            cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
+                            tel_cli = cur.fetchone()[0]
+                            
+                            msg = f"Olá, {cliente_pdv}! 🌸\n\nResumo da sua compra (*{data_v}*):\n🧾 *Venda Nº {novo_cod}*\n💰 *Total:* R$ {total_pdv:.2f}\n"
+                            if qtd_parcelas > 1:
+                                msg += f"💳 *Parcelamento:* {qtd_parcelas}x de R$ {val_parc:.2f}\n"
+                            else:
+                                msg += f"💳 *Forma de Pagto:* {f_pag}\n"
+                            msg += "\nMuito obrigada pela preferência! ✨"
+                            
+                            if tel_cli:
+                                tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
+                                if len(tel_limpo) >= 10:
+                                    if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
+                                    st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                    st.session_state['zap_msg'] = msg
+                                    st.session_state['zap_codigo'] = novo_cod
+                                    st.session_state['zap_total'] = total_pdv
+                            
                             conn.commit()
                             conn.close()
-                            
-                            # Gera recibo Zap
-                            msg = f"Olá, {cliente_pdv}! 🌸\n\nResumo da sua compra (*{data_v}*):\n🧾 *Venda Nº {novo_cod}*\n💰 *Total:* R$ {total_pdv:.2f}\nMuito obrigada!"
-                            st.session_state['zap_link'] = "" # Preparando a var
                             
                             st.session_state['carrinho'] = []
                             st.success(f"Venda {novo_cod} Finalizada com sucesso!")
@@ -598,14 +614,26 @@ else:
                                 conn.rollback()
                                 conn.close()
 
-                    if st.button("🗑️ Limpar Carrinho"): 
+                    if c2_limpar.button("🗑️ Limpar Carrinho", use_container_width=True): 
                         st.session_state['carrinho'] = []
                         st.rerun()
-                        
-            # O ELSE TEM QUE ESTAR ALINHADO AQUI COM O IF PRINCIPAL
             else: 
                 st.warning("Cadastre clientes e produtos antes de vender.")
                 
+            # --- TELA DO RECIBO DO WHATSAPP (APARECE APÓS O RECARREGAMENTO) ---
+            if 'zap_link' in st.session_state and st.session_state['zap_link']:
+                st.markdown("---")
+                with st.container(border=True):
+                    st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada com sucesso! Total: R$ {st.session_state['zap_total']:.2f}")
+                    st.subheader("📲 Enviar Recibo via WhatsApp")
+                    st.text_area("Prévia do texto:", value=st.session_state['zap_msg'], height=150, disabled=True)
+                    st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
+                    if st.button("❌ Fechar Painel do Recibo", use_container_width=True):
+                        del st.session_state['zap_link']
+                        if 'zap_msg' in st.session_state: del st.session_state['zap_msg']
+                        if 'zap_codigo' in st.session_state: del st.session_state['zap_codigo']
+                        if 'zap_total' in st.session_state: del st.session_state['zap_total']
+                        st.rerun()                
         with tab_compra:
             st.subheader("📥 Entrada de Mercadorias")
             st.info("Aqui você poderá importar o XML da NF-e para alimentar o estoque e o contas a pagar automaticamente.")
