@@ -503,6 +503,8 @@ else:
         
         with tab_venda:
             st.subheader("🛒 Frente de Caixa")
+            
+            # Carrega dados atualizados para o PDV
             df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             df_pro = carregar_dados("SELECT id, nome, valor, quantidade FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             
@@ -552,50 +554,58 @@ else:
                         try:
                             conn = conectar_banco()
                             cur = conn.cursor()
-                            cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (emp_id,))
-                            novo_cod = (cur.fetchone()[0] or 0) + 1
+                            
+                            cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
+                            resultado = cur.fetchone()[0]
+                            novo_cod = int(resultado + 1) if resultado else 1
+                            
                             data_v = data_venda_input.strftime("%d/%m/%Y")
-                            cli_id_v = df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id']
+                            
+                            # Convertendo o ID do cliente retirado do Pandas para inteiro puro do Python
+                            cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
                             
                             # Inserção de itens
                             for it in st.session_state['carrinho']:
                                 cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento) 
                                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                           (novo_cod, cli_id_v, it['id'], it['qtd'], data_v, it['total'], emp_id, it['unit'], it['desc'], f_pag))
-                                cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (it['qtd'], it['id']))
+                                           (novo_cod, cli_id_v, int(it['id']), int(it['qtd']), data_v, float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), f_pag))
+                                
+                                cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
                             
                             # Inserção no Financeiro (Parcelado ou à vista)
-                            val_parc = total_pdv / qtd_parcelas
+                            val_parc = float(total_pdv / qtd_parcelas)
                             dt_venc = data_1_venc
-                            for i in range(1, qtd_parcelas + 1):
+                            for i in range(1, int(qtd_parcelas) + 1):
+                                status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
                                 cur.execute("INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                                           (novo_cod, cli_id_v, i, qtd_parcelas, val_parc, dt_venc.strftime("%d/%m/%Y"), 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente'), emp_id))
+                                           (novo_cod, cli_id_v, int(i), int(qtd_parcelas), val_parc, dt_venc.strftime("%d/%m/%Y"), status_venda, int(emp_id)))
                                 dt_venc += timedelta(days=30)
                             
                             conn.commit()
                             conn.close()
+                            
+                            # Gera recibo Zap
+                            msg = f"Olá, {cliente_pdv}! 🌸\n\nResumo da sua compra (*{data_v}*):\n🧾 *Venda Nº {novo_cod}*\n💰 *Total:* R$ {total_pdv:.2f}\nMuito obrigada!"
+                            st.session_state['zap_link'] = "" # Preparando a var
+                            
                             st.session_state['carrinho'] = []
                             st.success(f"Venda {novo_cod} Finalizada com sucesso!")
                             st.rerun()
                             
                         except Exception as e:
-                            # Isso aqui vai forçar o erro real aparecer na sua tela!
                             st.error(f"ERRO REVELADO DO BANCO DE DADOS: {e}")
                             if 'conn' in locals():
                                 conn.rollback()
                                 conn.close()
-                                
-            if st.button("🗑️ Limpar Carrinho"): st.session_state['carrinho'] = []; st.rerun()
-            else: st.warning("Cadastre clientes e produtos antes de vender.")
-            
-            if 'zap_link' in st.session_state:
-                st.markdown("---")
-                st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada! Total: R$ {st.session_state['zap_total']:.2f}")
-                with st.container(border=True):
-                    st.subheader("📲 Enviar Recibo via WhatsApp")
-                    st.text_area("Prévia:", value=st.session_state['zap_msg'], height=150, disabled=True)
-                    st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
 
+                    if st.button("🗑️ Limpar Carrinho"): 
+                        st.session_state['carrinho'] = []
+                        st.rerun()
+                        
+            # O ELSE TEM QUE ESTAR ALINHADO AQUI COM O IF PRINCIPAL
+            else: 
+                st.warning("Cadastre clientes e produtos antes de vender.")
+                
         with tab_compra:
             st.subheader("📥 Entrada de Mercadorias")
             st.info("Aqui você poderá importar o XML da NF-e para alimentar o estoque e o contas a pagar automaticamente.")
