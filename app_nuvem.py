@@ -700,43 +700,75 @@ else:
                     key="editor_pedido_estoque"
                 )
                 
-                if st.button("💾 Confirmar e Dar Entrada no Estoque", type="primary"):
-                    try:
-                        conn = conectar_banco()
-                        cur = conn.cursor()
-                        
-                        itens_salvos = 0
-                        for _, row in df_editado.iterrows():
-                            v_cod = str(row['Código'])
-                            v_nome = str(row['Produto'])
-                            v_qtd = int(row['Quantidade'])
-                            v_valor = float(row['Preço Un. (R$)'])
+                # Adicionamos um campo para você digitar o número da nota/pedido antes de salvar
+                numero_nota = st.text_input("Número do Pedido ou NF (Obrigatório para o Histórico):", placeholder="Ex: 134655")
+                
+                if st.button("💾 Confirmar e Dar Entrada no Estoque", type="primary", use_container_width=True):
+                    if not numero_nota:
+                        st.warning("⚠️ Por favor, informe o número do pedido ou nota fiscal antes de salvar.")
+                    else:
+                        try:
+                            conn = conectar_banco()
+                            cur = conn.cursor()
                             
-                            cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
-                            prod_existe = cur.fetchone()
+                            # 1. Calcula o total da nota com base nos itens da tabela editada
+                            valor_total_nota = sum([float(row['Preço Un. (R$)']) * int(row['Quantidade']) for _, row in df_editado.iterrows()])
                             
-                            if prod_existe:
-                                cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
-                            else:
-                                cur.execute("""INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
-                                               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                                           (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
-                            itens_salvos += 1
-                        
-                        conn.commit()
-                        conn.close()
-                        
-                        st.success(f"✅ Sucesso! {itens_salvos} produtos foram atualizados no estoque.")
-                        del st.session_state['produtos_pedido']
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"Erro ao salvar dados no banco: {e}")
-                        if 'conn' in locals(): conn.rollback(); conn.close()
+                            # 2. Cria o registro principal na tabela 'compras' e pega o ID gerado
+                            cur.execute("""
+                                INSERT INTO compras (numero_pedido, data_entrada, valor_total, empresa_id) 
+                                VALUES (%s, CURRENT_DATE, %s, %s) RETURNING id
+                            """, (numero_nota, valor_total_nota, emp_id))
+                            compra_id = cur.fetchone()[0]
+                            
+                            itens_salvos = 0
+                            
+                            # 3. Processa cada item da planilha
+                            for _, row in df_editado.iterrows():
+                                v_cod = str(row['Código'])
+                                v_nome = str(row['Produto'])
+                                v_qtd = int(row['Quantidade'])
+                                v_valor = float(row['Preço Un. (R$)'])
+                                
+                                # Grava o histórico detalhado na tabela 'itens_compra'
+                                cur.execute("""
+                                    INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
+                                    VALUES (%s, %s, %s, %s, %s)
+                                """, (compra_id, v_cod, v_nome, v_qtd, v_valor))
+                                
+                                # Verifica se o produto já existe no estoque geral
+                                cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
+                                prod_existe = cur.fetchone()
+                                
+                                if prod_existe:
+                                    # Soma a quantidade ao estoque existente
+                                    cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
+                                else:
+                                    # Cadastra produto novo automaticamente
+                                    cur.execute("""
+                                        INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                    """, (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
+                                
+                                itens_salvos += 1
+                            
+                            # 4. (Opcional) Lançar no Financeiro - Contas a Pagar
+                            # cur.execute("INSERT INTO contas_pagar (descricao, valor, data_vencimento, status, empresa_id) VALUES (%s, %s, CURRENT_DATE, 'Pago', %s)", (f"Pedido/NF: {numero_nota}", valor_total_nota, emp_id))
+                            
+                            conn.commit()
+                            conn.close()
+                            
+                            st.success(f"✅ Sucesso! Entrada {numero_nota} processada. {itens_salvos} itens atualizados no estoque.")
+                            del st.session_state['produtos_pedido']
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Erro ao salvar dados no banco: {e}")
+                            if 'conn' in locals(): conn.rollback(); conn.close()
 
-                if st.button("❌ Cancelar Importação"):
+                if st.button("❌ Cancelar Importação", use_container_width=True):
                     del st.session_state['produtos_pedido']
-                    st.rerun()
+                    st.rerun() 
                     
         with tab_historico_compras:
             st.subheader("📋 Consulta de Notas e Pedidos de Entrada")
