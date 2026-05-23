@@ -582,15 +582,30 @@ else:
                             
                             # --- CAPTURA E MONTAGEM DO LINK DO WHATSAPP ---
                             cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
-                            tel_cli = cur.fetchone()[0]
+                            resultado_tel = cur.fetchone()
+                            tel_cli = resultado_tel[0] if resultado_tel else None
                             
-                            msg = f"Olá, {cliente_pdv}! 🌸\n\nResumo da sua compra (*{data_v}*):\n🧾 *Venda Nº {novo_cod}*\n💰 *Total:* R$ {total_pdv:.2f}\n"
+                            # 1. Varre o carrinho e monta a lista de todos os produtos
+                            lista_produtos_msg = ""
+                            for it in st.session_state['carrinho']:
+                                # O += vai empilhando os itens: 1x Batom, 2x Base, etc.
+                                lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']}\n"
+                            
+                            # 2. Monta a mensagem completa inserindo a lista construída acima
+                            msg = f"Olá, {cliente_pdv}! 🌸\n\n"
+                            msg += f"Resumo da sua compra (*{data_v}*):\n"
+                            msg += f"🧾 *Venda Nº {novo_cod}*\n\n"
+                            msg += f"*Produtos:*\n{lista_produtos_msg}\n" # Aqui entram todos os itens!
+                            msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n"
+                            
                             if qtd_parcelas > 1:
                                 msg += f"💳 *Parcelamento:* {qtd_parcelas}x de R$ {val_parc:.2f}\n"
                             else:
                                 msg += f"💳 *Forma de Pagto:* {f_pag}\n"
+                                
                             msg += "\nMuito obrigada pela preferência! ✨"
                             
+                            # 3. Gera o link e salva na sessão para exibir o botão na tela
                             if tel_cli:
                                 tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
                                 if len(tel_limpo) >= 10:
@@ -599,7 +614,7 @@ else:
                                     st.session_state['zap_msg'] = msg
                                     st.session_state['zap_codigo'] = novo_cod
                                     st.session_state['zap_total'] = total_pdv
-                            
+                                    
                             conn.commit()
                             conn.close()
                             
