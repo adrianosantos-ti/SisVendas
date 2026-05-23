@@ -626,7 +626,7 @@ else:
                     
                     c1_finalizar, c2_limpar = st.columns(2)
                     
-if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
+                    if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
                         try:
                             conn = conectar_banco()
                             cur = conn.cursor()
