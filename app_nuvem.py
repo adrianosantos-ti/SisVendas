@@ -303,34 +303,82 @@ else:
                 
                 st.markdown("---")
 
-                st.subheader("📲 Enviar Recibo via WhatsApp")
-                opcoes_recibo = df_todas_vendas.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+st.subheader("📲 Enviar Recibo via WhatsApp")
+                
+                # 1. Filtramos o DataFrame para mostrar cada venda apenas UMA VEZ no selectbox
+                df_vendas_unicas = df_todas_vendas.drop_duplicates(subset=['Nº Venda'])
+                opcoes_recibo = df_vendas_unicas.apply(lambda x: f"Venda Nº {x['Nº Venda']} | Cliente: {x['Cliente']}", axis=1).tolist()
+                
                 venda_recibo_sel = st.selectbox("Selecione a venda para gerar o recibo", options=opcoes_recibo, key="sel_recibo")
 
                 if venda_recibo_sel:
-                    venda_id_recibo = int(venda_recibo_sel.split("Item ")[1].split(")")[0])
-                    conn = conectar_banco(); cursor = conn.cursor()
-                    cursor.execute("SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, v.valor_total, v.valor_entrada, v.valor_restante, v.forma_pagamento FROM vendas v JOIN clientes c ON v.cliente_id = c.id JOIN produtos p ON v.produto_id = p.id WHERE v.id = %s AND v.empresa_id = %s", (venda_id_recibo, emp_id))
-                    dados_recibo = cursor.fetchone()
+                    # Extraímos o código da venda a partir do texto do selectbox
+                    venda_id_recibo = int(venda_recibo_sel.split("Nº ")[1].split(" |")[0])
+                    
+                    conn = conectar_banco()
+                    cursor = conn.cursor()
+                    
+                    # 2. Mudamos o SELECT para buscar TODOS os itens daquele codigo_venda
+                    cursor.execute("""
+                        SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, v.valor_total, v.valor_entrada, v.valor_restante, v.forma_pagamento 
+                        FROM vendas v 
+                        JOIN clientes c ON v.cliente_id = c.id 
+                        JOIN produtos p ON v.produto_id = p.id 
+                        WHERE v.codigo_venda = %s AND v.empresa_id = %s
+                    """, (venda_id_recibo, emp_id))
+                    
+                    # fetchall() pega todas as linhas (todos os produtos) daquela venda
+                    dados_recibo = cursor.fetchall()
                     conn.close()
 
                     if dados_recibo:
-                        tel, nome_cli, data_v, nome_prod, qtd, v_total, v_ent, v_rest, forma_pag = dados_recibo
-                        msg = f"Olá, {nome_cli}! 🌸\n\nAqui está o resumo da sua compra do dia *{data_v}*:\n\n"
-                        msg += f"🛍️ *Produto:* {qtd}x {nome_prod}\n💰 *Valor Total:* R$ {v_total:.2f}\n"
-                        if v_ent > 0: msg += f"💸 *Entrada Paga:* R$ {v_ent:.2f}\n⏳ *Restante:* R$ {v_rest:.2f}\n"
-                        msg += f"💳 *Forma de Pagto:* {forma_pag}\n\nMuito obrigada pela preferência! ✨"
-                        st.text_area("Pré-visualização da Mensagem:", value=msg, height=200, disabled=True)
+                        # Pegamos os dados gerais (telefone, cliente, data) da primeira linha
+                        tel = dados_recibo[0][0]
+                        nome_cli = dados_recibo[0][1]
+                        data_v = dados_recibo[0][2]
+                        
+                        # Pegamos os dados financeiros da primeira linha 
+                        v_ent = dados_recibo[0][6] or 0
+                        v_rest = dados_recibo[0][7] or 0
+                        forma_pag = dados_recibo[0][8]
+                        
+                        # 3. Montamos a lista de produtos e somamos o total geral
+                        lista_produtos_msg = ""
+                        total_venda = 0
+                        
+                        for item in dados_recibo:
+                            nome_prod = item[3]
+                            qtd = item[4]
+                            v_total_item = item[5]
+                            
+                            lista_produtos_msg += f"▫️ {int(qtd)}x {nome_prod}\n"
+                            total_venda += v_total_item
+
+                        # 4. Construção da mensagem final
+                        msg = f"Olá, {nome_cli}! 🌸\n\n"
+                        msg += f"Aqui está o resumo da sua compra do dia *{data_v}*:\n\n"
+                        msg += f"🧾 *Venda Nº {venda_id_recibo}*\n\n"
+                        msg += f"*Produtos:*\n{lista_produtos_msg}\n"
+                        msg += f"💰 *Valor Total:* R$ {total_venda:.2f}\n"
+                        
+                        if v_ent > 0: 
+                            msg += f"💸 *Entrada Paga:* R$ {v_ent:.2f}\n⏳ *Restante:* R$ {v_rest:.2f}\n"
+                            
+                        msg += f"💳 *Forma de Pagto:* {forma_pag}\n\n"
+                        msg += "Muito obrigada pela preferência! ✨"
+                        
+                        st.text_area("Pré-visualização da Mensagem:", value=msg, height=250, disabled=True)
 
                         if tel:
                             tel_limpo = ''.join(filter(str.isdigit, str(tel)))
                             if len(tel_limpo) >= 10:
                                 if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
                                 link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
-                                st.link_button("🟢 Abrir no WhatsApp", link_wpp, type="primary")
-                            else: st.warning("⚠️ Telefone incompleto.")
-                        else: st.warning("⚠️ Cliente sem telefone.")
-                            
+                                st.link_button("🟢 Abrir no WhatsApp", link_wpp, type="primary", use_container_width=True)
+                            else: 
+                                st.warning("⚠️ Telefone incompleto.")
+                        else: 
+                            st.warning("⚠️ Cliente sem telefone.")                            
                 st.markdown("---")
                 
                 df_todas_vendas['Data_Filtro'] = pd.to_datetime(df_todas_vendas['Data'], dayfirst=True, errors='coerce').dt.date
