@@ -499,8 +499,7 @@ else:
     # ==========================================
     elif modulo == "🔄 Movimentações":
         st.title("🔄 Operações Diárias")
-        tab_venda, tab_compra = st.tabs(["🛒 PDV (Vendas)", "📥 Entrada de Notas (Compras)"])
-        
+        tab_venda, tab_compra, tab_historico_compras = st.tabs(["🛒 Frente de Caixa", "📥 Entrada de Mercadorias", "📋 Histórico de Entradas"])        
         with tab_venda:
             st.subheader("🛒 Frente de Caixa")
             
@@ -738,7 +737,56 @@ else:
                 if st.button("❌ Cancelar Importação"):
                     del st.session_state['produtos_pedido']
                     st.rerun()
-
+                    
+        with tab_historico_compras:
+            st.subheader("📋 Consulta de Notas e Pedidos de Entrada")
+            
+            # Filtros na parte superior
+            c_ini, c_fim = st.columns(2)
+            data_ini = c_ini.date_input("De:", value=date.today() - timedelta(days=30), format="DD/MM/YYYY", key="filtro_compra_ini")
+            data_fim = c_fim.date_input("Até:", value=date.today(), format="DD/MM/YYYY", key="filtro_compra_fim")
+            
+            # Busca as compras realizadas no período
+            query_compras = """
+                SELECT id, numero_pedido, to_char(data_entrada, 'DD/MM/YYYY') as data, valor_total 
+                FROM compras 
+                WHERE empresa_id = %s AND data_entrada BETWEEN %s AND %s
+                ORDER BY data_entrada DESC
+            """
+            df_historico = carregar_dados(query_compras, (emp_id, data_ini, data_fim))
+            
+            if not df_historico.empty:
+                st.markdown("### 🔍 Selecione uma Entrada para Ver os Itens")
+                
+                opcoes_compra = {
+                    row['id']: f"📦 Pedido: {row['numero_pedido']} | Data: {row['data']} | Total: R$ {row['valor_total']:.2f}"
+                    for _, row in df_historico.iterrows()
+                }
+                
+                compra_selecionada_id = st.selectbox(
+                    "Escolha a nota/pedido para inspecionar:", 
+                    options=list(opcoes_compra.keys()), 
+                    format_func=lambda x: opcoes_compra[x]
+                )
+                
+                if compra_selecionada_id:
+                    query_itens = """
+                        SELECT produto_referencia as "Código", nome_produto as "Produto", 
+                               quantidade as "Quantidade", preco_custo as "Preço Un. (R$)",
+                               (quantidade * preco_custo) as "Subtotal (R$)"
+                        FROM itens_compra 
+                        WHERE compra_id = %s
+                    """
+                    df_itens_compra = carregar_dados(query_itens, (int(compra_selecionada_id),))
+                    
+                    st.markdown("#### 🛒 Itens desta Entrada")
+                    st.dataframe(df_itens_compra, use_container_width=True, hide_index=True)
+                    
+                    dados_compra = df_historico[df_historico['id'] == compra_selecionada_id].iloc[0]
+                    st.metric(label="Valor Total da Nota", value=f"R$ {dados_compra['valor_total']:.2f}")
+            else:
+                st.warning("Nenhuma nota de entrada processada neste período.")
+    
     # ==========================================
     # MÓDULO 4: FINANCEIRO (Contas a Receber e Pagar COMPLETOS)
     # ==========================================
