@@ -303,7 +303,7 @@ else:
                 
                 st.markdown("---")
 
-st.subheader("📲 Enviar Recibo via WhatsApp")
+                st.subheader("📲 Enviar Recibo via WhatsApp")
                 
                 # 1. Filtramos o DataFrame para mostrar cada venda apenas UMA VEZ no selectbox
                 df_vendas_unicas = df_todas_vendas.drop_duplicates(subset=['Nº Venda'])
