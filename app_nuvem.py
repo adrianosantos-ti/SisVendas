@@ -602,9 +602,31 @@ else:
                     total_pdv = df_car['total'].sum()
                     st.header(f"Total da Venda: R$ {total_pdv:.2f}")
                     
+                    st.markdown("---")
+                    
+                    # --- OPÇÕES DE PAGAMENTO E PARCELAMENTO ---
+                    col_pag1, col_pag2 = st.columns(2)
+                    forma_pag = col_pag1.selectbox("Forma de Pagamento", ["Pix", "Dinheiro", "Cartão de Crédito", "Cartão de Débito", "Crediário"])
+                    
+                    qtd_parcelas = 1
+                    valor_entrada = 0.0
+
+                    if forma_pag in ["Crediário", "Cartão de Crédito"]:
+                        qtd_parcelas = col_pag2.number_input("Qtd. Parcelas totais (incluindo a entrada):", min_value=1, max_value=12, value=1)
+                    
+                    if forma_pag == "Crediário":
+                        valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0)
+                    
+                    valor_restante = total_pdv - valor_entrada
+                    
+                    if valor_entrada > 0:
+                        st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} em {qtd_parcelas - 1}x")
+                    
+                    st.markdown("---")
+                    
                     c1_finalizar, c2_limpar = st.columns(2)
                     
-                    if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
+if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
                         try:
                             conn = conectar_banco()
                             cur = conn.cursor()
@@ -624,14 +646,34 @@ else:
                                 
                                 cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
                             
-                            # Inserção no Financeiro
-                            val_parc = float(total_pdv / qtd_parcelas)
-                            dt_venc = data_1_venc
-                            for i in range(1, int(qtd_parcelas) + 1):
-                                status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
-                                cur.execute("INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                                           (novo_cod, cli_id_v, int(i), int(qtd_parcelas), val_parc, dt_venc.strftime("%d/%m/%Y"), status_venda, int(emp_id)))
-                                dt_venc += timedelta(days=30)
+                            # --- Inserção no Financeiro com Regra de Entrada ---
+                            val_parc_rest = 0.0
+                            if f_pag == "Crediário" and valor_entrada > 0:
+                                # 1ª Parcela: Valor da Entrada (Lançada como Paga na data de hoje)
+                                cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
+                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                           (novo_cod, cli_id_v, 1, int(qtd_parcelas), float(valor_entrada), data_venda_input.strftime("%d/%m/%Y"), 'Pago', int(emp_id)))
+                                
+                                # Processamento do saldo restante nas parcelas seguintes
+                                if qtd_parcelas > 1:
+                                    valor_restante = total_pdv - valor_entrada
+                                    val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
+                                    
+                                    for i in range(2, int(qtd_parcelas) + 1):
+                                        dt_venc = data_1_venc + timedelta(days=30 * (i - 2))
+                                        cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
+                                                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                   (novo_cod, cli_id_v, int(i), int(qtd_parcelas), val_parc_rest, dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
+                            else:
+                                # FLUXO PADRÃO: Vendas sem entrada ou outras formas de pagamento
+                                val_parc = float(total_pdv / qtd_parcelas)
+                                dt_venc = data_1_venc
+                                for i in range(1, int(qtd_parcelas) + 1):
+                                    status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
+                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
+                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                               (novo_cod, cli_id_v, int(i), int(qtd_parcelas), val_parc, dt_venc.strftime("%d/%m/%Y"), status_venda, int(emp_id)))
+                                    dt_venc += timedelta(days=30)
                             
                             # --- CAPTURA E MONTAGEM DO LINK DO WHATSAPP ---
                             cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
@@ -641,18 +683,22 @@ else:
                             # 1. Varre o carrinho e monta a lista de todos os produtos
                             lista_produtos_msg = ""
                             for it in st.session_state['carrinho']:
-                                # O += vai empilhando os itens: 1x Batom, 2x Base, etc.
                                 lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']}\n"
                             
                             # 2. Monta a mensagem completa inserindo a lista construída acima
                             msg = f"Olá, {cliente_pdv}! 🌸\n\n"
                             msg += f"Resumo da sua compra (*{data_v}*):\n"
                             msg += f"🧾 *Venda Nº {novo_cod}*\n\n"
-                            msg += f"*Produtos:*\n{lista_produtos_msg}\n" # Aqui entram todos os itens!
+                            msg += f"*Produtos:*\n{lista_produtos_msg}\n"
                             msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n"
                             
                             if qtd_parcelas > 1:
-                                msg += f"💳 *Parcelamento:* {qtd_parcelas}x de R$ {val_parc:.2f}\n"
+                                if f_pag == "Crediário" and valor_entrada > 0:
+                                    msg += f"💸 *Entrada Paga:* R$ {valor_entrada:.2f}\n"
+                                    if qtd_parcelas > 1:
+                                        msg += f"💳 *Restante:* {qtd_parcelas - 1}x de R$ {val_parc_rest:.2f}\n"
+                                else:
+                                    msg += f"💳 *Parcelamento:* {qtd_parcelas}x de R$ {val_parc:.2f}\n"
                             else:
                                 msg += f"💳 *Forma de Pagto:* {f_pag}\n"
                                 
@@ -700,7 +746,8 @@ else:
                         if 'zap_msg' in st.session_state: del st.session_state['zap_msg']
                         if 'zap_codigo' in st.session_state: del st.session_state['zap_codigo']
                         if 'zap_total' in st.session_state: del st.session_state['zap_total']
-                        st.rerun()                
+                        st.rerun()
+                        
         with tab_compra:
             st.subheader("📥 Entrada de Mercadorias (via PDF Direto)")
             st.info("Faça o upload do PDF do seu pedido. O sistema vai extrair os produtos e gerar uma planilha para você revisar as quantidades.")
