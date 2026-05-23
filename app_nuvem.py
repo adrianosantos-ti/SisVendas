@@ -320,29 +320,25 @@ else:
                     
                     # 2. Mudamos o SELECT para buscar TODOS os itens daquele codigo_venda
                     cursor.execute("""
-                        SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, v.valor_total, v.valor_entrada, v.valor_restante, v.forma_pagamento 
+                        SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, v.valor_total, v.valor_entrada, v.valor_restante, v.forma_pagamento, v.valor_unitario
                         FROM vendas v 
                         JOIN clientes c ON v.cliente_id = c.id 
                         JOIN produtos p ON v.produto_id = p.id 
                         WHERE v.codigo_venda = %s AND v.empresa_id = %s
                     """, (venda_id_recibo, emp_id))
                     
-                    # fetchall() pega todas as linhas (todos os produtos) daquela venda
                     dados_recibo = cursor.fetchall()
                     conn.close()
 
                     if dados_recibo:
-                        # Pegamos os dados gerais (telefone, cliente, data) da primeira linha
                         tel = dados_recibo[0][0]
                         nome_cli = dados_recibo[0][1]
                         data_v = dados_recibo[0][2]
                         
-                        # Pegamos os dados financeiros da primeira linha 
                         v_ent = dados_recibo[0][6] or 0
                         v_rest = dados_recibo[0][7] or 0
                         forma_pag = dados_recibo[0][8]
                         
-                        # 3. Montamos a lista de produtos e somamos o total geral
                         lista_produtos_msg = ""
                         total_venda = 0
                         
@@ -350,19 +346,28 @@ else:
                             nome_prod = item[3]
                             qtd = item[4]
                             v_total_item = item[5]
+                            v_unitario = item[9] # Aqui pegamos o preço unitário
                             
-                            lista_produtos_msg += f"▫️ {int(qtd)}x {nome_prod}\n"
+                            # Formatando para ficar com vírgula em vez de ponto
+                            preco_formatado = f"{v_unitario:.2f}".replace('.', ',')
+                            
+                            # Adicionando o preço unitário na frente do nome
+                            lista_produtos_msg += f"▫️ {int(qtd)}x {nome_prod} (R$ {preco_formatado})\n"
                             total_venda += v_total_item
 
-                        # 4. Construção da mensagem final
+                        # Formatando os totais gerais com vírgula
+                        total_str = f"{total_venda:.2f}".replace('.', ',')
+                        v_ent_str = f"{v_ent:.2f}".replace('.', ',')
+                        v_rest_str = f"{v_rest:.2f}".replace('.', ',')
+
                         msg = f"Olá, {nome_cli}! 🌸\n\n"
                         msg += f"Aqui está o resumo da sua compra do dia *{data_v}*:\n\n"
                         msg += f"🧾 *Venda Nº {venda_id_recibo}*\n\n"
                         msg += f"*Produtos:*\n{lista_produtos_msg}\n"
-                        msg += f"💰 *Valor Total:* R$ {total_venda:.2f}\n"
+                        msg += f"💰 *Valor Total:* R$ {total_str}\n"
                         
                         if v_ent > 0: 
-                            msg += f"💸 *Entrada Paga:* R$ {v_ent:.2f}\n⏳ *Restante:* R$ {v_rest:.2f}\n"
+                            msg += f"💸 *Entrada Paga:* R$ {v_ent_str}\n⏳ *Restante:* R$ {v_rest_str}\n"
                             
                         msg += f"💳 *Forma de Pagto:* {forma_pag}\n\n"
                         msg += "Muito obrigada pela preferência! ✨"
