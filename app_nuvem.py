@@ -1034,14 +1034,14 @@ else:
                 c.telefone, 
                 v.codigo_venda,
                 v.data_venda,
-                (CURRENT_DATE - v.data_venda) as dias_passados
+                (CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) as dias_passados
             FROM vendas v
             JOIN clientes c ON v.cliente_id = c.id
             WHERE v.empresa_id = %s
             AND (
-                (CURRENT_DATE - v.data_venda) BETWEEN 2 AND 5
-                OR (CURRENT_DATE - v.data_venda) BETWEEN 14 AND 20
-                OR (CURRENT_DATE - v.data_venda) BETWEEN 60 AND 75
+                (CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) BETWEEN 2 AND 5
+                OR (CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) BETWEEN 14 AND 20
+                OR (CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) >= 60
             )
             GROUP BY c.id, c.nome, c.telefone, v.codigo_venda, v.data_venda
             ORDER BY dias_passados ASC
