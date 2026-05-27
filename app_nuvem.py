@@ -606,25 +606,53 @@ else:
                 
                 st.markdown("---")
                 
-                # 2. Seleção de Produto e Preço de Tabela
-                prod_pdv = st.selectbox("Produto:", options=df_pro['nome'].tolist())
-                p_info = df_pro[df_pro['nome'] == prod_pdv].iloc[0]
-                st.info(f"🏷️ Preço de Tabela: **R$ {p_info['valor']:.2f}**")
+                # 2. Seleção de Produto e Preço de Tabela# 
+                1. Cria uma coluna visual juntando Nome e Estoque para a barra de pesquisa
+                df_pro['display_pesquisa'] = df_pro.apply(
+                    lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
+                )
                 
+                # 2. O selectbox agora funciona como uma busca rápida turbinada
+                prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist())
+                
+                # 3. Puxamos as informações baseadas na escolha
+                p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
+                estoque_atual = int(p_info['quantidade'])
+                preco_tabela = float(p_info['valor'])
+                
+                # --- PAINEL VISUAL DE ESTOQUE E PREÇO ---
+                if estoque_atual <= 0:
+                    st.error(f"🚨 ESTOQUE ZERADO! Você não tem {p_info['nome']} disponível.")
+                elif estoque_atual == 1:
+                    st.warning(f"⚠️ Atenção: Esta é a ÚLTIMA UNIDADE de {p_info['nome']}!")
+                elif estoque_atual <= 3:
+                    st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades.")
+                else:
+                    st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**")
+                
+                # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
                 with st.form("form_add_carrinho", clear_on_submit=True):
                     c3, c4 = st.columns(2)
-                    q_pdv = c3.number_input("Quantidade:", min_value=1, step=1, value=1)
+                    
+                    # O limite máximo do number_input agora é o próprio estoque atual (se for > 0)
+                    limite_qtd = estoque_atual if estoque_atual > 0 else 1
+                    q_pdv = c3.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
                     desc_pdv = c4.number_input("Desconto Unitário (R$):", min_value=0.0, step=1.0, format="%.2f")
                     
-                    if st.form_submit_button("➕ Adicionar ao Carrinho"):
-                        if (p_info['quantidade']) >= q_pdv:
+                    # Se o estoque for zero, o botão fica desabilitado nativamente
+                    if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=(estoque_atual <= 0)):
+                        if estoque_atual >= q_pdv:
                             st.session_state['carrinho'].append({
-                                'id': p_info['id'], 'nome': prod_pdv, 'qtd': q_pdv, 
-                                'unit': p_info['valor'], 'desc': desc_pdv, 
-                                'total': (p_info['valor'] - desc_pdv) * q_pdv
+                                'id': p_info['id'], 
+                                'nome': p_info['nome'], 
+                                'qtd': q_pdv, 
+                                'unit': preco_tabela, 
+                                'desc': desc_pdv, 
+                                'total': (preco_tabela - desc_pdv) * q_pdv
                             })
                             st.rerun()
-                        else: st.error("Estoque insuficiente!")
+                        else: 
+                            st.error("Estoque insuficiente!")
 
                 # 3. Carrinho e Finalização
                 if st.session_state['carrinho']:
