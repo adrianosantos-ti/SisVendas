@@ -13,6 +13,18 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
 import urllib.parse
 
+# Código para esconder o "Running indicator" (bonequinho correndo)
+st.markdown(
+    """
+    <style>
+    [data-testid="stStatusWidget"] {
+        visibility: hidden;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # ==========================================
 # CONFIGURAÇÃO DE BANCO DE DADOS (NUVEM)
 # ==========================================
