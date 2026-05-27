@@ -607,7 +607,7 @@ else:
                 st.markdown("---")
                 
                 # 2. Seleção de Produto e Preço de Tabela# 
-                1. Cria uma coluna visual juntando Nome e Estoque para a barra de pesquisa
+                # 1. Cria uma coluna visual juntando Nome e Estoque para a barra de pesquisa
                 df_pro['display_pesquisa'] = df_pro.apply(
                     lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
                 )
