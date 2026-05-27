@@ -693,7 +693,7 @@ else:
                     if valor_entrada > 0:
                         st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} lançado em {int(qtd_parcelas)}x de R$ {(valor_restante / qtd_parcelas):.2f}".replace('.', ','))
                     elif qtd_parcelas > 1:
-                        st.info(f"💳 Parcelamento: {int(qtd_parcelas)}x de R$ {(total_pdv / qtd_parcelas):.2f} (Sem entrada)".replace('.', ','))
+                        st.info(f"💳 Parcelamento: {int(qtd_parcelas)}x de R$ {(total_pdv / qtd_parcelas):.2f} ".replace('.', ','))
                     
                     st.markdown("---")              
                     c1_finalizar, c2_limpar = st.columns(2)
