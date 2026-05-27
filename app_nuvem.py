@@ -458,13 +458,19 @@ else:
         with tab_cli:
             st.header("Gerenciamento de Clientes")
             
-            hoje_str = date.today().strftime("%d/%m")
+            from datetime import datetime
+            import pytz
+
+            # Força o sistema a usar o fuso horário correto
+            fuso_local = pytz.timezone('America/Fortaleza')
+            hoje_str = datetime.now(fuso_local).strftime("%d/%m")
+
             df_aniv = carregar_dados("SELECT nome, telefone FROM clientes WHERE empresa_id=%s AND data_nascimento=%s", (emp_id, hoje_str))
             if not df_aniv.empty:
                 st.success(f"🎉 Temos {len(df_aniv)} aniversariante(s) hoje ({hoje_str})!")
                 st.dataframe(df_aniv, use_container_width=True, hide_index=True)
             else:
-                st.info(f"Nenhum aniversariante hoje ({hoje_str}).")
+                st.info(f"Nenhum aniversariante hoje ({hoje_str}).")            
             
             st.markdown("---")
             
