@@ -326,9 +326,11 @@ else:
                     conn = conectar_banco()
                     cursor = conn.cursor()
                     
-                    # 2. Buscamos TODOS os itens daquele codigo_venda
+                    # 2. Buscamos TODOS os itens daquele codigo_venda# 1. Adicionamos a coluna das parcelas no SELECT (ex: v.qtd_parcelas)
                     cursor.execute("""
-                        SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, v.valor_total, v.valor_entrada, v.valor_restante, v.forma_pagamento, v.valor_unitario
+                        SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
+                               v.valor_total, v.valor_entrada, v.valor_restante, 
+                               v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
                         FROM vendas v 
                         JOIN clientes c ON v.cliente_id = c.id 
                         JOIN produtos p ON v.produto_id = p.id 
@@ -346,10 +348,12 @@ else:
                         v_ent = dados_recibo[0][6] or 0
                         v_rest = dados_recibo[0][7] or 0
                         forma_pag = dados_recibo[0][8]
+                        # 2. Capturamos a quantidade de parcelas no índice 10
+                        qtd_parc = dados_recibo[0][10] or 1 
                         
                         lista_produtos_msg = ""
                         total_venda = 0
-                        subtotal_recibo = 0.0 # Nova variável para acumular o valor sem desconto
+                        subtotal_recibo = 0.0 
                         
                         for item in dados_recibo:
                             nome_prod = item[3]
@@ -357,17 +361,13 @@ else:
                             v_total_item = item[5]
                             v_unitario = item[9]
                             
-                            # Calcula o valor cheio original deste item
                             subtotal_item = float(v_unitario) * int(qtd)
                             subtotal_recibo += subtotal_item
                             
-                            # Formatando para ficar com vírgula em vez de ponto
                             preco_formatado = f"{v_unitario:.2f}".replace('.', ',')
-                            
                             lista_produtos_msg += f"▫️ {int(qtd)}x {nome_prod} (R$ {preco_formatado})\n"
                             total_venda += v_total_item
 
-                        # Formatando os totais gerais com vírgula
                         total_str = f"{total_venda:.2f}".replace('.', ',')
                         v_ent_str = f"{v_ent:.2f}".replace('.', ',')
                         v_rest_str = f"{v_rest:.2f}".replace('.', ',')
@@ -377,7 +377,6 @@ else:
                         msg += f"🧾 *Venda Nº {venda_id_recibo}*\n\n"
                         msg += f"*Produtos:*\n{lista_produtos_msg}\n"
                         
-                        # --- EXIBIÇÃO DETALHADA DE DESCONTO ---
                         if subtotal_recibo > total_venda:
                             valor_desconto = subtotal_recibo - total_venda
                             subtotal_str = f"{subtotal_recibo:.2f}".replace('.', ',')
@@ -387,12 +386,22 @@ else:
                         
                         msg += f"💰 *Valor Total:* R$ {total_str}\n"
                         
-                        # --- DETALHAMENTO DO CREDIÁRIO / FORMA DE PAGAMENTO ---
+                        # --- 3. DETALHAMENTO DO CREDIÁRIO COM PARCELAS ---
                         if forma_pag == "Crediário":
                             if v_ent > 0: 
-                                msg += f"💸 *Entrada Paga:* R$ {v_ent_str}\n⏳ *Restante:* R$ {v_rest_str}\n"
+                                msg += f"💸 *Entrada Paga:* R$ {v_ent_str}\n"
+                                msg += f"⏳ *Restante:* R$ {v_rest_str} (em {qtd_parc}x)\n"
+                            elif qtd_parc > 1:
+                                valor_parc = total_venda / qtd_parc
+                                valor_parc_str = f"{valor_parc:.2f}".replace('.', ',')
+                                msg += f"💳 *Crediário:* {qtd_parc}x de R$ {valor_parc_str}\n"
                             else:
                                 msg += f"💳 *Forma de Pagto:* Crediário\n"
+                        elif qtd_parc > 1:
+                            # Serve também para cartão de crédito parcelado
+                            valor_parc = total_venda / qtd_parc
+                            valor_parc_str = f"{valor_parc:.2f}".replace('.', ',')
+                            msg += f"💳 *Parcelamento:* {qtd_parc}x de R$ {valor_parc_str}\n"
                         else:
                             msg += f"💳 *Forma de Pagto:* {forma_pag}\n"
                             
@@ -410,6 +419,7 @@ else:
                                 st.warning("⚠️ Telefone incompleto.")
                         else: 
                             st.warning("⚠️ Cliente sem telefone.")                                           
+                            
                 st.markdown("---")                
                 df_todas_vendas['Data_Filtro'] = pd.to_datetime(df_todas_vendas['Data'], dayfirst=True, errors='coerce').dt.date
                 data_min = df_todas_vendas['Data_Filtro'].min() if not pd.isna(df_todas_vendas['Data_Filtro'].min()) else date.today()
