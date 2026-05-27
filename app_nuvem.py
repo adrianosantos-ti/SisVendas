@@ -618,25 +618,24 @@ else:
                     
                     st.markdown("---")
                     
-                    # --- OPÇÕES DE PARCELAMENTO E ENTRADA ---
-                    # Como a forma de pagamento (f_pag) já foi escolhida lá em cima,
-                    # só mostramos os campos de parcelamento e entrada se for a prazo.
-                    qtd_parcelas = 1
+                    # --- OPÇÕES DE ENTRADA E RESUMO ---
+                    # A forma de pagamento (f_pag) e a quantidade de parcelas (qtd_parcelas) 
+                    # já foram escolhidas lá em cima. Aqui só capturamos a entrada.
+                    
                     valor_entrada = 0.0
 
                     if f_pag == "Crediário":
                         valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0)
                     
-                    if f_pag in ["Crediário", "Cartão de Crédito"]:
-                        label_parc = "Qtd. de Parcelas para o Saldo:" if f_pag == "Crediário" and valor_entrada > 0 else "Qtd. de Parcelas:"
-                        qtd_parcelas = st.number_input(label_parc, min_value=1, max_value=12, value=1)
-                    
                     valor_restante = total_pdv - valor_entrada
                     
+                    # Mostra um painel visual de como vai ficar o parcelamento
                     if valor_entrada > 0:
-                        st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} lançado em {qtd_parcelas}x para a frente")
+                        st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} lançado em {qtd_parcelas}x de R$ {(valor_restante / qtd_parcelas):.2f}")
+                    elif qtd_parcelas > 1:
+                        st.info(f"💳 Parcelamento: {qtd_parcelas}x de R$ {(total_pdv / qtd_parcelas):.2f} (Sem entrada)")
                     
-                    st.markdown("---")                    
+                    st.markdown("---")             
                     c1_finalizar, c2_limpar = st.columns(2)
                     
                     if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
