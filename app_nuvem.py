@@ -633,23 +633,34 @@ else:
                 
                 # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
                 with st.form("form_add_carrinho", clear_on_submit=True):
-                    c3, c4 = st.columns(2)
+                    # Dividimos em 3 colunas iguais para ficar bonito na tela
+                    c1, c2, c3 = st.columns(3)
                     
-                    # O limite máximo do number_input agora é o próprio estoque atual (se for > 0)
                     limite_qtd = estoque_atual if estoque_atual > 0 else 1
-                    q_pdv = c3.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
-                    desc_pdv = c4.number_input("Desconto Unitário (R$):", min_value=0.0, step=1.0, format="%.2f")
+                    q_pdv = c1.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
                     
-                    # Se o estoque for zero, o botão fica desabilitado nativamente
+                    # Campos independentes de desconto
+                    desc_rs = c2.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f")
+                    desc_perc = c3.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
+                    
                     if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=(estoque_atual <= 0)):
                         if estoque_atual >= q_pdv:
+                            
+                            # --- LÓGICA INTELIGENTE DE DESCONTO ---
+                            # Se a porcentagem foi preenchida, o sistema calcula o valor em R$
+                            if desc_perc > 0:
+                                desconto_final = preco_tabela * (desc_perc / 100.0)
+                            else:
+                                # Caso contrário, usa o valor em R$ digitado direto
+                                desconto_final = desc_rs
+                                
                             st.session_state['carrinho'].append({
                                 'id': p_info['id'], 
                                 'nome': p_info['nome'], 
                                 'qtd': q_pdv, 
                                 'unit': preco_tabela, 
-                                'desc': desc_pdv, 
-                                'total': (preco_tabela - desc_pdv) * q_pdv
+                                'desc': desconto_final, 
+                                'total': (preco_tabela - desconto_final) * q_pdv
                             })
                             st.rerun()
                         else: 
