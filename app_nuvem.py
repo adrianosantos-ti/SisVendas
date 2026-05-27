@@ -621,12 +621,13 @@ else:
                 preco_tabela = float(p_info['valor'])
                 
                 # --- PAINEL VISUAL DE ESTOQUE E PREÇO ---
+                # O preço agora é fixo e aparece em todas as condições!
                 if estoque_atual <= 0:
-                    st.error(f"🚨 ESTOQUE ZERADO! Você não tem {p_info['nome']} disponível.")
+                    st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**")
                 elif estoque_atual == 1:
-                    st.warning(f"⚠️ Atenção: Esta é a ÚLTIMA UNIDADE de {p_info['nome']}!")
+                    st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**")
                 elif estoque_atual <= 3:
-                    st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades.")
+                    st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**")
                 else:
                     st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**")
                 
