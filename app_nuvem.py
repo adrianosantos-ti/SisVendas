@@ -326,7 +326,7 @@ else:
                     conn = conectar_banco()
                     cursor = conn.cursor()
                     
-                    # 2. Mudamos o SELECT para buscar TODOS os itens daquele codigo_venda
+                    # 2. Buscamos TODOS os itens daquele codigo_venda
                     cursor.execute("""
                         SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, v.valor_total, v.valor_entrada, v.valor_restante, v.forma_pagamento, v.valor_unitario
                         FROM vendas v 
@@ -349,17 +349,21 @@ else:
                         
                         lista_produtos_msg = ""
                         total_venda = 0
+                        subtotal_recibo = 0.0 # Nova variável para acumular o valor sem desconto
                         
                         for item in dados_recibo:
                             nome_prod = item[3]
                             qtd = item[4]
                             v_total_item = item[5]
-                            v_unitario = item[9] # Aqui pegamos o preço unitário
+                            v_unitario = item[9]
+                            
+                            # Calcula o valor cheio original deste item
+                            subtotal_item = float(v_unitario) * int(qtd)
+                            subtotal_recibo += subtotal_item
                             
                             # Formatando para ficar com vírgula em vez de ponto
                             preco_formatado = f"{v_unitario:.2f}".replace('.', ',')
                             
-                            # Adicionando o preço unitário na frente do nome
                             lista_produtos_msg += f"▫️ {int(qtd)}x {nome_prod} (R$ {preco_formatado})\n"
                             total_venda += v_total_item
 
@@ -372,13 +376,27 @@ else:
                         msg += f"Aqui está o resumo da sua compra do dia *{data_v}*:\n\n"
                         msg += f"🧾 *Venda Nº {venda_id_recibo}*\n\n"
                         msg += f"*Produtos:*\n{lista_produtos_msg}\n"
+                        
+                        # --- EXIBIÇÃO DETALHADA DE DESCONTO ---
+                        if subtotal_recibo > total_venda:
+                            valor_desconto = subtotal_recibo - total_venda
+                            subtotal_str = f"{subtotal_recibo:.2f}".replace('.', ',')
+                            desconto_str = f"{valor_desconto:.2f}".replace('.', ',')
+                            msg += f"🏷️ *Subtotal:* R$ {subtotal_str}\n"
+                            msg += f"🎁 *Desconto:* - R$ {desconto_str}\n"
+                        
                         msg += f"💰 *Valor Total:* R$ {total_str}\n"
                         
-                        if v_ent > 0: 
-                            msg += f"💸 *Entrada Paga:* R$ {v_ent_str}\n⏳ *Restante:* R$ {v_rest_str}\n"
+                        # --- DETALHAMENTO DO CREDIÁRIO / FORMA DE PAGAMENTO ---
+                        if forma_pag == "Crediário":
+                            if v_ent > 0: 
+                                msg += f"💸 *Entrada Paga:* R$ {v_ent_str}\n⏳ *Restante:* R$ {v_rest_str}\n"
+                            else:
+                                msg += f"💳 *Forma de Pagto:* Crediário\n"
+                        else:
+                            msg += f"💳 *Forma de Pagto:* {forma_pag}\n"
                             
-                        msg += f"💳 *Forma de Pagto:* {forma_pag}\n\n"
-                        msg += "Muito obrigada pela preferência! ✨"
+                        msg += "\nMuito obrigada pela preferência! ✨"
                         
                         st.text_area("Pré-visualização da Mensagem:", value=msg, height=250, disabled=True)
 
@@ -391,9 +409,8 @@ else:
                             else: 
                                 st.warning("⚠️ Telefone incompleto.")
                         else: 
-                            st.warning("⚠️ Cliente sem telefone.")                            
-                st.markdown("---")
-                
+                            st.warning("⚠️ Cliente sem telefone.")                                           
+                st.markdown("---")                
                 df_todas_vendas['Data_Filtro'] = pd.to_datetime(df_todas_vendas['Data'], dayfirst=True, errors='coerce').dt.date
                 data_min = df_todas_vendas['Data_Filtro'].min() if not pd.isna(df_todas_vendas['Data_Filtro'].min()) else date.today()
                 data_max = df_todas_vendas['Data_Filtro'].max() if not pd.isna(df_todas_vendas['Data_Filtro'].max()) else date.today()
