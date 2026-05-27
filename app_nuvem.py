@@ -150,6 +150,13 @@ else:
     # ---------------------------------------------------------
     # MENU LATERAL DE MÓDULOS
     # ---------------------------------------------------------
+    # 1. A PRIMEIRA coisa do Streamlit no código TEM que ser a configuração da página:
+    st.set_page_config(
+        page_title="Meu PDV",
+        page_icon="🛍️", # Pode usar 🛒, 🛍️, 👗, etc.
+        layout="wide"
+     )
+    
     st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1063/1063376.png", width=80)
     st.sidebar.title(f"Módulos")
     modulo = st.sidebar.radio("Navegação Principal:", [
