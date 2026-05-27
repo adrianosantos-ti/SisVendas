@@ -616,93 +616,86 @@ else:
                 
                 st.markdown("---")
                 
-                # 2. Seleção de Produto e Preço de Tabela# 
-                # 1. Cria uma coluna visual juntando Nome e Estoque para a barra de pesquisa
+                # 2. Seleção de Produto com Visão Dinâmica de Estoque
                 df_pro['display_pesquisa'] = df_pro.apply(
                     lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
                 )
                 
-                # 2. O selectbox agora funciona como uma busca rápida turbinada
                 prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist())
                 
-                # 3. Puxamos as informações baseadas na escolha
+                # Resgate das informações baseadas na escolha do menu de busca
                 p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
                 estoque_atual = int(p_info['quantidade'])
                 preco_tabela = float(p_info['valor'])
                 
-                # --- PAINEL VISUAL DE ESTOQUE E PREÇO ---
-                # O preço agora é fixo e aparece em todas as condições!
+                # --- PAINEL VISUAL DE ESTOQUE E PREÇO FIXO ---
                 if estoque_atual <= 0:
-                    st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**")
+                    st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
                 elif estoque_atual == 1:
-                    st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**")
+                    st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
                 elif estoque_atual <= 3:
-                    st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**")
+                    st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
                 else:
-                    st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**")
+                    st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
                 
-                # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
+                # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO COM OPÇÃO DUPLA DE DESCONTO ---
                 with st.form("form_add_carrinho", clear_on_submit=True):
-                    # Dividimos em 3 colunas iguais para ficar bonito na tela
                     c1, c2, c3 = st.columns(3)
                     
                     limite_qtd = estoque_atual if estoque_atual > 0 else 1
                     q_pdv = c1.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
                     
-                    # Campos independentes de desconto
+                    # Campos independentes de desconto (Valor líquido ou Porcentagem)
                     desc_rs = c2.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f")
                     desc_perc = c3.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
                     
                     if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=(estoque_atual <= 0)):
                         if estoque_atual >= q_pdv:
                             
-                            # --- LÓGICA INTELIGENTE DE DESCONTO ---
-                            # Se a porcentagem foi preenchida, o sistema calcula o valor em R$
+                            # Lógica inteligente de prioridade: Porcentagem calcula por cima do preço de tabela
                             if desc_perc > 0:
                                 desconto_final = preco_tabela * (desc_perc / 100.0)
                             else:
-                                # Caso contrário, usa o valor em R$ digitado direto
                                 desconto_final = desc_rs
                                 
                             st.session_state['carrinho'].append({
-                                'id': p_info['id'], 
-                                'nome': p_info['nome'], 
-                                'qtd': q_pdv, 
-                                'unit': preco_tabela, 
-                                'desc': desconto_final, 
-                                'total': (preco_tabela - desconto_final) * q_pdv
+                                'id': int(p_info['id']), 
+                                'nome': str(p_info['nome']), 
+                                'qtd': int(q_pdv), 
+                                'unit': float(preco_tabela), 
+                                'desc': float(desconto_final), 
+                                'total': float((preco_tabela - desconto_final) * q_pdv)
                             })
                             st.rerun()
                         else: 
                             st.error("Estoque insuficiente!")
 
-                # 3. Carrinho e Finalização
+                # 3. Carrinho e Finalização Operacional
                 if st.session_state['carrinho']:
                     df_car = pd.DataFrame(st.session_state['carrinho'])
                     st.table(df_car[['nome', 'qtd', 'unit', 'desc', 'total']])
-                    total_pdv = df_car['total'].sum()
-                    st.header(f"Total da Venda: R$ {total_pdv:.2f}")
+                    
+                    # Forçamos a soma a ser um float primitivo do Python para banir o tipo np.float64
+                    total_pdv = float(df_car['total'].sum())
+                    st.header(f"Total da Venda: R$ {total_pdv:.2f}".replace('.', ','))
                     
                     st.markdown("---")
                     
                     # --- OPÇÕES DE ENTRADA E RESUMO ---
-                    # A forma de pagamento (f_pag) e a quantidade de parcelas (qtd_parcelas) 
-                    # já foram escolhidas lá em cima. Aqui só capturamos a entrada.
-                    
                     valor_entrada = 0.0
 
                     if f_pag == "Crediário":
                         valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0)
                     
-                    valor_restante = total_pdv - valor_entrada
+                    valor_restante = float(total_pdv - valor_entrada)
                     
-                    # Mostra um painel visual de como vai ficar o parcelamento
+                    # Painel visual informativo do parcelamento para o operador do caixa
                     if valor_entrada > 0:
-                        st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} lançado em {qtd_parcelas}x de R$ {(valor_restante / qtd_parcelas):.2f}")
+                        st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} lançado em {int(qtd_parcelas)}x de R$ {(valor_restante / qtd_parcelas):.2f}".replace('.', ','))
                     elif qtd_parcelas > 1:
-                        st.info(f"💳 Parcelamento: {qtd_parcelas}x de R$ {(total_pdv / qtd_parcelas):.2f} (Sem entrada)")
+                        st.info(f"💳 Parcelamento: {int(qtd_parcelas)}x de R$ {(total_pdv / qtd_parcelas):.2f} (Sem entrada)".replace('.', ','))
                     
-                    st.markdown("---")             
+                    st.markdown("---")              
                     c1_finalizar, c2_limpar = st.columns(2)
                     
                     if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
@@ -717,11 +710,25 @@ else:
                             data_v = data_venda_input.strftime("%d/%m/%Y")
                             cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
                             
-                            # Inserção de itens
+                            # Gravação dos itens expurgando tipos nativos do Pandas/NumPy
                             for it in st.session_state['carrinho']:
                                 cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas) 
                                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                           (novo_cod, cli_id_v, int(it['id']), int(it['qtd']), data_v, float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), f_pag, valor_entrada, valor_restante, qtd_parcelas))
+                                           (
+                                               int(novo_cod), 
+                                               int(cli_id_v), 
+                                               int(it['id']), 
+                                               int(it['qtd']), 
+                                               str(data_v), 
+                                               float(it['total']), 
+                                               int(emp_id), 
+                                               float(it['unit']), 
+                                               float(it['desc']), 
+                                               str(f_pag), 
+                                               float(valor_entrada), 
+                                               float(valor_restante), 
+                                               int(qtd_parcelas)
+                                           ))
                                 
                                 cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
                             
@@ -731,7 +738,7 @@ else:
                                 # 1ª Parcela: Valor da Entrada (Lançada como Paga na data de hoje)
                                 cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
                                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                           (novo_cod, cli_id_v, 1, int(qtd_parcelas), float(valor_entrada), data_venda_input.strftime("%d/%m/%Y"), 'Pago', int(emp_id)))
+                                           (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), data_venda_input.strftime("%d/%m/%Y"), 'Pago', int(emp_id)))
                                 
                                 # Processamento do saldo restante nas parcelas seguintes
                                 if qtd_parcelas > 1:
@@ -742,7 +749,7 @@ else:
                                         dt_venc = data_1_venc + timedelta(days=30 * (i - 2))
                                         cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
                                                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                   (novo_cod, cli_id_v, int(i), int(qtd_parcelas), val_parc_rest, dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
+                                                   (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc_rest), dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
                             else:
                                 # FLUXO PADRÃO: Vendas sem entrada ou outras formas de pagamento
                                 val_parc = float(total_pdv / qtd_parcelas)
@@ -751,7 +758,7 @@ else:
                                     status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
                                     cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                               (novo_cod, cli_id_v, int(i), int(qtd_parcelas), val_parc, dt_venc.strftime("%d/%m/%Y"), status_venda, int(emp_id)))
+                                               (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, int(emp_id)))
                                     dt_venc += timedelta(days=30)
                             
                             # --- CAPTURA E MONTAGEM DO LINK DO WHATSAPP ---
@@ -760,7 +767,7 @@ else:
                             tel_cli = resultado_tel[0] if resultado_tel else None
                             
                             lista_produtos_msg = ""
-                            subtotal_recibo = 0.0 # Criamos uma variável para somar o valor cheio
+                            subtotal_recibo = 0.0
                             
                             for it in st.session_state['carrinho']:
                                 preco_unit = float(it['unit'])
@@ -771,36 +778,40 @@ else:
                                 lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {preco_formatado})\n"
                             
                             msg = f"Olá, {cliente_pdv}! 🌸\n\n"
-                            msg += f"Resumo da sua compra (*{data_v}*):\n"
+                            msg += f"Aqui está o resumo da sua compra do dia *{data_v}*:\n\n"
                             msg += f"🧾 *Venda Nº {novo_cod}*\n\n"
                             msg += f"*Produtos:*\n{lista_produtos_msg}\n"
                             
-                            # Se o subtotal for maior que o total pago, mostramos o desconto!
+                            # Se o subtotal for maior que o total pago, mostramos o desconto de forma clara
                             if subtotal_recibo > total_pdv:
                                 valor_desconto = subtotal_recibo - total_pdv
-                                msg += f"🏷️ *Subtotal:* R$ {subtotal_recibo:.2f}\n".replace('.', ',')
-                                msg += f"🎁 *Desconto:* - R$ {valor_desconto:.2f}\n".replace('.', ',')
+                                subtotal_str = f"{subtotal_recibo:.2f}".replace('.', ',')
+                                desconto_str = f"{valor_desconto:.2f}".replace('.', ',')
+                                msg += f"🏷️ *Subtotal:* R$ {subtotal_str}\n"
+                                msg += f"🎁 *Desconto:* - R$ {desconto_str}\n"
                                 
                             total_str = f"{total_pdv:.2f}".replace('.', ',')
                             msg += f"💰 *Valor Total:* R$ {total_str}\n"
                             
-                            # Ajuste para exibir os detalhes do Crediário corretamente
+                            # Exibição dos detalhes de parcelamento e crediário com quebras corretas
                             if f_pag == "Crediário":
                                 if valor_entrada > 0:
-                                    msg += f"💸 *Entrada Paga:* R$ {valor_entrada:.2f}\n".replace('.', ',')
-                                    msg += f"💳 *Restante:* {qtd_parcelas}x de R$ {(valor_restante / qtd_parcelas):.2f}\n".replace('.', ',')
+                                    v_ent_str = f"{valor_entrada:.2f}".replace('.', ',')
+                                    v_rest_str = f"{valor_restante:.2f}".replace('.', ',')
+                                    msg += f"💸 *Entrada Paga:* R$ {v_ent_str}\n"
+                                    msg += f"💳 *Restante:* {int(qtd_parcelas)}x de R$ {(valor_restante / qtd_parcelas):.2f}\n".replace('.', ',')
                                 elif qtd_parcelas > 1:
-                                    msg += f"💳 *Crediário:* {qtd_parcelas}x de R$ {(total_pdv / qtd_parcelas):.2f}\n".replace('.', ',')
+                                    msg += f"💳 *Crediário:* {int(qtd_parcelas)}x de R$ {(total_pdv / qtd_parcelas):.2f}\n".replace('.', ',')
                                 else:
                                     msg += f"💳 *Forma de Pagto:* Crediário (Sem entrada)\n"
                             elif qtd_parcelas > 1:
-                                msg += f"💳 *Parcelamento:* {qtd_parcelas}x de R$ {(total_pdv / qtd_parcelas):.2f}\n".replace('.', ',')
+                                msg += f"💳 *Parcelamento:* {int(qtd_parcelas)}x de R$ {(total_pdv / qtd_parcelas):.2f}\n".replace('.', ',')
                             else:
                                 msg += f"💳 *Forma de Pagto:* {f_pag}\n"
                                 
-                            msg += "\nMuito obrigada pela preferência! ✨"
+                            msg += "\n\nMuito obrigada pela preferência! ✨"
                             
-                            # 3. Gera o link e salva na sessão para exibir o botão na tela
+                            # Salvamento dos estados na sessão para persistência pós-rerun
                             if tel_cli:
                                 tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
                                 if len(tel_limpo) >= 10:
@@ -833,9 +844,9 @@ else:
             if 'zap_link' in st.session_state and st.session_state['zap_link']:
                 st.markdown("---")
                 with st.container(border=True):
-                    st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada com sucesso! Total: R$ {st.session_state['zap_total']:.2f}")
+                    st.success(f"🎉 Venda Nº {st.session_state['zap_codigo']} registrada com sucesso! Total: R$ {st.session_state['zap_total']:.2f}".replace('.', ','))
                     st.subheader("📲 Enviar Recibo via WhatsApp")
-                    st.text_area("Prévia do texto:", value=st.session_state['zap_msg'], height=150, disabled=True)
+                    st.text_area("Prévia do texto:", value=st.session_state['zap_msg'], height=180, disabled=True)
                     st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
                     if st.button("❌ Fechar Painel do Recibo", use_container_width=True):
                         del st.session_state['zap_link']
