@@ -1,3 +1,10 @@
+import os
+import time
+
+# Força o servidor inteiro a rodar no fuso correto
+os.environ['TZ'] = 'America/Fortaleza'
+time.tzset()
+
 import streamlit as st
 import psycopg2
 import pandas as pd
