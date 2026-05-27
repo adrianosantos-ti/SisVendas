@@ -605,26 +605,25 @@ else:
                     
                     st.markdown("---")
                     
-                    # --- OPÇÕES DE PAGAMENTO E PARCELAMENTO ---
-                    col_pag1, col_pag2 = st.columns(2)
-                    forma_pag = col_pag1.selectbox("Forma de Pagamento", ["Pix", "Dinheiro", "Cartão de Crédito", "Cartão de Débito", "Crediário"])
-                    
+                    # --- OPÇÕES DE PARCELAMENTO E ENTRADA ---
+                    # Como a forma de pagamento (f_pag) já foi escolhida lá em cima,
+                    # só mostramos os campos de parcelamento e entrada se for a prazo.
                     qtd_parcelas = 1
                     valor_entrada = 0.0
 
-                    if forma_pag in ["Crediário", "Cartão de Crédito"]:
-                        qtd_parcelas = col_pag2.number_input("Qtd. Parcelas totais (incluindo a entrada):", min_value=1, max_value=12, value=1)
-                    
-                    if forma_pag == "Crediário":
+                    if f_pag == "Crediário":
                         valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0)
+                    
+                    if f_pag in ["Crediário", "Cartão de Crédito"]:
+                        label_parc = "Qtd. de Parcelas para o Saldo:" if f_pag == "Crediário" and valor_entrada > 0 else "Qtd. de Parcelas:"
+                        qtd_parcelas = st.number_input(label_parc, min_value=1, max_value=12, value=1)
                     
                     valor_restante = total_pdv - valor_entrada
                     
                     if valor_entrada > 0:
-                        st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} em {qtd_parcelas - 1}x")
+                        st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} lançado em {qtd_parcelas}x para a frente")
                     
-                    st.markdown("---")
-                    
+                    st.markdown("---")                    
                     c1_finalizar, c2_limpar = st.columns(2)
                     
                     if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
