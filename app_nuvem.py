@@ -692,25 +692,42 @@ else:
                             resultado_tel = cur.fetchone()
                             tel_cli = resultado_tel[0] if resultado_tel else None
                             
-                            # 1. Varre o carrinho e monta a lista de todos os produtos
                             lista_produtos_msg = ""
-                            for it in st.session_state['carrinho']:
-                                lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']}\n"
+                            subtotal_recibo = 0.0 # Criamos uma variável para somar o valor cheio
                             
-                            # 2. Monta a mensagem completa inserindo a lista construída acima
+                            for it in st.session_state['carrinho']:
+                                preco_unit = float(it['unit'])
+                                subtotal_item = preco_unit * int(it['qtd'])
+                                subtotal_recibo += subtotal_item
+                                
+                                preco_formatado = f"{preco_unit:.2f}".replace('.', ',')
+                                lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {preco_formatado})\n"
+                            
                             msg = f"Olá, {cliente_pdv}! 🌸\n\n"
                             msg += f"Resumo da sua compra (*{data_v}*):\n"
                             msg += f"🧾 *Venda Nº {novo_cod}*\n\n"
                             msg += f"*Produtos:*\n{lista_produtos_msg}\n"
-                            msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n"
                             
-                            if qtd_parcelas > 1:
-                                if f_pag == "Crediário" and valor_entrada > 0:
-                                    msg += f"💸 *Entrada Paga:* R$ {valor_entrada:.2f}\n"
-                                    if qtd_parcelas > 1:
-                                        msg += f"💳 *Restante:* {qtd_parcelas - 1}x de R$ {val_parc_rest:.2f}\n"
+                            # Se o subtotal for maior que o total pago, mostramos o desconto!
+                            if subtotal_recibo > total_pdv:
+                                valor_desconto = subtotal_recibo - total_pdv
+                                msg += f"🏷️ *Subtotal:* R$ {subtotal_recibo:.2f}\n".replace('.', ',')
+                                msg += f"🎁 *Desconto:* - R$ {valor_desconto:.2f}\n".replace('.', ',')
+                                
+                            total_str = f"{total_pdv:.2f}".replace('.', ',')
+                            msg += f"💰 *Valor Total:* R$ {total_str}\n"
+                            
+                            # Ajuste para exibir os detalhes do Crediário corretamente
+                            if f_pag == "Crediário":
+                                if valor_entrada > 0:
+                                    msg += f"💸 *Entrada Paga:* R$ {valor_entrada:.2f}\n".replace('.', ',')
+                                    msg += f"💳 *Restante:* {qtd_parcelas}x de R$ {(valor_restante / qtd_parcelas):.2f}\n".replace('.', ',')
+                                elif qtd_parcelas > 1:
+                                    msg += f"💳 *Crediário:* {qtd_parcelas}x de R$ {(total_pdv / qtd_parcelas):.2f}\n".replace('.', ',')
                                 else:
-                                    msg += f"💳 *Parcelamento:* {qtd_parcelas}x de R$ {val_parc:.2f}\n"
+                                    msg += f"💳 *Forma de Pagto:* Crediário (Sem entrada)\n"
+                            elif qtd_parcelas > 1:
+                                msg += f"💳 *Parcelamento:* {qtd_parcelas}x de R$ {(total_pdv / qtd_parcelas):.2f}\n".replace('.', ',')
                             else:
                                 msg += f"💳 *Forma de Pagto:* {f_pag}\n"
                                 
