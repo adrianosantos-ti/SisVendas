@@ -73,7 +73,7 @@ if not st.session_state['logado']:
             return base64.b64encode(img_file.read()).decode()
 
     # 2. Converte a sua logo (verifique se o nome do arquivo está certinho)
-    img_base64 = get_base64_image("Logo_entrada_sistema.png")
+    img_base64 = get_base64_image("Apprimory_logo_branca.png")
 
     # 3. Exibe a imagem centralizada e com tamanho controlado (200px)
     st.markdown(
