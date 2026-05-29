@@ -63,7 +63,7 @@ def carregar_dados(query, params=None):
 # ==========================================
 # INTERFACE CONFIG E CONTROLE DE LOGIN
 # ==========================================
-st.set_page_config(page_title="Apprimory", layout="wide")
+#st.set_page_config(page_title="Apprimory", layout="wide")
 
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
