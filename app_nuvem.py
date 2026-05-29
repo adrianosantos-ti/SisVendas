@@ -13,11 +13,16 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
 import urllib.parse
 import base64
+from PIL import Image
 
+# 1. Forçamos a leitura da imagem (use o nome exato do seu arquivo PNG)
+icone = Image.open("logo.png") 
+
+# 2. Configuração da página - DEVE SER O PRIMEIRO COMANDO STREAMLIT
 st.set_page_config(
-    page_title="Apprimory - Inteligência para Gestão", # O nome que aparecerá na aba
-    page_icon="logo.png",                             # O arquivo da sua logo (favicon)
-    layout="wide"                                      # Aproveita melhor o espaço da TV
+    page_title="Apprimory - Inteligência para Gestão", # Deixei mais curto para ficar elegante na aba
+    page_icon=icone,
+    layout="wide"
 )
 
 # Código para esconder o "Running indicator" (bonequinho correndo)
