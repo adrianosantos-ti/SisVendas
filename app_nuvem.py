@@ -68,7 +68,7 @@ def carregar_dados(query, params=None):
 # ==========================================
 # INTERFACE CONFIG E CONTROLE DE LOGIN
 # ==========================================
-#st.set_page_config(page_title="Apprimory", layout="wide")
+#st.set_page_config(page_title="Apprimory - Inteligência para Gestão", layout="wide")
 
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
@@ -84,7 +84,7 @@ if not st.session_state['logado']:
             return base64.b64encode(img_file.read()).decode()
 
     # 2. Converte a sua logo (verifique se o nome do arquivo está certinho)
-    img_base64 = get_base64_image("Apprimory_logo_branca.png")
+    img_base64 = get_base64_image("Logo_dourada.jpeg")
 
     # 3. Exibe a imagem centralizada e com tamanho controlado (200px)
     st.markdown(
