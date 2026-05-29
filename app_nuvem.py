@@ -489,7 +489,7 @@ else:
     # MÓDULO 2: CADASTROS (Produtos, Categorias, Clientes, Fornecedores)
     # ==========================================
     elif modulo == "🗂️ Cadastros":
-        st.title("🗂️ Central de Cadastros")
+        st.markdown("### 🗂️ Central de Cadastros")
         tab_prod, tab_cat, tab_cli, tab_for = st.tabs(["📦 Estoque", "🏷️ Categorias", "👥 Clientes", "🤝 Fornecedores"])
         
         with tab_prod:
@@ -631,7 +631,7 @@ else:
     # MÓDULO 3: MOVIMENTAÇÕES (Vendas e Compras)
     # ==========================================
     elif modulo == "🔄 Movimentações":
-        st.title("🔄 Operações Diárias")
+        st.markdown("### 🔄 Operações Diárias")
         tab_venda, tab_compra, tab_historico_compras = st.tabs(["🛒 Frente de Caixa", "📥 Entrada de Mercadorias", "📋 Histórico de Entradas"])        
         with tab_venda:
             st.subheader("🛒 Frente de Caixa")
@@ -1084,7 +1084,7 @@ else:
     # MÓDULO 4: FINANCEIRO (Contas a Receber e Pagar COMPLETOS)
     # ==========================================
     elif modulo == "💰 Financeiro":
-        st.title("💰 Gestão Financeira")
+        st.markdown("### 💰 Gestão Financeira")
         tab_rec, tab_pag = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)"])
         
         # --- CONTAS A RECEBER 100% RESTAURADO ---
@@ -1166,7 +1166,8 @@ else:
     # MÓDULO 5: CRM
     # ==========================================================
     elif modulo == "📣 CRM & Pós-Venda":
-        st.subheader("📣 Gestão de Relacionamento: Método 2+2+2")
+        st.subheader("")
+        st.markdown("### 📣 Gestão de Relacionamento: Método 2+2+2")
         st.markdown("Acompanhe o ciclo de vida dos seus clientes e gere recompras automáticas.")
         
         # 1. Busca das Vendas e Cálculo dos Dias Passados
