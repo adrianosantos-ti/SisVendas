@@ -67,24 +67,24 @@ if 'logado' not in st.session_state:
 
 # --- TELA DE LOGIN ---
 if not st.session_state['logado']:
-   # 1. Função para converter a imagem e poder usar no HTML
-   def get_base64_image(caminho_imagem):
-       with open(caminho_imagem, "rb") as img_file:
-           return base64.b64encode(img_file.read()).decode()
+    # 1. Função para converter a imagem e poder usar no HTML
+    def get_base64_image(caminho_imagem):
+        with open(caminho_imagem, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
 
-   # 2. Converte a sua logo (verifique se o nome do arquivo está certinho)
-   img_base64 = get_base64_image("Apprimory_logo_nova.png")
+    # 2. Converte a sua logo (verifique se o nome do arquivo está certinho)
+    img_base64 = get_base64_image("Apprimory_logo_nova.png")
 
-   # 3. Exibe a imagem centralizada e com tamanho controlado (200px)
-   st.markdown(
-       f"""
-       <div style="text-align: center;">
-           <img src="data:image/png;base64,{img_base64}" width="200">
-       </div>
-       """,
-       unsafe_allow_html=True
-   )
-   st.write("") # Dá um pequeno espaço extra
+    # 3. Exibe a imagem centralizada e com tamanho controlado (200px)
+    st.markdown(
+        f"""
+        <div style="text-align: center;">
+            <img src="data:image/png;base64,{img_base64}" width="200">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.write("") # Dá um pequeno espaço extra
     st.title("🔐 Acesso ao Sistema")
     with st.container(border=True):
         st.subheader("Identifique-se")
