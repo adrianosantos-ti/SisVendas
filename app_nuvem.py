@@ -156,8 +156,9 @@ else:
         page_icon="🛍️", # Pode usar 🛒, 🛍️, 👗, etc.
         layout="wide"
      )
-    
-    st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1063/1063376.png", width=80)
+
+    st.sidebar.image("logo.png", use_container_width=True)
+    # st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1063/1063376.png", width=80)
     st.sidebar.title(f"Módulos")
     modulo = st.sidebar.radio("Navegação Principal:", [
         "📊 Análises", 
