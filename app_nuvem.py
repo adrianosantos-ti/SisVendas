@@ -66,12 +66,21 @@ if 'logado' not in st.session_state:
 
 # --- TELA DE LOGIN ---
 if not st.session_state['logado']:
-    # Criando colunas para centralizar a logomarca no topo
-    col1, col2, col3 = st.columns([1, 2, 1])
+    # --- NOVA ESTRUTURA PARA LOGO RESPONSIVA ---
 
-    with col2:
-        # Coloque o nome exato do arquivo PNG que você salvou
-        st.image("Logo_entrada_sistema.png", use_container_width=True)
+    # Define a largura máxima da logo em pixels (ex: 300px fica ótimo em celular e desktop)
+    largura_maxima_logo = 300
+
+    # Usamos HTML para centralizar e controlar o tamanho exato da imagem
+    st.markdown(
+       f"""
+       <div style="text-align: center;">
+           <img src="data:image/png;base64,{st.image("Apprimory_logo_nova.png").base64}" 
+                style="max-width: {largura_maxima_logo}px; width: 100%; height: auto;">
+       </div>
+       """,
+       unsafe_allow_html=True
+    )
 
     st.write("") # Dá um pequeno espaço extra
     st.title("🔐 Acesso ao Sistema")
