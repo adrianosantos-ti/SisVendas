@@ -85,7 +85,7 @@ if not st.session_state['logado']:
         unsafe_allow_html=True
     )
     st.write("") # Dá um pequeno espaço extra
-    st.title("##🔐 Acesso ao Sistema")
+    st.markdown("### 🔐 Acesso ao Sistema")
     with st.container(border=True):
         st.subheader("Identifique-se")
         login_input = st.text_input("Usuário")
