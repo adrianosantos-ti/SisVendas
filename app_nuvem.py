@@ -12,6 +12,7 @@ import plotly.express as px
 import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
 import urllib.parse
+import base64
 
 # Código para esconder o "Running indicator" (bonequinho correndo)
 st.markdown(
@@ -66,23 +67,24 @@ if 'logado' not in st.session_state:
 
 # --- TELA DE LOGIN ---
 if not st.session_state['logado']:
-    # --- NOVA ESTRUTURA PARA LOGO RESPONSIVA ---
+   # 1. Função para converter a imagem e poder usar no HTML
+   def get_base64_image(caminho_imagem):
+       with open(caminho_imagem, "rb") as img_file:
+           return base64.b64encode(img_file.read()).decode()
 
-    # Define a largura máxima da logo em pixels (ex: 300px fica ótimo em celular e desktop)
-    largura_maxima_logo = 300
+   # 2. Converte a sua logo (verifique se o nome do arquivo está certinho)
+   img_base64 = get_base64_image("Apprimory_logo_nova.png")
 
-    # Usamos HTML para centralizar e controlar o tamanho exato da imagem
-    st.markdown(
+   # 3. Exibe a imagem centralizada e com tamanho controlado (200px)
+   st.markdown(
        f"""
        <div style="text-align: center;">
-           <img src="data:image/png;base64,{st.image("Logo_entrada_sistema.png").base64}" 
-                style="max-width: {largura_maxima_logo}px; width: 100%; height: auto;">
+           <img src="data:image/png;base64,{img_base64}" width="200">
        </div>
        """,
        unsafe_allow_html=True
-    )
-
-    st.write("") # Dá um pequeno espaço extra
+   )
+   st.write("") # Dá um pequeno espaço extra
     st.title("🔐 Acesso ao Sistema")
     with st.container(border=True):
         st.subheader("Identifique-se")
