@@ -79,7 +79,7 @@ if not st.session_state['logado']:
     st.markdown(
         f"""
         <div style="text-align: center;">
-            <img src="data:image/png;base64,{img_base64}" width="200">
+            <img src="data:image/png;base64,{img_base64}" width="300">
         </div>
         """,
         unsafe_allow_html=True
