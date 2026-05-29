@@ -213,7 +213,7 @@ else:
     # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
     # ==========================================
     if modulo == "📊 Análises":
-        st.title("📊 Gestão e Performance")
+        st.markdown("### 📊 Gestão e Performance")
         aba_dash, aba_hist = st.tabs(["Painel Visual", "Histórico de Movimentação"])
         
         with aba_dash:
