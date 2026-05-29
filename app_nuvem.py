@@ -152,7 +152,7 @@ else:
     # ---------------------------------------------------------
     # 1. A PRIMEIRA coisa do Streamlit no código TEM que ser a configuração da página:
     st.set_page_config(
-        page_title="Empresaria MK Online",
+        page_title="Apprimory",
         page_icon="🛍️", # Pode usar 🛒, 🛍️, 👗, etc.
         layout="wide"
      )
