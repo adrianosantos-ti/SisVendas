@@ -66,6 +66,14 @@ if 'logado' not in st.session_state:
 
 # --- TELA DE LOGIN ---
 if not st.session_state['logado']:
+    # Criando colunas para centralizar a logomarca no topo
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col2:
+        # Coloque o nome exato do arquivo PNG que você salvou
+        st.image("Logo_entrada_sistema.png", use_container_width=True)
+
+    st.write("") # Dá um pequeno espaço extra
     st.title("🔐 Acesso ao Sistema")
     with st.container(border=True):
         st.subheader("Identifique-se")
