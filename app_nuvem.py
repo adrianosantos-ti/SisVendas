@@ -75,7 +75,7 @@ if not st.session_state['logado']:
     st.markdown(
        f"""
        <div style="text-align: center;">
-           <img src="data:image/png;base64,{st.image("Apprimory_logo_nova.png").base64}" 
+           <img src="data:image/png;base64,{st.image("Logo_entrada_sistema.png").base64}" 
                 style="max-width: {largura_maxima_logo}px; width: 100%; height: auto;">
        </div>
        """,
