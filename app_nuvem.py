@@ -1166,7 +1166,6 @@ else:
     # MÓDULO 5: CRM
     # ==========================================================
     elif modulo == "📣 CRM & Pós-Venda":
-        st.subheader("")
         st.markdown("### 📣 Gestão de Relacionamento: Método 2+2+2")
         st.markdown("Acompanhe o ciclo de vida dos seus clientes e gere recompras automáticas.")
         
