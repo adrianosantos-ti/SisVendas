@@ -14,6 +14,12 @@ from datetime import datetime, date, timedelta
 import urllib.parse
 import base64
 
+st.set_page_config(
+    page_title="Apprimory - Inteligência para Gestão", # O nome que aparecerá na aba
+    page_icon="logo.png",                             # O arquivo da sua logo (favicon)
+    layout="wide"                                      # Aproveita melhor o espaço da TV
+)
+
 # Código para esconder o "Running indicator" (bonequinho correndo)
 st.markdown(
     """
