@@ -1089,7 +1089,7 @@ else:
         
         # --- CONTAS A RECEBER 100% RESTAURADO ---
         with tab_rec:
-            st.header("💰 Controle Financeiro de Parcelas")
+            st.markdown("### 💰 Controle Financeiro de Parcelas")
             df_financeiro = carregar_dados("""
                 SELECT cr.id AS "ID Parcela", cr.venda_codigo AS "Nº Venda", c.nome AS "Cliente",
                        cr.num_parcela AS "Parcela", cr.total_parcelas AS "De",
