@@ -643,249 +643,200 @@ else:
     elif modulo == "🔄 Movimentações":
         st.markdown("### 🔄 Operações Diárias")
         tab_venda, tab_compra, tab_historico_compras = st.tabs(["🛒 Frente de Caixa", "📥 Entrada de Mercadorias", "📋 Histórico de Entradas"])        
-            with tab_venda:
-            st.subheader("🛒 Vendas")
+        with tab_venda:
+        st.subheader("🛒 Vendas")
+        
+        # Carrega dados atualizados para o PDV
+        df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+        df_pro = carregar_dados("SELECT id, nome, valor, quantidade FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+        
+        if not df_cli.empty and not df_pro.empty:
+            # 1. Configurações da Venda
+            c_cli, c_data = st.columns(2)
+            cliente_pdv = c_cli.selectbox("Cliente:", options=df_cli['nome'].tolist())
+            data_venda_input = c_data.date_input("Data da Venda", format="DD/MM/YYYY", value=date.today())
             
-            # Carrega dados atualizados para o PDV
-            df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
-            df_pro = carregar_dados("SELECT id, nome, valor, quantidade FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+            c_pag, c_parc = st.columns(2)
+            f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"])
+            qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1)
             
-            if not df_cli.empty and not df_pro.empty:
-                # 1. Configurações da Venda
-                c_cli, c_data = st.columns(2)
-                cliente_pdv = c_cli.selectbox("Cliente:", options=df_cli['nome'].tolist())
-                data_venda_input = c_data.date_input("Data da Venda", format="DD/MM/YYYY", value=date.today())
+            sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
+            data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY")
+            
+            st.markdown("---")
+            
+            # 2. Seleção de Produto com Visão Dinâmica de Estoque
+            df_pro['display_pesquisa'] = df_pro.apply(
+                lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
+            )
+            
+            prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist())
+            
+            # Resgate das informações baseadas na escolha do menu de busca
+            p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
+            estoque_atual = int(p_info['quantidade'])
+            preco_tabela = float(p_info['valor'])
+            
+            # --- PAINEL VISUAL DE ESTOQUE ---
+            if estoque_atual <= 0:
+                st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+            elif estoque_atual == 1:
+                st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+            elif estoque_atual <= 3:
+                st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+            else:
+                st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+            
+            # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO (ALTERAÇÃO 1: PREÇO EDITÁVEL) ---
+            with st.form("form_add_carrinho", clear_on_submit=True):
+                c1, c2, c3, c4 = st.columns(4)
                 
-                c_pag, c_parc = st.columns(2)
-                f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"])
-                qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1)
+                limite_qtd = estoque_atual if estoque_atual > 0 else 1
+                q_pdv = c1.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
                 
-                sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
-                data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY")
+                # Permite alterar o preço cheio para cima ou para baixo livremente
+                preco_custom = c2.number_input("Preço Unitário (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
+                
+                desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f")
+                desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
+                
+                if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=(estoque_atual <= 0)):
+                    if estoque_atual >= q_pdv:
+                        # Lógica baseada no preço customizado pelo usuário
+                        if desc_perc > 0:
+                            desconto_final = preco_custom * (desc_perc / 100.0)
+                        else:
+                            desconto_final = desc_rs
+                            
+                        st.session_state['carrinho'].append({
+                            'id': int(p_info['id']), 
+                            'nome': str(p_info['nome']), 
+                            'qtd': int(q_pdv), 
+                            'unit': float(preco_custom), 
+                            'desc': float(desconto_final), 
+                            'total': float((preco_custom - desconto_final) * q_pdv)
+                        })
+                        st.rerun()
+                    else: 
+                        st.error("Estoque insuficiente!")
+
+            # 3. Carrinho e Configurações Financeiras
+            if st.session_state['carrinho']:
+                df_car = pd.DataFrame(st.session_state['carrinho'])
+                st.table(df_car[['nome', 'qtd', 'unit', 'desc', 'total']])
+                
+                total_pdv = float(df_car['total'].sum())
+                st.header(f"Total Atual: R$ {total_pdv:.2f}".replace('.', ','))
                 
                 st.markdown("---")
                 
-                # 2. Seleção de Produto com Visão Dinâmica de Estoque
-                df_pro['display_pesquisa'] = df_pro.apply(
-                    lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
-                )
+                # --- CONFIGURAÇÃO DE ENTRADA ---
+                valor_entrada = 0.0
+                if f_pag == "Crediário":
+                    valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0)
                 
-                prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist())
+                valor_restante = float(total_pdv - valor_entrada)
                 
-                # Resgate das informações baseadas na escolha do menu de busca
-                p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
-                estoque_atual = int(p_info['quantidade'])
-                preco_tabela = float(p_info['valor'])
-                
-                # --- PAINEL VISUAL DE ESTOQUE ---
-                if estoque_atual <= 0:
-                    st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                elif estoque_atual == 1:
-                    st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                elif estoque_atual <= 3:
-                    st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                else:
-                    st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                
-                # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO (ALTERAÇÃO 1: PREÇO EDITÁVEL) ---
-                with st.form("form_add_carrinho", clear_on_submit=True):
-                    c1, c2, c3, c4 = st.columns(4)
+                # --- ALTERAÇÃO 2 & 3: EDICÃO DINÂMICA DAS DATAS DAS PARCELAS ---
+                datas_parcelas = []
+                if qtd_parcelas > 1 or f_pag == "Crediário":
+                    st.markdown("📅 **Cronograma de Vencimentos (Clique na data para alterar):**")
                     
-                    limite_qtd = estoque_atual if estoque_atual > 0 else 1
-                    q_pdv = c1.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
-                    
-                    # Permite alterar o preço cheio para cima ou para baixo livremente
-                    preco_custom = c2.number_input("Preço Unitário (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
-                    
-                    desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f")
-                    desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
-                    
-                    if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=(estoque_atual <= 0)):
-                        if estoque_atual >= q_pdv:
-                            # Lógica baseada no preço customizado pelo usuário
-                            if desc_perc > 0:
-                                desconto_final = preco_custom * (desc_perc / 100.0)
-                            else:
-                                desconto_final = desc_rs
-                                
-                            st.session_state['carrinho'].append({
-                                'id': int(p_info['id']), 
-                                'nome': str(p_info['nome']), 
-                                'qtd': int(q_pdv), 
-                                'unit': float(preco_custom), 
-                                'desc': float(desconto_final), 
-                                'total': float((preco_custom - desconto_final) * q_pdv)
-                            })
-                            st.rerun()
-                        else: 
-                            st.error("Estoque insuficiente!")
-
-                # 3. Carrinho e Configurações Financeiras
-                if st.session_state['carrinho']:
-                    df_car = pd.DataFrame(st.session_state['carrinho'])
-                    st.table(df_car[['nome', 'qtd', 'unit', 'desc', 'total']])
-                    
-                    total_pdv = float(df_car['total'].sum())
-                    st.header(f"Total Atual: R$ {total_pdv:.2f}".replace('.', ','))
-                    
-                    st.markdown("---")
-                    
-                    # --- CONFIGURAÇÃO DE ENTRADA ---
-                    valor_entrada = 0.0
-                    if f_pag == "Crediário":
-                        valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0)
-                    
-                    valor_restante = float(total_pdv - valor_entrada)
-                    
-                    # --- ALTERAÇÃO 2 & 3: EDICÃO DINÂMICA DAS DATAS DAS PARCELAS ---
-                    datas_parcelas = []
-                    if qtd_parcelas > 1 or f_pag == "Crediário":
-                        st.markdown("📅 **Cronograma de Vencimentos (Clique na data para alterar):**")
+                    if f_pag == "Crediário" and valor_entrada > 0:
+                        # Parcela 1 é a entrada (paga hoje)
+                        datas_parcelas.append(data_venda_input)
                         
-                        if f_pag == "Crediário" and valor_entrada > 0:
-                            # Parcela 1 é a entrada (paga hoje)
-                            datas_parcelas.append(data_venda_input)
-                            
-                            if qtd_parcelas > 1:
-                                cols_p = st.columns(min(int(qtd_parcelas) - 1, 4))
-                                for i in range(2, int(qtd_parcelas) + 1):
-                                    sugestao_p = data_1_venc + timedelta(days=30 * (i - 2))
-                                    with cols_p[(i-2) % min(int(qtd_parcelas) - 1, 4)]:
-                                        dt_p = st.date_input(f"{i}ª Parc. (Restante)", value=sugestao_p, format="DD/MM/YYYY", key=f"venc_p_{i}")
-                                        datas_parcelas.append(dt_p)
-                        else:
-                            cols_p = st.columns(min(int(qtd_parcelas), 4))
-                            for i in range(1, int(qtd_parcelas) + 1):
-                                sugerido = data_1_venc + timedelta(days=30 * (i - 1))
-                                with cols_p[(i-1) % min(int(qtd_parcelas), 4)]:
-                                    dt_p = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"venc_p_{i}")
+                        if qtd_parcelas > 1:
+                            cols_p = st.columns(min(int(qtd_parcelas) - 1, 4))
+                            for i in range(2, int(qtd_parcelas) + 1):
+                                sugestao_p = data_1_venc + timedelta(days=30 * (i - 2))
+                                with cols_p[(i-2) % min(int(qtd_parcelas) - 1, 4)]:
+                                    dt_p = st.date_input(f"{i}ª Parc. (Restante)", value=sugestao_p, format="DD/MM/YYYY", key=f"venc_p_{i}")
                                     datas_parcelas.append(dt_p)
                     else:
-                        datas_parcelas.append(data_1_venc)
+                        cols_p = st.columns(min(int(qtd_parcelas), 4))
+                        for i in range(1, int(qtd_parcelas) + 1):
+                            sugerido = data_1_venc + timedelta(days=30 * (i - 1))
+                            with cols_p[(i-1) % min(int(qtd_parcelas), 4)]:
+                                dt_p = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"venc_p_{i}")
+                                datas_parcelas.append(dt_p)
+                else:
+                    datas_parcelas.append(data_1_venc)
 
-                    # Painel visual informativo para conferência
-                    if f_pag == "Crediário" and valor_entrada > 0:
-                        st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} lançado em {int(qtd_parcelas - 1)}x de R$ {(valor_restante / (qtd_parcelas - 1)):.2f}".replace('.', ','))
-                    elif qtd_parcelas > 1:
-                        st.info(f"CN💳 Parcelamento: {int(qtd_parcelas)}x de R$ {(total_pdv / qtd_parcelas):.2f} ".replace('.', ','))
-                    
-                    st.markdown("---")              
-                    
-                    # Painel com 3 Ações de Fechamento (Alteração 4: Botão de Orçamento)
-                    c1_finalizar, c2_orcamento, c3_limpar = st.columns(3)
-                    
-                    # --- AÇÃO: FINALIZAR VENDA (PERSISTE NO BANCO) ---
-                    if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
-                        try:
-                            conn = conectar_banco()
-                            cur = conn.cursor()
+                # Painel visual informativo para conferência
+                if f_pag == "Crediário" and valor_entrada > 0:
+                    st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} lançado em {int(qtd_parcelas - 1)}x de R$ {(valor_restante / (qtd_parcelas - 1)):.2f}".replace('.', ','))
+                elif qtd_parcelas > 1:
+                    st.info(f"CN💳 Parcelamento: {int(qtd_parcelas)}x de R$ {(total_pdv / qtd_parcelas):.2f} ".replace('.', ','))
+                
+                st.markdown("---")              
+                
+                # Painel com 3 Ações de Fechamento (Alteração 4: Botão de Orçamento)
+                c1_finalizar, c2_orcamento, c3_limpar = st.columns(3)
+                
+                # --- AÇÃO: FINALIZAR VENDA (PERSISTE NO BANCO) ---
+                if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
+                    try:
+                        conn = conectar_banco()
+                        cur = conn.cursor()
+                        
+                        cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
+                        resultado = cur.fetchone()[0]
+                        novo_cod = int(resultado + 1) if resultado else 1
+                        
+                        data_v = data_venda_input.strftime("%d/%m/%Y")
+                        cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
+                        
+                        # Gravação dos itens
+                        for it in st.session_state['carrinho']:
+                            cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantity, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas) 
+                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                       (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas)))
                             
-                            cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
-                            resultado = cur.fetchone()[0]
-                            novo_cod = int(resultado + 1) if resultado else 1
+                            cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
+                        
+                        # Inserção no Financeiro usando as datas editadas
+                        if f_pag == "Crediário" and valor_entrada > 0:
+                            cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
+                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                       (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', int(emp_id)))
                             
-                            data_v = data_venda_input.strftime("%d/%m/%Y")
-                            cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
-                            
-                            # Gravação dos itens
-                            for it in st.session_state['carrinho']:
-                                cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantity, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas) 
-                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                           (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas)))
-                                
-                                cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
-                            
-                            # Inserção no Financeiro usando as datas editadas
-                            if f_pag == "Crediário" and valor_entrada > 0:
-                                cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
-                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                           (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', int(emp_id)))
-                                
-                                if qtd_parcelas > 1:
-                                    val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
-                                    for i in range(2, int(qtd_parcelas) + 1):
-                                        dt_venc = datas_parcelas[i-1]
-                                        cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
-                                                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                   (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc_rest), dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
-                            else:
-                                val_parc = float(total_pdv / qtd_parcelas)
-                                for i in range(1, int(qtd_parcelas) + 1):
+                            if qtd_parcelas > 1:
+                                val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
+                                for i in range(2, int(qtd_parcelas) + 1):
                                     dt_venc = datas_parcelas[i-1]
-                                    status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
                                     cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                               (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, int(emp_id)))
-                            
-                            # --- CONFIGURAÇÃO DA MENSAGEM DO WHATSAPP COM DATAS ---
-                            cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
-                            resultado_tel = cur.fetchone()
-                            tel_cli = resultado_tel[0] if resultado_tel else None
-                            
-                            lista_produtos_msg = ""
-                            for it in st.session_state['carrinho']:
-                                lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
-                            
-                            msg = f"Olá, {cliente_pdv}! 🌸\n\n"
-                            msg += f"Aqui está o resumo do seu pedido do dia *{data_v}*:\n\n"
-                            msg += f"🧾 *Pedido Confirmado Nº {novo_cod}*\n\n"
-                            msg += f"*Produtos:*\n{lista_produtos_msg}\n"
-                            msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
-                            
-                            # Detalhando as datas exatas configuradas
-                            if qtd_parcelas > 1:
-                                msg += "\n📅 *Datas de Vencimento:*\n"
-                                if f_pag == "Crediário" and valor_entrada > 0:
-                                    msg += f"▪️ Entrada: R$ {valor_entrada:.2f} (Paga em {datas_parcelas[0].strftime('%d/%m/%Y')})\n".replace('.', ',')
-                                    v_rest_calc = valor_restante / (qtd_parcelas - 1)
-                                    for i in range(2, int(qtd_parcelas) + 1):
-                                        msg += f"▪️ {i}ª Parcela: R$ {v_rest_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
-                                else:
-                                    v_parc_calc = total_pdv / qtd_parcelas
-                                    for i in range(1, int(qtd_parcelas) + 1):
-                                        msg += f"▪️ {i}ª Parcela: R$ {v_parc_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
-                            else:
-                                msg += f"💳 *Forma de Pagto:* {f_pag}\n"
-                                
-                            msg += "\n\nMuito obrigada pela preferência! ✨"
-                            
-                            if tel_cli:
-                                tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
-                                if len(tel_limpo) >= 10:
-                                    if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
-                                    st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
-                                    st.session_state['zap_msg'] = msg
-                                    st.session_state['zap_codigo'] = f"PEDIDO Nº {novo_cod}"
-                                    st.session_state['zap_total'] = total_pdv
-                            
-                            conn.commit()
-                            conn.close()
-                            st.session_state['carrinho'] = []
-                            st.success(f"Venda {novo_cod} salva com sucesso como PEDIDO!")
-                            st.rerun()
-                            
-                        except Exception as e:
-                            st.error(f"Erro no banco: {e}")
-                            if 'conn' in locals(): conn.close()
-
-                    # --- ALTERAÇÃO 4: AÇÃO SALVAR APENAS COMO ORÇAMENTO (SEM MEXER NO ESTOQUE/FINANCEIRO) ---
-                    if c2_orcamento.button("📋 Salvar Orçamento", use_container_width=True):
-                        cur_cli = carregar_dados("SELECT telefone FROM clientes WHERE nome=%s AND empresa_id=%s", (cliente_pdv, emp_id))
-                        tel_cli = cur_cli.iloc[0]['telefone'] if not cur_cli.empty else None
+                                               (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc_rest), dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
+                        else:
+                            val_parc = float(total_pdv / qtd_parcelas)
+                            for i in range(1, int(qtd_parcelas) + 1):
+                                dt_venc = datas_parcelas[i-1]
+                                status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
+                                cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
+                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                           (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, int(emp_id)))
+                        
+                        # --- CONFIGURAÇÃO DA MENSAGEM DO WHATSAPP COM DATAS ---
+                        cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
+                        resultado_tel = cur.fetchone()
+                        tel_cli = resultado_tel[0] if resultado_tel else None
                         
                         lista_produtos_msg = ""
                         for it in st.session_state['carrinho']:
                             lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
                         
                         msg = f"Olá, {cliente_pdv}! 🌸\n\n"
-                        msg += f"Segue a simulação do seu *ORÇAMENTO* feito hoje ({date.today().strftime('%d/%m/%Y')}):\n\n"
-                        msg += f"*Produtos Solicitados:*\n{lista_produtos_msg}\n"
-                        msg += f"💰 *Valor Total Estimado:* R$ {total_pdv:.2f}\n".replace('.', ',')
+                        msg += f"Aqui está o resumo do seu pedido do dia *{data_v}*:\n\n"
+                        msg += f"🧾 *Pedido Confirmado Nº {novo_cod}*\n\n"
+                        msg += f"*Produtos:*\n{lista_produtos_msg}\n"
+                        msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
                         
+                        # Detalhando as datas exatas configuradas
                         if qtd_parcelas > 1:
-                            msg += "\n🗓️ *Simulação de Parcelamento:*\n"
+                            msg += "\n📅 *Datas de Vencimento:*\n"
                             if f_pag == "Crediário" and valor_entrada > 0:
-                                msg += f"▪️ Entrada sugerida: R$ {valor_entrada:.2f}\n".replace('.', ',')
+                                msg += f"▪️ Entrada: R$ {valor_entrada:.2f} (Paga em {datas_parcelas[0].strftime('%d/%m/%Y')})\n".replace('.', ',')
                                 v_rest_calc = valor_restante / (qtd_parcelas - 1)
                                 for i in range(2, int(qtd_parcelas) + 1):
                                     msg += f"▪️ {i}ª Parcela: R$ {v_rest_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
@@ -894,9 +845,9 @@ else:
                                 for i in range(1, int(qtd_parcelas) + 1):
                                     msg += f"▪️ {i}ª Parcela: R$ {v_parc_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
                         else:
-                            msg += f"💳 *Meio de pagamento simulado:* {f_pag}\n"
+                            msg += f"💳 *Forma de Pagto:* {f_pag}\n"
                             
-                        msg += "\n*Este orçamento é válido por 5 dias.* Tem interesse em fechar o pedido? ✨"
+                        msg += "\n\nMuito obrigada pela preferência! ✨"
                         
                         if tel_cli:
                             tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
@@ -904,32 +855,81 @@ else:
                                 if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
                                 st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
                                 st.session_state['zap_msg'] = msg
-                                st.session_state['zap_codigo'] = "ORÇAMENTO EM ABERTO"
+                                st.session_state['zap_codigo'] = f"PEDIDO Nº {novo_cod}"
                                 st.session_state['zap_total'] = total_pdv
                         
-                        st.success("Orçamento gerado! Os dados de estoque e contas a receber permaneceram intactos.")
-                        st.rerun()
-
-                    if c3_limpar.button("🗑️ Limpar Carrinho", use_container_width=True): 
+                        conn.commit()
+                        conn.close()
                         st.session_state['carrinho'] = []
+                        st.success(f"Venda {novo_cod} salva com sucesso como PEDIDO!")
                         st.rerun()
-            else: 
-                st.warning("Cadastre clientes e produtos antes de vender.")
-                
-            # --- TELA DO RECIBO OU ORÇAMENTO DO WHATSAPP ---
-            if 'zap_link' in st.session_state and st.session_state['zap_link']:
-                st.markdown("---")
-                with st.container(border=True):
-                    st.success(f"🎉 {st.session_state['zap_codigo']} pronto! Total: R$ {st.session_state['zap_total']:.2f}".replace('.', ','))
-                    st.subheader("📲 Enviar Documento via WhatsApp")
-                    st.text_area("Visualização da mensagem:", value=st.session_state['zap_msg'], height=180, disabled=True)
-                    st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
-                    if st.button("❌ Fechar Painel", use_container_width=True):
-                        del st.session_state['zap_link']
-                        if 'zap_msg' in st.session_state: del st.session_state['zap_msg']
-                        if 'zap_codigo' in st.session_state: del st.session_state['zap_codigo']
-                        if 'zap_total' in st.session_state: del st.session_state['zap_total']
-                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Erro no banco: {e}")
+                        if 'conn' in locals(): conn.close()
+
+                # --- ALTERAÇÃO 4: AÇÃO SALVAR APENAS COMO ORÇAMENTO (SEM MEXER NO ESTOQUE/FINANCEIRO) ---
+                if c2_orcamento.button("📋 Salvar Orçamento", use_container_width=True):
+                    cur_cli = carregar_dados("SELECT telefone FROM clientes WHERE nome=%s AND empresa_id=%s", (cliente_pdv, emp_id))
+                    tel_cli = cur_cli.iloc[0]['telefone'] if not cur_cli.empty else None
+                    
+                    lista_produtos_msg = ""
+                    for it in st.session_state['carrinho']:
+                        lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                    
+                    msg = f"Olá, {cliente_pdv}! 🌸\n\n"
+                    msg += f"Segue a simulação do seu *ORÇAMENTO* feito hoje ({date.today().strftime('%d/%m/%Y')}):\n\n"
+                    msg += f"*Produtos Solicitados:*\n{lista_produtos_msg}\n"
+                    msg += f"💰 *Valor Total Estimado:* R$ {total_pdv:.2f}\n".replace('.', ',')
+                    
+                    if qtd_parcelas > 1:
+                        msg += "\n🗓️ *Simulação de Parcelamento:*\n"
+                        if f_pag == "Crediário" and valor_entrada > 0:
+                            msg += f"▪️ Entrada sugerida: R$ {valor_entrada:.2f}\n".replace('.', ',')
+                            v_rest_calc = valor_restante / (qtd_parcelas - 1)
+                            for i in range(2, int(qtd_parcelas) + 1):
+                                msg += f"▪️ {i}ª Parcela: R$ {v_rest_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
+                        else:
+                            v_parc_calc = total_pdv / qtd_parcelas
+                            for i in range(1, int(qtd_parcelas) + 1):
+                                msg += f"▪️ {i}ª Parcela: R$ {v_parc_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
+                    else:
+                        msg += f"💳 *Meio de pagamento simulado:* {f_pag}\n"
+                        
+                    msg += "\n*Este orçamento é válido por 5 dias.* Tem interesse em fechar o pedido? ✨"
+                    
+                    if tel_cli:
+                        tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
+                        if len(tel_limpo) >= 10:
+                            if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
+                            st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                            st.session_state['zap_msg'] = msg
+                            st.session_state['zap_codigo'] = "ORÇAMENTO EM ABERTO"
+                            st.session_state['zap_total'] = total_pdv
+                    
+                    st.success("Orçamento gerado! Os dados de estoque e contas a receber permaneceram intactos.")
+                    st.rerun()
+
+                if c3_limpar.button("🗑️ Limpar Carrinho", use_container_width=True): 
+                    st.session_state['carrinho'] = []
+                    st.rerun()
+        else: 
+            st.warning("Cadastre clientes e produtos antes de vender.")
+            
+        # --- TELA DO RECIBO OU ORÇAMENTO DO WHATSAPP ---
+        if 'zap_link' in st.session_state and st.session_state['zap_link']:
+            st.markdown("---")
+            with st.container(border=True):
+                st.success(f"🎉 {st.session_state['zap_codigo']} pronto! Total: R$ {st.session_state['zap_total']:.2f}".replace('.', ','))
+                st.subheader("📲 Enviar Documento via WhatsApp")
+                st.text_area("Visualização da mensagem:", value=st.session_state['zap_msg'], height=180, disabled=True)
+                st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
+                if st.button("❌ Fechar Painel", use_container_width=True):
+                    del st.session_state['zap_link']
+                    if 'zap_msg' in st.session_state: del st.session_state['zap_msg']
+                    if 'zap_codigo' in st.session_state: del st.session_state['zap_codigo']
+                    if 'zap_total' in st.session_state: del st.session_state['zap_total']
+                    st.rerun()
                         
         with tab_compra:
             st.subheader("📥 Entrada de Mercadorias (via PDF Direto)")
