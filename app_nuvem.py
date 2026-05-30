@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
 import urllib.parse
 import base64
+import json
 from PIL import Image
 
 # 1. Forçamos a leitura da imagem (use o nome exato do seu arquivo PNG)
@@ -642,7 +643,7 @@ else:
     # ==========================================
     elif modulo == "🔄 Movimentações":
         st.markdown("### 🔄 Operações Diárias")
-        tab_venda, tab_compra, tab_historico_compras = st.tabs(["🛒 Frente de Caixa", "📥 Entrada de Mercadorias", "📋 Histórico de Entradas"])        
+        tab_venda, tab_orcamentos, tab_compra, tab_historico_compras = st.tabs(["🛒 Vendas", "📋 Orçamentos Salvos", "📥 Entrada de Mercadorias", "📋 Histórico de Entradas"])        
         with tab_venda:
             st.subheader("🛒 Vendas")
         
@@ -870,6 +871,26 @@ else:
 
                     # --- ALTERAÇÃO 4: AÇÃO SALVAR APENAS COMO ORÇAMENTO (SEM MEXER NO ESTOQUE/FINANCEIRO) ---
                     if c2_orcamento.button("📋 Salvar Orçamento", use_container_width=True):
+                        try:
+                            # 1. Transforma o carrinho em formato de texto (JSON) para salvar fácil
+                            carrinho_texto = json.dumps(st.session_state['carrinho'])
+                            
+                            # 2. Grava no banco de dados
+                            conn = conectar_banco()
+                            cur = conn.cursor()
+                            data_hoje_str = date.today().strftime('%d/%m/%Y')
+                            
+                            cur.execute("""INSERT INTO orcamentos (empresa_id, cliente_nome, data_orcamento, valor_total, carrinho_json) 
+                                           VALUES (%s,%s,%s,%s,%s)""", 
+                                        (int(emp_id), cliente_pdv, data_hoje_str, float(total_pdv), carrinho_texto))
+                            conn.commit()
+                            conn.close()
+                            
+                            st.success("Orçamento gravado no sistema com sucesso!")
+                            
+                        except Exception as e:
+                            st.error(f"Erro ao salvar orçamento: {e}")
+                            
                         cur_cli = carregar_dados("SELECT telefone FROM clientes WHERE nome=%s AND empresa_id=%s", (cliente_pdv, emp_id))
                         tel_cli = cur_cli.iloc[0]['telefone'] if not cur_cli.empty else None
                     
@@ -931,6 +952,37 @@ else:
                         if 'zap_total' in st.session_state: del st.session_state['zap_total']
                         st.rerun()
                         
+        with tab_orcamentos:
+            st.subheader("📋 Orçamentos Salvos")
+            
+            df_orcs = carregar_dados("SELECT id, cliente_nome, data_orcamento, valor_total, carrinho_json FROM orcamentos WHERE empresa_id=%s ORDER BY id DESC", (emp_id,))
+            
+            if not df_orcs.empty:
+                for index, row in df_orcs.iterrows():
+                    with st.expander(f"Orçamento #{row['id']} - {row['cliente_nome']} | Data: {row['data_orcamento']} | R$ {row['valor_total']:.2f}".replace('.', ',')):
+                        
+                        # Converte o texto salvo de volta para a lista de produtos
+                        itens_orcamento = json.loads(row['carrinho_json'])
+                        
+                        # Mostra um resumo do que tem dentro
+                        for item in itens_orcamento:
+                            st.write(f"- {item['qtd']}x {item['nome']} (R$ {item['unit']:.2f})")
+                            
+                        if st.button("🛒 Transformar em Venda (Jogar no PDV)", key=f"resgatar_{row['id']}", type="primary"):
+                            # Carrega os itens de volta para o carrinho ativo
+                            st.session_state['carrinho'] = itens_orcamento
+                            
+                            # Opcional: Você pode deletar o orçamento do banco aqui para não duplicar depois
+                            # conn = conectar_banco(); cur = conn.cursor()
+                            # cur.execute("DELETE FROM orcamentos WHERE id=%s", (row['id'],))
+                            # conn.commit(); conn.close()
+                            
+                            st.success("Itens carregados! Vá para a aba 'Frente de Caixa' para escolher a forma de pagamento e finalizar.")
+                            st.rerun()
+            else:
+                st.info("Nenhum orçamento pendente no momento.")                
+
+        
         with tab_compra:
             st.subheader("📥 Entrada de Mercadorias (via PDF Direto)")
             st.info("Faça o upload do PDF do seu pedido. O sistema vai extrair os produtos e gerar uma planilha para você revisar as quantidades.")
