@@ -520,14 +520,39 @@ else:
                     m_p = c5.text_input("Marca", value="Mary Kay")
                     cat_p = st.selectbox("Categoria", lista_cat)
                     if st.form_submit_button("Cadastrar"):
-                        conn = conectar_banco(); conn.cursor().execute("INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) VALUES (%s,%s,%s,%s,%s,%s,%s)", (n_p, q_p, v_p, m_p, cat_p, emp_id, ref_p)); conn.commit(); conn.close()
+                        conn = conectar_banco()
+                        conn.cursor().execute("INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) VALUES (%s,%s,%s,%s,%s,%s,%s)", (n_p, q_p, v_p, m_p, cat_p, emp_id, ref_p))
+                        conn.commit()
+                        conn.close()
                         st.rerun()
             
             if not df_p.empty:
-                st.dataframe(df_p.drop(columns=['empresa_id']), use_container_width=True, hide_index=True)
-                val_est = (df_p['quantidade'] * df_p['valor']).sum()
-                st.metric("Capital em Estoque (Venda)", f"R$ {val_est:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
-
+                st.markdown("---")
+                
+                # --- BUSCA INTELIGENTE DE PRODUTOS ---
+                df_p['display_pesquisa'] = df_p.apply(
+                    lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
+                )
+                
+                opcoes_busca = ["📦 Mostrar Todos"] + df_p['display_pesquisa'].tolist()
+                prod_busca = st.selectbox("🔍 Pesquise o Produto (Digite o nome para filtrar):", options=opcoes_busca)
+                
+                # Aplica o filtro na tabela dependendo da seleção
+                if prod_busca != "📦 Mostrar Todos":
+                    df_p_filtrado = df_p[df_p['display_pesquisa'] == prod_busca]
+                else:
+                    df_p_filtrado = df_p
+                    
+                # Limpa colunas de sistema antes de renderizar a tabela na tela
+                df_exibicao = df_p_filtrado.drop(columns=['empresa_id', 'display_pesquisa'])
+                
+                st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
+                
+                # Só exibe o totalizador financeiro global se não estiver buscando um item isolado
+                if prod_busca == "📦 Mostrar Todos":
+                    val_est = (df_p['quantidade'] * df_p['valor']).sum()
+                    st.metric("Capital em Estoque (Venda)", f"R$ {val_est:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                    
         with tab_cat:
             c1, c2 = st.columns(2)
             with c1:
