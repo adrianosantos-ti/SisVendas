@@ -181,11 +181,14 @@ else:
     # MENU LATERAL DE MÓDULOS
     # ---------------------------------------------------------
     # 1. A PRIMEIRA coisa do Streamlit no código TEM que ser a configuração da página:
+    icone = Image.open("logo.png") 
+
+    # 2. Configuração da página - DEVE SER O PRIMEIRO COMANDO STREAMLIT
     st.set_page_config(
-        page_title="Apprimory",
-        page_icon="🛍️", # Pode usar 🛒, 🛍️, 👗, etc.
+        page_title="Apprimory - Inteligência para Gestão", # Deixei mais curto para ficar elegante na aba
+        page_icon=icone,
         layout="wide"
-     )
+    )
 
     st.sidebar.image("logo.png", width=100)
     # st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1063/1063376.png", width=80)
