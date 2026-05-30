@@ -186,7 +186,7 @@ else:
     # 2. Configuração da página - DEVE SER O PRIMEIRO COMANDO STREAMLIT
     st.set_page_config(
         page_title="Apprimory - Inteligência para Gestão", # Deixei mais curto para ficar elegante na aba
-        page_icon="💎",
+        page_icon=icone,
         layout="wide"
     )
 
