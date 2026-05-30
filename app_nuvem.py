@@ -529,29 +529,50 @@ else:
             if not df_p.empty:
                 st.markdown("---")
                 
-                # --- BUSCA INTELIGENTE DE PRODUTOS ---
-                df_p['display_pesquisa'] = df_p.apply(
-                    lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
-                )
+                # --- PAINEL DE FILTROS (CATEGORIA E BUSCA) ---
+                col_filtro_cat, col_filtro_nome = st.columns(2)
                 
-                opcoes_busca = ["📦 Mostrar Todos"] + df_p['display_pesquisa'].tolist()
-                prod_busca = st.selectbox("🔍 Pesquise o Produto (Digite o nome para filtrar):", options=opcoes_busca)
+                # 1. Filtro de Categoria
+                opcoes_cat = ["📦 Todas as Categorias"] + lista_cat
+                cat_selecionada = col_filtro_cat.selectbox("📑 Filtrar por Categoria:", options=opcoes_cat)
                 
-                # Aplica o filtro na tabela dependendo da seleção
-                if prod_busca != "📦 Mostrar Todos":
-                    df_p_filtrado = df_p[df_p['display_pesquisa'] == prod_busca]
+                if cat_selecionada != "📦 Todas as Categorias":
+                    df_filtrado_cat = df_p[df_p['categoria'] == cat_selecionada]
                 else:
-                    df_p_filtrado = df_p
+                    df_filtrado_cat = df_p
+                
+                # 2. Busca Dinâmica (Respeitando a categoria selecionada)
+                # O if garante que não dê erro se uma categoria estiver vazia
+                if not df_filtrado_cat.empty:
+                    df_filtrado_cat['display_pesquisa'] = df_filtrado_cat.apply(
+                        lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
+                    )
+                    opcoes_busca = ["🔍 Todos os Produtos listados"] + df_filtrado_cat['display_pesquisa'].tolist()
+                else:
+                    opcoes_busca = ["🔍 Nenhum produto nesta categoria"]
                     
-                # Limpa colunas de sistema antes de renderizar a tabela na tela
-                df_exibicao = df_p_filtrado.drop(columns=['empresa_id', 'display_pesquisa'])
+                prod_busca = col_filtro_nome.selectbox("Pesquise o Produto:", options=opcoes_busca)
                 
-                st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
-                
-                # Só exibe o totalizador financeiro global se não estiver buscando um item isolado
-                if prod_busca == "📦 Mostrar Todos":
-                    val_est = (df_p['quantidade'] * df_p['valor']).sum()
-                    st.metric("Capital em Estoque (Venda)", f"R$ {val_est:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                # Aplica o filtro de nome final
+                if prod_busca not in ["🔍 Todos os Produtos listados", "🔍 Nenhum produto nesta categoria"]:
+                    df_final = df_filtrado_cat[df_filtrado_cat['display_pesquisa'] == prod_busca]
+                else:
+                    df_final = df_filtrado_cat
+                    
+                # --- EXIBIÇÃO E TOTALIZADOR ---
+                if not df_final.empty:
+                    df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa'], errors='ignore')
+                    st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
+                    
+                    # O totalizador financeiro agora é inteligente: calcula apenas o que está filtrado na tela
+                    val_est = (df_final['quantidade'] * df_final['valor']).sum()
+                    
+                    # Muda o título da métrica dependendo do que está sendo exibido para impressionar na apresentação
+                    titulo_metrica = "Capital Total em Estoque (Venda)" if cat_selecionada == "📦 Todas as Categorias" and prod_busca.startswith("🔍 Todos") else f"Capital Projetado (Filtro Atual)"
+                    
+                    st.metric(titulo_metrica, f"R$ {val_est:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                else:
+                    st.info("Nenhum produto encontrado com os filtros atuais.")
                     
         with tab_cat:
             c1, c2 = st.columns(2)
