@@ -505,7 +505,6 @@ else:
     elif modulo == "🗂️ Cadastros":
         st.markdown("### 🗂️ Central de Cadastros")
         tab_prod, tab_cat, tab_cli, tab_for = st.tabs(["📦 Estoque", "🏷️ Categorias", "👥 Clientes", "🤝 Fornecedores"])
-        
         with tab_prod:
             st.subheader("Gerenciar Estoque")
             df_p = carregar_dados("SELECT * FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
@@ -528,14 +527,68 @@ else:
                         conn.commit()
                         conn.close()
                         st.rerun()
-            
+
+            # --- NOVO BLOCO: EDITAR PRODUTO ---
+# --- NOVO BLOCO: EDITAR PRODUTO ---
+            with st.expander("✏️ Editar Produto"):
+                if not df_p.empty:
+                    # Usa o ID no selectbox para evitar erros com produtos de mesmo nome
+                    opcoes_edicao = df_p['id'].tolist()
+                    
+                    # Função para mostrar o nome bonito no dropdown, mas usar o ID por trás
+                    def formatar_produto(prod_id):
+                        linha = df_p[df_p['id'] == prod_id].iloc[0]
+                        ref = f" (Ref: {linha['referencia']})" if linha['referencia'] else ""
+                        return f"{linha['nome']}{ref}"
+                        
+                    prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto)
+                    
+                    if prod_id_selecionado:
+                        # Puxa os dados atuais do produto selecionado
+                        p_atual = df_p[df_p['id'] == prod_id_selecionado].iloc[0]
+                        
+                        with st.form("f_edita_p", clear_on_submit=False):
+                            c1, c2 = st.columns(2)
+                            e_nome = c1.text_input("Nome do Produto", value=p_atual['nome'])
+                            e_ref = c2.text_input("Referência", value=p_atual['referencia'] if p_atual['referencia'] else "")
+                            
+                            c3, c4, c5 = st.columns(3)
+                            # Preenche com a quantidade e valor atuais
+                            e_qtd = c3.number_input("Quantidade Atualizada", min_value=0, step=1, value=int(p_atual['quantidade']))
+                            e_valor = c4.number_input("Novo Valor Venda (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']))
+                            e_marca = c5.text_input("Marca", value=p_atual['marca'])
+                            
+                            # Descobre o índice da categoria atual para deixar selecionado
+                            try:
+                                cat_index = lista_cat.index(p_atual['categoria'])
+                            except ValueError:
+                                cat_index = 0
+                                
+                            e_cat = st.selectbox("Categoria", lista_cat, index=cat_index)
+                            
+                            if st.form_submit_button("💾 Salvar Alterações"):
+                                conn = conectar_banco()
+                                # Faz o UPDATE apenas no ID selecionado, garantindo a segurança do dado
+                                conn.cursor().execute("""
+                                    UPDATE produtos 
+                                    SET nome=%s, quantidade=%s, valor=%s, marca=%s, categoria=%s, referencia=%s 
+                                    WHERE id=%s AND empresa_id=%s
+                                """, (e_nome, e_qtd, e_valor, e_marca, e_cat, e_ref, int(prod_id_selecionado), emp_id))
+                                conn.commit()
+                                conn.close()
+                                
+                                st.success("Produto atualizado com sucesso!")
+                                st.rerun()
+                else:
+                    st.info("Não há produtos cadastrados para editar.")
+                    
             if not df_p.empty:
                 st.markdown("---")
                 
-                # --- PAINEL DE FILTROS (CATEGORIA E BUSCA) ---
-                col_filtro_cat, col_filtro_nome = st.columns(2)
+                # --- PAINEL DE FILTROS (INVERTIDOS VISUALMENTE) ---
+                col_filtro_nome, col_filtro_cat = st.columns(2)
                 
-                # 1. Filtro de Categoria
+                # 1. Filtro de Categoria (Lógica processada primeiro, mas renderizada na DIREITA)
                 opcoes_cat = ["📦 Todas as Categorias"] + lista_cat
                 cat_selecionada = col_filtro_cat.selectbox("📑 Filtrar por Categoria:", options=opcoes_cat)
                 
@@ -544,8 +597,7 @@ else:
                 else:
                     df_filtrado_cat = df_p
                 
-                # 2. Busca Dinâmica (Respeitando a categoria selecionada)
-                # O if garante que não dê erro se uma categoria estiver vazia
+                # 2. Busca Dinâmica (Renderizada na ESQUERDA)
                 if not df_filtrado_cat.empty:
                     df_filtrado_cat['display_pesquisa'] = df_filtrado_cat.apply(
                         lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
@@ -554,7 +606,7 @@ else:
                 else:
                     opcoes_busca = ["🔍 Nenhum produto nesta categoria"]
                     
-                prod_busca = col_filtro_nome.selectbox("Pesquise o Produto:", options=opcoes_busca)
+                prod_busca = col_filtro_nome.selectbox("🔍 Pesquise o Produto:", options=opcoes_busca)
                 
                 # Aplica o filtro de nome final
                 if prod_busca not in ["🔍 Todos os Produtos listados", "🔍 Nenhum produto nesta categoria"]:
@@ -567,10 +619,7 @@ else:
                     df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa'], errors='ignore')
                     st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
                     
-                    # O totalizador financeiro agora é inteligente: calcula apenas o que está filtrado na tela
                     val_est = (df_final['quantidade'] * df_final['valor']).sum()
-                    
-                    # Muda o título da métrica dependendo do que está sendo exibido para impressionar na apresentação
                     titulo_metrica = "Capital Total em Estoque (Venda)" if cat_selecionada == "📦 Todas as Categorias" and prod_busca.startswith("🔍 Todos") else f"Capital Projetado (Filtro Atual)"
                     
                     st.metric(titulo_metrica, f"R$ {val_est:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
