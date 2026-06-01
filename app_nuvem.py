@@ -128,7 +128,7 @@ elif st.session_state['perfil'] == 'master':
         
     aba_cad_empresa, aba_cad_usuario, aba_senhas = st.tabs(["🏢 Empresas", "👤 Logins", "🔒 Senhas"])
     
-        with aba_cad_empresa:
+    with aba_cad_empresa:
         st.subheader("Nova Empresa")
         
         # --- BLOCO DE CADASTRO (Seu código original) ---
