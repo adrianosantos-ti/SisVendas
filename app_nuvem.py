@@ -631,7 +631,7 @@ else:
         st.markdown("### 🗂️ Central de Cadastros")
         tab_prod, tab_cat, tab_cli, tab_for = st.tabs(["📦 Estoque", "🏷️ Categorias", "👥 Clientes", "🤝 Fornecedores"])
         with tab_prod:
-            st.subheader("Gerenciar Estoque")
+            #st.subheader("Gerenciar Estoque")
             df_p = carregar_dados("SELECT * FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             df_c = carregar_dados("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
