@@ -762,7 +762,7 @@ else:
                     conn = conectar_banco(); conn.cursor().execute("DELETE FROM categorias WHERE nome=%s AND empresa_id=%s",(cat_del, emp_id)); conn.commit(); conn.close(); st.rerun()
 
         with tab_cli:
-            st.header("Gerenciamento de Clientes")
+            st.subheader("Gerenciamento de Clientes")
             
             from datetime import datetime
             import pytz
