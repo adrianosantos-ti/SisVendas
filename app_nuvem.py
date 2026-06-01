@@ -762,7 +762,7 @@ else:
                     conn = conectar_banco(); conn.cursor().execute("DELETE FROM categorias WHERE nome=%s AND empresa_id=%s",(cat_del, emp_id)); conn.commit(); conn.close(); st.rerun()
 
         with tab_cli:
-            st.subheader("Gerenciamento de Clientes")
+            #st.subheader("Gerenciamento de Clientes")
             
             from datetime import datetime
             import pytz
@@ -850,7 +850,7 @@ else:
                 st.dataframe(df_clientes.drop(columns=['empresa_id']), use_container_width=True, hide_index=True)
 
         with tab_for:
-            st.subheader("Gestão de Fornecedores")
+            #st.subheader("Gestão de Fornecedores")
             with st.expander("➕ Novo Fornecedor"):
                 with st.form("f_for", clear_on_submit=True):
                     n_f = st.text_input("Razão Social / Nome")
