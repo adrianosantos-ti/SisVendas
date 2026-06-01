@@ -529,7 +529,6 @@ else:
                         st.rerun()
 
             # --- NOVO BLOCO: EDITAR PRODUTO ---
-# --- NOVO BLOCO: EDITAR PRODUTO ---
             with st.expander("✏️ Editar Produto"):
                 if not df_p.empty:
                     # Usa o ID no selectbox para evitar erros com produtos de mesmo nome
@@ -1322,7 +1321,69 @@ else:
                         st.success("🎉 Nenhuma parcela pendente! Todos os clientes estão em dia.")
                 
                 st.markdown("---")
+
+                # --- LÓGICA PARA REAJUSTE DE PARCELAS ---
+                with st.expander("⚖️ Reajustar Valores das Parcelas"):
+                    st.markdown("Use esta opção quando a cliente pagar um valor diferente na parcela atual para recalcular as próximas.")
+    
+                    # 1. Seleciona o ID da venda que precisa de ajuste
+                    # Supondo que você tenha uma lista ou input do ID da venda:
+                    venda_ajuste = st.number_input("Digite o ID da Venda (ex: 36 para Irene)", min_value=1, step=1)
+    
+                    if st.button("Buscar Parcelas"):
+                        st.session_state['venda_editando'] = venda_ajuste
+        
+                    if 'venda_editando' in st.session_state:
+                        v_id = st.session_state['venda_editando']
+        
+                        # 2. Carrega todas as parcelas dessa venda específica
+                        df_parc = carregar_dados("SELECT * FROM financeiro WHERE venda_id=%s ORDER BY parcela", (v_id,))
+        
+                        if not df_parc.empty:
+                        # Descobre o valor TOTAL original da venda
+                        total_original = df_parc['valor'].sum()
+                        st.info(f"💰 **Valor Total Original da Venda:** R$ {total_original:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+            
+                        with st.form(f"f_reajuste_{v_id}"):
+                            novos_valores = {}
                 
+                            # 3. Cria um campo de edição para cada parcela dinamicamente
+                            for index, row in df_parc.iterrows():
+                            st.write(f"**Parcela {row['parcela']} de {row['total_parcelas']}** - Status: {row['status']}")
+                            novo_val = st.number_input(
+                                f"Valor da Parcela {row['parcela']} (R$)", 
+                                value=float(row['valor']), 
+                                min_value=0.0, 
+                                format="%.2f",
+                                key=f"val_{row['id']}"
+                            )
+                            novos_valores[row['id']] = novo_val
+                            st.markdown("---")
+                
+                        if st.form_submit_button("💾 Validar e Salvar Reajuste"):
+                            # 4. A MÁGICA DA VALIDAÇÃO
+                            soma_novas_parcelas = sum(novos_valores.values())
+                    
+                            # Usa o round(, 2) para garantir que comparações de centavos não falhem
+                            if round(soma_novas_parcelas, 2) != round(total_original, 2):
+                                st.error(f"❌ **Operação Bloqueada:** A soma das novas parcelas (R$ {soma_novas_parcelas:.2f}) é diferente do total da venda (R$ {total_original:.2f}). A diferença é de R$ {abs(total_original - soma_novas_parcelas):.2f}.")
+                            else:
+                                # Se a soma bater exatamente, atualiza o banco de dados
+                                conn = conectar_banco()
+                                for parcela_id, valor_atualizado in novos_valores.items():
+                                    conn.cursor().execute(
+                                        "UPDATE financeiro SET valor=%s WHERE id=%s AND empresa_id=%s", 
+                                        (valor_atualizado, parcela_id, emp_id)
+                                )
+                                conn.commit()
+                                conn.close()
+                        
+                                st.success("✅ Valores reajustados com sucesso mantendo o total da venda!")
+                                del st.session_state['venda_editando'] # Limpa a tela
+                                st.rerun()
+                else:
+                    st.warning("Nenhuma parcela encontrada para esta venda.")
+
                 st.subheader("📋 Relatório de Parcelas e Boletos")
                 filtro_status = st.radio("Filtrar por Status:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True)
                 
