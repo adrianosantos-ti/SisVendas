@@ -128,8 +128,10 @@ elif st.session_state['perfil'] == 'master':
         
     aba_cad_empresa, aba_cad_usuario, aba_senhas = st.tabs(["🏢 Empresas", "👤 Logins", "🔒 Senhas"])
     
-    with aba_cad_empresa:
+        with aba_cad_empresa:
         st.subheader("Nova Empresa")
+        
+        # --- BLOCO DE CADASTRO (Seu código original) ---
         with st.form("form_nova_empresa", clear_on_submit=True):
             nome_emp = st.text_input("Nome Comercial")
             cnpj_emp = st.text_input("CNPJ")
@@ -140,7 +142,46 @@ elif st.session_state['perfil'] == 'master':
                 conn.close()
                 st.success(f"Empresa '{nome_emp}' cadastrada!")
                 st.rerun()
-        st.dataframe(carregar_dados("SELECT id, nome, cnpj FROM empresas ORDER BY id"), use_container_width=True)
+                
+        # Carrega os dados uma vez para usar na edição e na tabela
+        df_empresas = carregar_dados("SELECT id, nome, cnpj FROM empresas ORDER BY id")
+        
+        # --- NOVO BLOCO DE EDIÇÃO ---
+        with st.expander("✏️ Editar Empresa"):
+            if not df_empresas.empty:
+                opcoes_ed_emp = df_empresas['id'].tolist()
+                
+                def formatar_empresa(e_id):
+                    linha = df_empresas[df_empresas['id'] == e_id].iloc[0]
+                    cnpj_display = f" - CNPJ: {linha['cnpj']}" if linha['cnpj'] else ""
+                    return f"{linha['nome']} (ID: {linha['id']}){cnpj_display}"
+                    
+                emp_selecionada = st.selectbox("Selecione a empresa para atualizar:", opcoes_ed_emp, format_func=formatar_empresa)
+                
+                if emp_selecionada:
+                    emp_atual = df_empresas[df_empresas['id'] == emp_selecionada].iloc[0]
+                    
+                    with st.form("f_edita_emp"):
+                        c1, c2 = st.columns(2)
+                        e_nome = c1.text_input("Nome Comercial", value=emp_atual['nome'])
+                        e_cnpj = c2.text_input("CNPJ", value=emp_atual['cnpj'] if emp_atual['cnpj'] else "")
+                        
+                        if st.form_submit_button("💾 Salvar Alterações"):
+                            conn = conectar_banco()
+                            conn.cursor().execute(
+                                "UPDATE empresas SET nome=%s, cnpj=%s WHERE id=%s", 
+                                (e_nome, e_cnpj, int(emp_selecionada))
+                            )
+                            conn.commit()
+                            conn.close()
+                            
+                            st.success("✅ Cadastro da empresa atualizado com sucesso!")
+                            st.rerun()
+            else:
+                st.info("Não há empresas cadastradas para editar.")
+
+        # --- TABELA FINAL DE EXIBIÇÃO ---
+        st.dataframe(df_empresas, use_container_width=True, hide_index=True)
 
     with aba_cad_usuario:
         st.subheader("Novo Login")
