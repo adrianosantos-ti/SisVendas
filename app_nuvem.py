@@ -1340,11 +1340,11 @@ else:
                         df_parc = carregar_dados("SELECT * FROM financeiro WHERE venda_id=%s ORDER BY parcela", (v_id,))
         
                         if not df_parc.empty:
-                        # Descobre o valor TOTAL original da venda
-                        total_original = df_parc['valor'].sum()
-                        st.info(f"💰 **Valor Total Original da Venda:** R$ {total_original:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                            # Descobre o valor TOTAL original da venda
+                            total_original = df_parc['valor'].sum()
+                            st.info(f"💰 **Valor Total Original da Venda:** R$ {total_original:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
             
-                        with st.form(f"f_reajuste_{v_id}"):
+                            with st.form(f"f_reajuste_{v_id}"):
                             novos_valores = {}
                 
                             # 3. Cria um campo de edição para cada parcela dinamicamente
