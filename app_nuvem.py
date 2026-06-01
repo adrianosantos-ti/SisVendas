@@ -1327,7 +1327,7 @@ else:
                     st.markdown("Use esta opção quando a cliente pagar um valor diferente na parcela atual para recalcular as próximas.")
     
                     # 1. Seleciona o ID da venda que precisa de ajuste
-                    venda_ajuste = st.number_input("Digite o ID da Venda (ex: 36 para Irene)", min_value=1, step=1)
+                    venda_ajuste = st.number_input("Digite o Nº da Venda (ex: 36 para Irene)", min_value=1, step=1)
     
                     if st.button("Buscar Parcelas"):
                         st.session_state['venda_editando'] = venda_ajuste
@@ -1335,12 +1335,12 @@ else:
                     if 'venda_editando' in st.session_state:
                         v_id = st.session_state['venda_editando']
         
-                        # 2. Carrega todas as parcelas dessa venda específica
-                        df_parc = carregar_dados("SELECT * FROM financeiro WHERE venda_id=%s ORDER BY parcela", (v_id,))
+                        # 2. Carrega as parcelas apontando para a tabela e colunas corretas
+                        df_parc = carregar_dados("SELECT * FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
         
                         if not df_parc.empty:
-                            # Descobre o valor TOTAL original da venda
-                            total_original = df_parc['valor'].sum()
+                            # Descobre o valor TOTAL original da venda usando a coluna certa
+                            total_original = df_parc['valor_parcela'].sum()
                             st.info(f"💰 **Valor Total Original da Venda:** R$ {total_original:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
             
                             with st.form(f"f_reajuste_{v_id}"):
@@ -1348,10 +1348,10 @@ else:
                 
                                 # 3. Cria um campo de edição para cada parcela dinamicamente
                                 for index, row in df_parc.iterrows():
-                                    st.write(f"**Parcela {row['parcela']} de {row['total_parcelas']}** - Status: {row['status']}")
+                                    st.write(f"**Parcela {row['num_parcela']} de {row['total_parcelas']}** - Status: {row['status']}")
                                     novo_val = st.number_input(
-                                        f"Valor da Parcela {row['parcela']} (R$)", 
-                                        value=float(row['valor']), 
+                                        f"Valor da Parcela {row['num_parcela']} (R$)", 
+                                        value=float(row['valor_parcela']), 
                                         min_value=0.0, 
                                         format="%.2f",
                                         key=f"val_{row['id']}"
@@ -1371,7 +1371,7 @@ else:
                                         conn = conectar_banco()
                                         for parcela_id, valor_atualizado in novos_valores.items():
                                             conn.cursor().execute(
-                                                "UPDATE financeiro SET valor=%s WHERE id=%s AND empresa_id=%s", 
+                                                "UPDATE contas_receber SET valor_parcela=%s WHERE id=%s AND empresa_id=%s", 
                                                 (valor_atualizado, parcela_id, emp_id)
                                             )
                                         conn.commit()
