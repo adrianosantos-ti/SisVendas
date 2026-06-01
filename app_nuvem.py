@@ -1327,7 +1327,7 @@ else:
                     st.markdown("Use esta opção quando a cliente pagar um valor diferente na parcela atual para recalcular as próximas.")
     
                     # 1. Seleciona o ID da venda que precisa de ajuste
-                    venda_ajuste = st.number_input("Digite o Nº da Venda (ex: 36 para Irene)", min_value=1, step=1)
+                    venda_ajuste = st.number_input("Digite o Nº da Venda (ex: 36)", min_value=1, step=1)
     
                     if st.button("Buscar Parcelas"):
                         st.session_state['venda_editando'] = venda_ajuste
@@ -1340,7 +1340,7 @@ else:
         
                         if not df_parc.empty:
                             # Descobre o valor TOTAL original da venda usando a coluna certa
-                            total_original = df_parc['valor_parcela'].sum()
+                            total_original = float(df_parc['valor_parcela'].sum())
                             st.info(f"💰 **Valor Total Original da Venda:** R$ {total_original:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
             
                             with st.form(f"f_reajuste_{v_id}"):
