@@ -185,22 +185,106 @@ elif st.session_state['perfil'] == 'master':
 
     with aba_cad_usuario:
         st.subheader("Novo Login")
+        
+        # Carrega lista de empresas para usar nos selects (tanto no cadastro quanto na edição)
         df_emp_list = carregar_dados("SELECT id, nome FROM empresas ORDER BY id")
         dict_empresas = dict(zip(df_emp_list['nome'], df_emp_list['id']))
+        lista_nomes_empresas = list(dict_empresas.keys())
+
+        # --- 1. BLOCO DE NOVO CADASTRO (Seu código original) ---
         with st.form("form_novo_usuario", clear_on_submit=True):
             nome_usu = st.text_input("Nome")
-            emp_usu = st.selectbox("Empresa", options=list(dict_empresas.keys()))
+            emp_usu = st.selectbox("Empresa", options=lista_nomes_empresas)
             login_usu = st.text_input("Login")
             senha_usu = st.text_input("Senha", type="password")
             if st.form_submit_button("Criar"):
                 conn = conectar_banco()
-                conn.cursor().execute("INSERT INTO usuarios (nome, login, senha, empresa_id, perfil) VALUES (%s,%s,%s,%s,'comum')", 
-                                     (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu]))
+                conn.cursor().execute(
+                    "INSERT INTO usuarios (nome, login, senha, empresa_id, perfil) VALUES (%s,%s,%s,%s,'comum')", 
+                    (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu])
+                )
                 conn.commit()
                 conn.close()
+                st.success(f"Usuário '{nome_usu}' criado com sucesso!")
                 st.rerun()
-        st.dataframe(carregar_dados("SELECT u.id, u.nome, u.login, e.nome as empresa FROM usuarios u JOIN empresas e ON u.empresa_id = e.id"), use_container_width=True)
 
+        # Carrega os usuários para edição, exclusão e exibição na tabela
+        # Adicionei o u.empresa_id na query para usarmos na lógica de edição
+        df_usuarios = carregar_dados("SELECT u.id, u.nome, u.login, u.empresa_id, e.nome as empresa FROM usuarios u JOIN empresas e ON u.empresa_id = e.id ORDER BY u.id")
+
+        # --- 2. BLOCO DE EDIÇÃO ---
+        with st.expander("✏️ Editar Login"):
+            if not df_usuarios.empty:
+                opcoes_usuarios = df_usuarios['id'].tolist()
+                
+                def formatar_usuario(u_id):
+                    linha = df_usuarios[df_usuarios['id'] == u_id].iloc[0]
+                    return f"ID {linha['id']} - {linha['nome']} ({linha['login']}) | Emp: {linha['empresa']}"
+                    
+                usu_ed_sel = st.selectbox("Selecione o usuário para atualizar:", opcoes_usuarios, format_func=formatar_usuario, key="edit_usu")
+                
+                if usu_ed_sel:
+                    usu_atual = df_usuarios[df_usuarios['id'] == usu_ed_sel].iloc[0]
+                    
+                    with st.form("f_edita_usuario"):
+                        c1, c2 = st.columns(2)
+                        e_nome = c1.text_input("Nome", value=usu_atual['nome'])
+                        e_login = c2.text_input("Login", value=usu_atual['login'])
+                        
+                        # Acha o índice da empresa atual para deixar o Selectbox já posicionado nela
+                        try:
+                            idx_emp = lista_nomes_empresas.index(usu_atual['empresa'])
+                        except ValueError:
+                            idx_emp = 0
+                            
+                        e_emp = st.selectbox("Empresa", options=lista_nomes_empresas, index=idx_emp)
+                        
+                        # Campo de senha opcional para não obrigar a redigitar sempre que for alterar só o nome
+                        e_senha = st.text_input("Nova Senha (deixe em branco para manter a atual)", type="password")
+                        
+                        if st.form_submit_button("💾 Salvar Alterações"):
+                            conn = conectar_banco()
+                            if e_senha.strip() == "":
+                                # Atualiza sem mexer na coluna senha
+                                conn.cursor().execute(
+                                    "UPDATE usuarios SET nome=%s, login=%s, empresa_id=%s WHERE id=%s", 
+                                    (e_nome, e_login, dict_empresas[e_emp], int(usu_ed_sel))
+                                )
+                            else:
+                                # Atualiza tudo, incluindo a nova senha
+                                conn.cursor().execute(
+                                    "UPDATE usuarios SET nome=%s, login=%s, empresa_id=%s, senha=%s WHERE id=%s", 
+                                    (e_nome, e_login, dict_empresas[e_emp], e_senha, int(usu_ed_sel))
+                                )
+                            conn.commit()
+                            conn.close()
+                            
+                            st.success("✅ Usuário atualizado com sucesso!")
+                            st.rerun()
+            else:
+                st.info("Não há usuários cadastrados.")
+
+        # --- 3. BLOCO DE EXCLUSÃO ---
+        with st.expander("🗑️ Excluir Login"):
+            if not df_usuarios.empty:
+                st.warning("⚠️ Atenção: A exclusão apagará o acesso permanentemente.")
+                usu_del_sel = st.selectbox("Selecione o usuário para EXCLUIR:", opcoes_usuarios, format_func=formatar_usuario, key="del_usu")
+                
+                with st.form("f_exclui_usuario"):
+                    st.write("Tem certeza que deseja remover o acesso deste usuário?")
+                    if st.form_submit_button("🚨 Confirmar Exclusão"):
+                        conn = conectar_banco()
+                        conn.cursor().execute("DELETE FROM usuarios WHERE id=%s", (int(usu_del_sel),))
+                        conn.commit()
+                        conn.close()
+                        
+                        st.success("🗑️ Usuário excluído com sucesso!")
+                        st.rerun()
+
+        # --- 4. TABELA FINAL DE EXIBIÇÃO ---
+        # Filtramos as colunas no display para não mostrar o ID interno da empresa na tabela visual
+        st.dataframe(df_usuarios[['id', 'nome', 'login', 'empresa']], use_container_width=True, hide_index=True)
+    
     with aba_senhas:
         st.subheader("Reset de Senhas")
         df_todos_usu = carregar_dados("SELECT id, nome, login FROM usuarios ORDER BY nome")
