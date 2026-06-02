@@ -97,7 +97,7 @@ if not st.session_state['logado']:
         unsafe_allow_html=True
     )
     st.write("") # Dá um pequeno espaço extra
-    st.markdown("### 🔐 Novo Acesso ao Sistema")
+    st.markdown("### 🔐 Bem vindo ao Apprimory")
     with st.container(border=True):
         login_input = st.text_input("Usuário")
         senha_input = st.text_input("Senha", type="password")
