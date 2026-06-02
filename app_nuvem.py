@@ -355,7 +355,7 @@ else:
         st.markdown("### 📊 Gestão e Performance")
         aba_dash, aba_hist = st.tabs(["Painel Visual", "Histórico de Movimentação"])
         
-with aba_dash:
+        with aba_dash:
             # 1. CORREÇÃO SQL: Puxando a coluna 'codigo_venda' da sua tabela
             query_dash = "SELECT v.codigo_venda, v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.empresa_id = %s"
             df_dash = carregar_dados(query_dash, (emp_id,))
