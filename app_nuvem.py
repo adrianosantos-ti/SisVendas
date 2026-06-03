@@ -1030,10 +1030,10 @@ else:
                         
                             # Inserção no Financeiro usando as datas editadas
                             if f_pag == "Crediário" and valor_entrada > 0:
-                                cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
-                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                           (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', int(emp_id)))
-                            
+                                cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                           (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', data_v, int(emp_id)))
+                                
                                 if qtd_parcelas > 1:
                                     val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
                                     for i in range(2, int(qtd_parcelas) + 1):
@@ -1046,10 +1046,13 @@ else:
                                 for i in range(1, int(qtd_parcelas) + 1):
                                     dt_venc = datas_parcelas[i-1]
                                     status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
-                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
-                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                               (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, int(emp_id)))
-                        
+                                    
+                                    # Se a venda for à vista, já salva a data de hoje no pagamento
+                                    data_pag_val = data_v if status_venda == 'Pago' else None
+                                    
+                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                               (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))                        
                             # --- CONFIGURAÇÃO DA MENSAGEM DO WHATSAPP COM DATAS ---
                             cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
                             resultado_tel = cur.fetchone()
