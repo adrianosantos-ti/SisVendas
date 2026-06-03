@@ -1531,17 +1531,179 @@ else:
             else:
                 st.info("Nenhuma movimentação financeira registrada ainda. Faça sua primeira venda para alimentar o caixa!")
                 
-        # --- CONTAS A PAGAR ---
+        # --- CONTAS A PAGAR COMPLETÃO (CRUD + BAIXA) ---
         with tab_pag:
-            st.subheader("Compromissos e Pagamentos")
-            df_p = carregar_dados("""
-                SELECT cp.id, f.nome as fornecedor, cp.valor_parcela, cp.data_vencimento, cp.status 
-                FROM contas_pagar cp JOIN fornecedores f ON cp.fornecedor_id = f.id WHERE cp.empresa_id = %s ORDER BY cp.id DESC
+            st.markdown("### 🔴 Controle de Compromissos e Despesas")
+            
+            # 1. Carrega todas as contas a pagar para alimentar os cálculos e a tabela
+            df_pagar_geral = carregar_dados("""
+                SELECT cp.id AS "ID", f.nome AS "Fornecedor", cp.num_parcela AS "Parcela", 
+                       cp.total_parcelas AS "De", cp.valor_parcela AS "Valor (R$)", 
+                       cp.data_vencimento AS "Vencimento", cp.status AS "Status", cp.data_pagamento AS "Data Pagto"
+                FROM contas_pagar cp 
+                JOIN fornecedores f ON cp.fornecedor_id = f.id 
+                WHERE cp.empresa_id = %s 
+                ORDER BY TO_DATE(cp.data_vencimento, 'DD/MM/YYYY') ASC
             """, (emp_id,))
-            if not df_p.empty:
-                st.dataframe(df_p, use_container_width=True)
-            else: st.info("Nenhuma conta a pagar registrada.")
+            
+            # 2. Carrega a lista de fornecedores para os formulários de cadastro/edição
+            df_forn_select = carregar_dados("SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome", (emp_id,))
+            
+            hoje = date.today()
+            
+            # --- CARDS DE MÉTRICAS DO CONTAS A PAGAR ---
+            if not df_pagar_geral.empty:
+                df_pagar_geral['Data_Venc_Obj'] = pd.to_datetime(df_pagar_geral['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
+                
+                v_pago = df_pagar_geral[df_pagar_geral['Status'] == 'Pago']['Valor (R$)'].sum()
+                v_pend_pag = df_pagar_geral[df_pagar_geral['Status'] == 'Pendente']['Valor (R$)'].sum()
+                mask_atraso_pag = (df_pagar_geral['Status'] == 'Pendente') & (df_pagar_geral['Data_Venc_Obj'] < hoje)
+                v_atr_pag = df_pagar_geral[mask_atraso_pag]['Valor (R$)'].sum()
+                
+                col_p1, col_p2, col_p3 = st.columns(3)
+                col_p1.metric("✅ Total Já Pago", f"R$ {v_pago:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col_p2.metric("⏳ A Pagar (No Prazo)", f"R$ {(v_pend_pag - v_atr_pag):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col_p3.metric("🚨 Despesas Atrasadas", f"R$ {v_atr_pag:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Alerta" if v_atr_pag > 0 else "Tudo em dia!", delta_color="inverse")
+            else:
+                col_p1, col_p2, col_p3 = st.columns(3)
+                col_p1.metric("✅ Total Já Pago", "R$ 0,00")
+                col_p2.metric("⏳ A Pagar (No Prazo)", "R$ 0,00")
+                col_p3.metric("🚨 Despesas Atrasadas", "R$ 0,00", delta="Tudo em dia!")
 
+            st.markdown("---")
+            
+            # --- OPERAÇÃO 1: 💰 REGISTRAR PAGAMENTO (DAR BAIXA) ---
+            with st.expander("💰 Dar Baixa em Despesa (Marcar como Paga)", expanded=False):
+                if not df_pagar_geral.empty:
+                    df_p_pendentes = df_pagar_geral[df_pagar_geral['Status'] == 'Pendente']
+                    if not df_p_pendentes.empty:
+                        with st.form("form_baixa_pagar"):
+                            op_baixa_p = df_p_pendentes.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
+                            despesa_sel = st.selectbox("Selecione a despesa que foi paga:", options=op_baixa_p)
+                            
+                            c_b1, c_b2 = st.columns([1, 2])
+                            data_pagto_real = c_b1.date_input("Data do Pagamento Efetivo", value=hoje, format="DD/MM/YYYY", key="dt_pagto_desp")
+                            
+                            if st.form_submit_button("🔴 Confirmar Pagamento", type="primary"):
+                                id_desp_baixa = int(despesa_sel.split("ID ")[1].split(" |")[0])
+                                conn = conectar_banco()
+                                conn.cursor().execute("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%d/%m/%Y"), id_desp_baixa, emp_id))
+                                conn.commit()
+                                conn.close()
+                                st.success("Despesa baixada com sucesso no fluxo financeiro!")
+                                st.rerun()
+                    else:
+                        st.success("🎉 Não há nenhuma conta a pagar pendente! Tudo quitado.")
+                else:
+                    st.info("Nenhum lançamento encontrado para dar baixa.")
+            
+            # --- OPERAÇÃO 2: ➕ LANÇAR NOVA DESPESA MANUAL (C DO CRUD) ---
+            with st.expander("➕ Lançar Nova Despesa Manual", expanded=False):
+                if not df_forn_select.empty:
+                    with st.form("form_novo_contas_pagar", clear_on_submit=True):
+                        forn_nome_sel = st.selectbox("Fornecedor / Origem da Despesa:", options=df_forn_select['nome'].tolist())
+                        
+                        col_l1, col_l2, col_l3 = st.columns(3)
+                        valor_total_manual = col_l1.number_input("Valor por Parcela (R$):", min_value=0.01, format="%.2f")
+                        tot_parc_manual = col_l2.number_input("Total de Parcelas:", min_value=1, max_value=36, value=1, step=1)
+                        data_1_venc_manual = col_l3.date_input("Data do 1º Vencimento:", value=hoje, format="DD/MM/YYYY")
+                        
+                        if st.form_submit_button("💾 Salvar Lançamento"):
+                            id_forn_manual = int(df_forn_select[df_forn_select['nome'] == forn_nome_sel].iloc[0]['id'])
+                            conn = conectar_banco()
+                            cur = conn.cursor()
+                            
+                            # Gera automaticamente o desdobramento das parcelas de 30 em 30 dias
+                            for i in range(1, int(tot_parc_manual) + 1):
+                                venc_parc_manual = data_1_venc_manual + timedelta(days=30 * (i - 1))
+                                cur.execute("""
+                                    INSERT INTO contas_pagar (fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
+                                    VALUES (%s, %s, %s, %s, %s, 'Pendente', %s)
+                                """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%d/%m/%Y"), emp_id))
+                            
+                            conn.commit()
+                            conn.close()
+                            st.success(f"Despesa com {tot_parc_manual} parcela(s) lançada com sucesso!")
+                            st.rerun()
+                else:
+                    st.warning("⚠️ Cadastre pelo menos um Fornecedor na aba anterior antes de lançar despesas manuais.")
+
+            # --- OPERAÇÃO 3: ✏️ EDITAR OU 🗑️ EXCLUIR LANÇAMENTO (U & D DO CRUD) ---
+            with st.expander("✏️ Editar ou 🗑️ Cancelar Lançamento", expanded=False):
+                if not df_pagar_geral.empty:
+                    op_edicao_p = df_pagar_geral.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} [{x['Status']}]", axis=1).tolist()
+                    desp_edicao_sel = st.selectbox("Selecione a despesa para alterar ou remover:", options=op_edicao_p, key="sel_crud_desp")
+                    id_desp_crud = int(desp_edicao_sel.split("ID ")[1].split(" |")[0])
+                    
+                    linha_atual_desp = df_pagar_geral[df_pagar_geral['ID'] == id_desp_crud].iloc[0]
+                    
+                    col_cr1, col_cr2 = st.columns(2)
+                    
+                    # Sub-Formulário de Edição (Update)
+                    with col_cr1:
+                        st.markdown("**✏️ Formulário de Edição**")
+                        try: date_v_form = datetime.strptime(linha_atual_desp['Vencimento'], "%d/%m/%Y").date()
+                        except: date_v_form = hoje
+                        
+                        with st.form("form_update_despesa_individual"):
+                            novo_v_desp = st.number_input("Valor da Parcela (R$)", min_value=0.01, value=float(linha_atual_desp['Valor (R$)']), format="%.2f")
+                            novo_venc_desp = st.date_input("Data de Vencimento", value=date_v_form, format="DD/MM/YYYY")
+                            
+                            novo_pagto_desp_val = linha_atual_desp['Data Pagto']
+                            if linha_atual_desp['Status'] == 'Pago':
+                                try: date_p_form = datetime.strptime(linha_atual_desp['Data Pagto'], "%d/%m/%Y").date()
+                                except: date_p_form = hoje
+                                dt_p_input = st.date_input("Data do Pagamento", value=date_p_form, format="DD/MM/YYYY")
+                                novo_pagto_desp_val = dt_p_input.strftime("%d/%m/%Y")
+                            
+                            if st.form_submit_button("💾 Atualizar Dados"):
+                                conn = conectar_banco()
+                                conn.cursor().execute("""
+                                    UPDATE contas_pagar 
+                                    SET valor_parcela = %s, data_vencimento = %s, data_pagamento = %s 
+                                    WHERE id = %s AND empresa_id = %s
+                                """, (float(novo_v_desp), novo_venc_desp.strftime("%d/%m/%Y"), novo_pagto_desp_val, id_desp_crud, emp_id))
+                                conn.commit()
+                                conn.close()
+                                st.success("Lançamento atualizado com sucesso!")
+                                st.rerun()
+                                
+                    # Sub-Formulário de Exclusão (Delete)
+                    with col_cr2:
+                        st.markdown("**🗑️ Exclusão Definitiva**")
+                        st.warning("Atenção: A remoção deste compromisso financeiro apagará o histórico permanentemente.")
+                        with st.form("form_delete_despesa_individual"):
+                            st.write(f"Confirma a exclusão da despesa ID {id_desp_crud}?")
+                            if st.form_submit_button("🚨 Excluir Permanentemente", type="primary"):
+                                conn = conectar_banco()
+                                conn.cursor().execute("DELETE FROM contas_pagar WHERE id = %s AND empresa_id = %s", (id_desp_crud, emp_id))
+                                conn.commit()
+                                conn.close()
+                                st.success("Despesa removida com sucesso!")
+                                st.rerun()
+                else:
+                    st.info("Nenhuma despesa disponível para alteração.")
+
+            st.markdown("---")
+            
+            # --- TABELA DE LEITURA COMPLETA (R DO CRUD) ---
+            st.subheader("📋 Relatório Estatístico de Despesas")
+            if not df_pagar_geral.empty:
+                filtro_status_pagar = st.radio("Filtrar por Status do Compromisso:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True, key="rad_status_pagar")
+                
+                df_view_pagar = df_pagar_geral.copy()
+                if filtro_status_pagar == "Pendentes":
+                    df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pendente']
+                elif filtro_status_pagar == "Pagos":
+                    df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pago']
+                elif filtro_status_pagar == "Atrasados":
+                    df_view_pagar = df_view_pagar[(df_view_pagar['Status'] == 'Pendente') & (df_view_pagar['Data_Venc_Obj'] < hoje)]
+                
+                df_exibicao_pagar = df_view_pagar.drop(columns=['Data_Venc_Obj'], errors='ignore')
+                st.dataframe(df_exibicao_pagar, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma conta a pagar registrada.")
+                
         # --- FLUXO DE CAIXA (NOVO BLOCO) ---
         with aba_fluxo_caixa:
             st.subheader("💸 Fluxo de Caixa")
