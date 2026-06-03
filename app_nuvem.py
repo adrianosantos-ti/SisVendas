@@ -1572,9 +1572,8 @@ else:
                 st.write("### 🔍 Período do Fluxo")
                 c1, c2 = st.columns(2)
                 hoje = date.today()
-                d_ini = c1.date_input("Data Inicial", hoje.replace(day=1), key="fluxo_ini")
-                d_fim = c2.date_input("Data Final", hoje, key="fluxo_fim")
-                
+                d_ini = c1.date_input("Data Inicial", value=hoje.replace(day=1), format="DD/MM/YYYY", key="fluxo_ini")
+                d_fim = c2.date_input("Data Final", value=hoje, format="DD/MM/YYYY", key="fluxo_fim")                
                 if d_ini and d_fim:
                     df_filtrado = df_fluxo[(df_fluxo['Data_Obj'] >= d_ini) & (df_fluxo['Data_Obj'] <= d_fim)]
                     
