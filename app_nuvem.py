@@ -1406,7 +1406,9 @@ else:
     # ==========================================
     elif modulo == "💰 Financeiro":
         st.markdown("### 💰 Gestão Financeira")
-        tab_rec, tab_pag = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)"])
+        
+        # --- MUDANÇA: Adicionamos a aba_fluxo_caixa aqui na lista de abas ---
+        tab_rec, tab_pag, aba_fluxo_caixa = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)", "💸 Fluxo de Caixa"])
         
         # --- CONTAS A RECEBER 100% RESTAURADO ---
         with tab_rec:
@@ -1461,7 +1463,6 @@ else:
                 with st.expander("⚖️ Reajustar Valores das Parcelas"):
                     st.markdown("Use esta opção quando a cliente pagar um valor diferente na parcela atual para recalcular as próximas.")
     
-                    # 1. Seleciona o ID da venda que precisa de ajuste
                     venda_ajuste = st.number_input("Digite o Nº da Venda (ex: 36)", min_value=1, step=1)
     
                     if st.button("Buscar Parcelas"):
@@ -1470,18 +1471,15 @@ else:
                     if 'venda_editando' in st.session_state:
                         v_id = st.session_state['venda_editando']
         
-                        # 2. Carrega as parcelas apontando para a tabela e colunas corretas
                         df_parc = carregar_dados("SELECT * FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
         
                         if not df_parc.empty:
-                            # Descobre o valor TOTAL original da venda usando a coluna certa
                             total_original = float(df_parc['valor_parcela'].sum())
                             st.info(f"💰 **Valor Total Original da Venda:** R$ {total_original:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
             
                             with st.form(f"f_reajuste_{v_id}"):
                                 novos_valores = {}
                 
-                                # 3. Cria um campo de edição para cada parcela dinamicamente
                                 for index, row in df_parc.iterrows():
                                     st.write(f"**Parcela {row['num_parcela']} de {row['total_parcelas']}** - Status: {row['status']}")
                                     novo_val = st.number_input(
@@ -1495,14 +1493,11 @@ else:
                                     st.markdown("---")
                 
                                 if st.form_submit_button("💾 Validar e Salvar Reajuste"):
-                                    # 4. A MÁGICA DA VALIDAÇÃO
                                     soma_novas_parcelas = sum(novos_valores.values())
                     
-                                    # Usa o round(, 2) para garantir que comparações de centavos não falhem
                                     if round(soma_novas_parcelas, 2) != round(total_original, 2):
                                         st.error(f"❌ **Operação Bloqueada:** A soma das novas parcelas (R$ {soma_novas_parcelas:.2f}) é diferente do total da venda (R$ {total_original:.2f}). A diferença é de R$ {abs(total_original - soma_novas_parcelas):.2f}.")
                                     else:
-                                        # Se a soma bater exatamente, atualiza o banco de dados
                                         conn = conectar_banco()
                                         for parcela_id, valor_atualizado in novos_valores.items():
                                             conn.cursor().execute(
@@ -1513,7 +1508,7 @@ else:
                                         conn.close()
                         
                                         st.success("✅ Valores reajustados com sucesso mantendo o total da venda!")
-                                        del st.session_state['venda_editando'] # Limpa a tela
+                                        del st.session_state['venda_editando']
                                         st.rerun()
                         else:
                             st.warning("Nenhuma parcela encontrada para esta venda.")
@@ -1544,6 +1539,92 @@ else:
                 st.dataframe(df_p, use_container_width=True)
             else: st.info("Nenhuma conta a pagar registrada.")
 
+        # --- FLUXO DE CAIXA (NOVO BLOCO) ---
+        with aba_fluxo_caixa:
+            st.subheader("💸 Fluxo de Caixa")
+            
+            query_fluxo = """
+                SELECT 
+                    cr.data_pagamento AS data_movimento,
+                    'Entrada' AS tipo,
+                    'Recbto Venda #' || cr.venda_codigo || ' (Parc ' || cr.num_parcela || '/' || cr.total_parcelas || ')' AS descricao,
+                    cr.valor_parcela AS valor
+                FROM contas_receber cr
+                WHERE cr.empresa_id = %s AND cr.status = 'Pago'
+                
+                UNION ALL
+                
+                SELECT 
+                    cp.data_pagamento AS data_movimento,
+                    'Saída' AS tipo,
+                    'Pgto Fornecedor (Parc ' || cp.num_parcela || '/' || cp.total_parcelas || ')' AS descricao,
+                    cp.valor_parcela AS valor
+                FROM contas_pagar cp
+                WHERE cp.empresa_id = %s AND cp.status = 'Pago'
+            """
+            
+            df_fluxo = carregar_dados(query_fluxo, (emp_id, emp_id))
+            
+            if not df_fluxo.empty:
+                df_fluxo = df_fluxo.dropna(subset=['data_movimento'])
+                df_fluxo['Data_Obj'] = pd.to_datetime(df_fluxo['data_movimento'], format='%d/%m/%Y', errors='coerce').dt.date
+                
+                st.write("### 🔍 Período do Fluxo")
+                c1, c2 = st.columns(2)
+                hoje = date.today()
+                d_ini = c1.date_input("Data Inicial", hoje.replace(day=1), key="fluxo_ini")
+                d_fim = c2.date_input("Data Final", hoje, key="fluxo_fim")
+                
+                if d_ini and d_fim:
+                    df_filtrado = df_fluxo[(df_fluxo['Data_Obj'] >= d_ini) & (df_fluxo['Data_Obj'] <= d_fim)]
+                    
+                    if not df_filtrado.empty:
+                        total_entradas = float(df_filtrado[df_filtrado['tipo'] == 'Entrada']['valor'].sum())
+                        total_saidas = float(df_filtrado[df_filtrado['tipo'] == 'Saída']['valor'].sum())
+                        saldo = total_entradas - total_saidas
+                        
+                        st.write("---")
+                        col_ent, col_sai, col_sal = st.columns(3)
+                        col_ent.metric("Entradas (+)", f"R$ {total_entradas:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                        col_sai.metric("Saídas (-)", f"R$ {total_saidas:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                        col_sal.metric("Saldo do Período", f"R$ {saldo:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                        
+                        st.write("---")
+                        
+                        df_grafico = df_filtrado.groupby(['Data_Obj', 'tipo'])['valor'].sum().reset_index()
+                        cores = {'Entrada': '#00b050', 'Saída': '#ff0000'}
+                        
+                        fig_fluxo = px.bar(
+                            df_grafico, 
+                            x='Data_Obj', 
+                            y='valor', 
+                            color='tipo', 
+                            barmode='group',
+                            title="Movimentação Diária",
+                            color_discrete_map=cores
+                        )
+                        st.plotly_chart(fig_fluxo, use_container_width=True)
+                        
+                        st.write("### 📄 Extrato Detalhado")
+                        df_extrato = df_filtrado[['data_movimento', 'tipo', 'descricao', 'valor']].copy()
+                        df_extrato = df_extrato.sort_values(by=['Data_Obj'], ascending=False)
+                        
+                        df_extrato['valor'] = df_extrato['valor'].apply(lambda x: f"R$ {float(x):,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                        
+                        df_extrato.rename(columns={
+                            'data_movimento': 'Data',
+                            'tipo': 'Tipo',
+                            'descricao': 'Descrição',
+                            'valor': 'Valor'
+                        }, inplace=True)
+                        
+                        st.dataframe(df_extrato, use_container_width=True, hide_index=True)
+                        
+                    else:
+                        st.warning("Não há movimentações financeiras concluídas (pagas/recebidas) no período selecionado.")
+            else:
+                st.info("Ainda não há dados de contas pagas ou recebidas para gerar o fluxo de caixa.")
+                
     # ==========================================================
     # MÓDULO 5: CRM
     # ==========================================================
