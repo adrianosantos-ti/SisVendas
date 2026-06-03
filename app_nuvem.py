@@ -1796,15 +1796,13 @@ else:
                 st.info("Ainda não há dados de contas pagas ou recebidas para gerar o fluxo de caixa.")
                 
     # ==========================================================
-    # MÓDULO 5: CRM
+    # MÓDULO 5: CRM (COM FILTRO DINÂMICO DE ENVIO)
     # ==========================================================
     elif modulo == "📣 CRM & Pós-Venda":
         st.markdown("### 📣 Gestão de Relacionamento: Método 2+2+2")
         st.markdown("Acompanhe o ciclo de vida dos seus clientes e gere recompras automáticas.")
         
-        # 1. Busca das Vendas e Cálculo dos Dias Passados
-        # Damos uma pequena janela (ex: 2 a 5 dias) para garantir que você não perca o cliente 
-        # caso não abra o sistema exatamente no segundo dia.
+        # 1. A SUPER QUERY DO CRM: Filtra e esconde quem já recebeu a mensagem daquela etapa
         query_crm = """
             SELECT 
                 c.id as cliente_id,
@@ -1817,9 +1815,14 @@ else:
             JOIN clientes c ON v.cliente_id = c.id
             WHERE v.empresa_id = %s
             AND (
-                (CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) BETWEEN 2 AND 5
-                OR (CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) BETWEEN 14 AND 20
-                OR (CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) >= 60
+                ((CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) BETWEEN 2 AND 5
+                  AND NOT EXISTS (SELECT 1 FROM crm_contatos cc WHERE cc.venda_codigo = v.codigo_venda AND cc.tipo_contato = '2d' AND cc.empresa_id = v.empresa_id))
+                OR
+                ((CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) BETWEEN 14 AND 20
+                  AND NOT EXISTS (SELECT 1 FROM crm_contatos cc WHERE cc.venda_codigo = v.codigo_venda AND cc.tipo_contato = '2s' AND cc.empresa_id = v.empresa_id))
+                OR
+                ((CURRENT_DATE - TO_DATE(v.data_venda, 'DD/MM/YYYY')) >= 60
+                  AND NOT EXISTS (SELECT 1 FROM crm_contatos cc WHERE cc.venda_codigo = v.codigo_venda AND cc.tipo_contato = '2m' AND cc.empresa_id = v.empresa_id))
             )
             GROUP BY c.id, c.nome, c.telefone, v.codigo_venda, v.data_venda
             ORDER BY dias_passados ASC
@@ -1833,24 +1836,24 @@ else:
         df_2_meses = pd.DataFrame()
         
         if not df_crm.empty:
-            # Categorizando os clientes baseados nos dias passados
+            # Separando os lotes com base nos dias passados
             df_2_dias = df_crm[(df_crm['dias_passados'] >= 2) & (df_crm['dias_passados'] <= 5)]
             df_2_semanas = df_crm[(df_crm['dias_passados'] >= 14) & (df_crm['dias_passados'] <= 20)]
             df_2_meses = df_crm[(df_crm['dias_passados'] >= 60)]
             
-        # 3. --- DESENHANDO OS 3 CARDS DE MÉTRICAS ---
+        # 3. --- CARDS DE MÉTRICAS DINÂMICAS ---
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
-        c1.metric("🟢 2 Dias (Satisfação)", f"{len(df_2_dias)} clientes")
+        c1.metric("🟢 2 Days (Satisfação)", f"{len(df_2_dias)} clientes")
         c2.metric("🟡 2 Semanas (Acompanhamento)", f"{len(df_2_semanas)} clientes")
         c3.metric("🔴 2 Meses (Reposição)", f"{len(df_2_meses)} clientes")
         st.markdown("---")
         
-        # 4. --- ABAS PARA EXIBIR AS LISTAS E OS BOTÕES DE WHATSAPP ---
+        # 4. --- ABAS DE INTERAÇÃO ---
         tab_2d, tab_2s, tab_2m = st.tabs(["🟢 Contatos de 2 Dias", "🟡 Contatos de 2 Semanas", "🔴 Contatos de 2 Meses"])
         
-        # Função interna rápida para gerar o botão do Zap
-        def gerar_linha_contato(row, mensagem_padrao):
+        # FUNÇÃO ATUALIZADA: Agora gera os botões lado a lado e grava a baixa no banco
+        def gerar_linha_contato(row, mensagem_padrao, tipo_contato):
             st.markdown(f"**Cliente:** {row['cliente']} | **Venda:** Nº {row['codigo_venda']} | **Data:** {row['data_venda']} ({row['dias_passados']} dias atrás)")
             tel_cli = row['telefone']
             
@@ -1859,36 +1862,54 @@ else:
                 if len(tel_limpo) >= 10:
                     if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
                     link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(mensagem_padrao)}"
-                    st.link_button(f"💬 Enviar Script para {row['cliente'].split()[0]}", link_wpp, use_container_width=True)
+                    
+                    # Layout Lado a Lado (Link e Ação de Conclusão)
+                    col_wpp, col_done = st.columns(2)
+                    
+                    with col_wpp:
+                        st.link_button(f"💬 Abrir WhatsApp de {row['cliente'].split()[0]}", link_wpp, use_container_width=True)
+                    
+                    with col_done:
+                        if st.button(f"✅ Marcar como Enviado", key=f"check_{tipo_contato}_{row['codigo_venda']}", use_container_width=True):
+                            conn = conectar_banco()
+                            conn.cursor().execute("""
+                                INSERT INTO crm_contatos (venda_codigo, tipo_contato, empresa_id) 
+                                VALUES (%s, %s, %s)
+                            """, (int(row['codigo_venda']), tipo_contato, emp_id))
+                            conn.commit()
+                            conn.close()
+                            st.success("Registrado!")
+                            time.sleep(0.4)
+                            st.rerun()
                 else:
                     st.warning("⚠️ Telefone mal formatado.")
             else:
                 st.warning("⚠️ Sem telefone cadastrado.")
             st.markdown("<hr style='margin: 0.5em 0px; opacity: 0.3'>", unsafe_allow_html=True)
 
-        # Preenchendo a Aba 2 Dias
+        # Aba 2 Dias
         with tab_2d:
             if not df_2_dias.empty:
                 for _, row in df_2_dias.iterrows():
                     msg_2d = f"Olá, {row['cliente'].split()[0]}! 🌸 Passando rapidinho para saber se já conseguiu testar os produtos da sua compra do dia {row['data_venda']}. Como foi a primeira impressão? Se tiver qualquer dúvida sobre como usar, estou por aqui! ✨"
-                    gerar_linha_contato(row, msg_2d)
+                    gerar_linha_contato(row, msg_2d, "2d")
             else:
-                st.info("Nenhum cliente na janela de 2 dias hoje.")
+                st.info("Nenhum cliente na janela de 2 dias pendente de envio.")
                 
-        # Preenchendo a Aba 2 Semanas
+        # Aba 2 Semanas
         with tab_2s:
             if not df_2_semanas.empty:
                 for _, row in df_2_semanas.iterrows():
                     msg_2s = f"Oi, {row['cliente'].split()[0]}! Tudo bem? 🌸 Já faz umas duas semaninhas que você está com seus produtos, né? Passando só para confirmar se está dando tudo certo com o uso e se os resultados estão dentro do esperado. Me conta depois! ✨"
-                    gerar_linha_contato(row, msg_2s)
+                    gerar_linha_contato(row, msg_2s, "2s")
             else:
-                st.info("Nenhum cliente na janela de 2 semanas hoje.")
+                st.info("Nenhum cliente na janela de 2 semanas pendente de envio.")
                 
-        # Preenchendo a Aba 2 Meses
+        # Aba 2 Meses
         with tab_2m:
             if not df_2_meses.empty:
                 for _, row in df_2_meses.iterrows():
                     msg_2m = f"Olá, {row['cliente'].split()[0]}! 🌸 Dei uma olhadinha aqui e vi que já faz um tempinho desde a nossa última conversa. Como estão os seus produtinhos? Provavelmente alguns já estão pedindo reposição, né? Posso te mandar as novidades e promoções que chegaram essa semana? ✨"
-                    gerar_linha_contato(row, msg_2m)
+                    gerar_linha_contato(row, msg_2m, "2m")
             else:
-                st.info("Nenhum cliente na janela de 2 meses hoje.")
+                st.info("Nenhum cliente na janela de 2 meses pendente de envio.")
