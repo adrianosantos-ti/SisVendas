@@ -1604,12 +1604,19 @@ else:
                         )
                         st.plotly_chart(fig_fluxo, use_container_width=True)
                         
+                        # --- TABELA DE EXTRATO DETALHADO ---
                         st.write("### 📄 Extrato Detalhado")
-                        df_extrato = df_filtrado[['data_movimento', 'tipo', 'descricao', 'valor']].copy()
-                        df_extrato = df_extrato.sort_values(by=['Data_Obj'], ascending=False)
                         
+                        # 1º: Ordena os dados enquanto a coluna 'Data_Obj' ainda existe no DataFrame
+                        df_filtrado = df_filtrado.sort_values(by=['Data_Obj'], ascending=False)
+                        
+                        # 2º: Copia apenas as colunas que queremos mostrar
+                        df_extrato = df_filtrado[['data_movimento', 'tipo', 'descricao', 'valor']].copy()
+                        
+                        # Formata o valor para dinheiro
                         df_extrato['valor'] = df_extrato['valor'].apply(lambda x: f"R$ {float(x):,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
                         
+                        # Renomeia as colunas para ficar bonito na tela
                         df_extrato.rename(columns={
                             'data_movimento': 'Data',
                             'tipo': 'Tipo',
@@ -1617,8 +1624,7 @@ else:
                             'valor': 'Valor'
                         }, inplace=True)
                         
-                        st.dataframe(df_extrato, use_container_width=True, hide_index=True)
-                        
+                        st.dataframe(df_extrato, use_container_width=True, hide_index=True)                        
                     else:
                         st.warning("Não há movimentações financeiras concluídas (pagas/recebidas) no período selecionado.")
             else:
