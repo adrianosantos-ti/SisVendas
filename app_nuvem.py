@@ -1799,6 +1799,18 @@ else:
     # MÓDULO 5: CRM (COM FILTRO DINÂMICO DE ENVIO)
     # ==========================================================
     elif modulo == "📣 CRM & Pós-Venda":
+        # Reduz o espaçamento superior e inferior dos blocos de métricas (st.metric)
+        st.markdown(
+            """
+            <style>
+            [data-testid="stMetric"] {
+                margin-top: -25px;
+                margin-bottom: -10px;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
         st.markdown("### 📣 Gestão de Relacionamento: Método 2+2+2")
         st.markdown("Acompanhe o ciclo de vida dos seus clientes e gere recompras automáticas.")
         
