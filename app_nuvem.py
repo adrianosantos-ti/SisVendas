@@ -1408,6 +1408,18 @@ else:
     # MÓDULO 4: FINANCEIRO (Contas a Receber e Pagar COMPLETOS)
     # ==========================================
     elif modulo == "💰 Financeiro":
+        # Reduz o espaçamento superior e inferior dos blocos de métricas (st.metric)
+        st.markdown(
+            """
+            <style>
+            [data-testid="stMetric"] {
+                margin-top: -25px;
+                margin-bottom: -10px;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
         st.markdown("### 💰 Gestão Financeira")
         
         # --- MUDANÇA: Adicionamos a aba_fluxo_caixa aqui na lista de abas ---
