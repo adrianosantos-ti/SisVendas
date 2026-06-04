@@ -1528,20 +1528,55 @@ else:
                         else:
                             st.warning("Nenhuma parcela encontrada para esta venda.")
 
-                st.subheader("📋 Relatório de Parcelas e Boletos")
-                filtro_status = st.radio("Filtrar por Status:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True)
+            # --- TABELA DE LEITURA COMPLETA (COM FILTRO DE CLIENTE E STATUS) ---
+            st.subheader("📋 Relatório de Parcelas e Boletos")
+            
+            if not df_receber_geral.empty:
+                col_f1, col_f2 = st.columns([1, 2])
                 
-                df_view = df_financeiro.copy()
-                if filtro_status == "Pendentes":
-                    df_view = df_view[df_view['Status'] == 'Pendente']
-                elif filtro_status == "Pagos":
-                    df_view = df_view[df_view['Status'] == 'Pago']
-                elif filtro_status == "Atrasados":
-                    df_view = df_view[(df_view['Status'] == 'Pendente') & (df_view['Data_Venc_Obj'] < hoje)]
+                # 1. Filtro de Cliente (Busca os nomes únicos no dataframe)
+                lista_clientes = ["Todos os Clientes"] + sorted(df_receber_geral['Cliente'].dropna().unique().tolist())
+                cliente_selecionado = col_f1.selectbox("🔍 Buscar por Cliente:", options=lista_clientes)
+                
+                # 2. Filtro de Status
+                filtro_status_receber = col_f2.radio("Filtrar por Status da Parcela:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True, key="rad_status_receber")
+                
+                st.markdown("---")
+                
+                # 3. Aplica o filtro de cliente e calcula as métricas individuais
+                df_view_receber = df_receber_geral.copy()
+                
+                if cliente_selecionado != "Todos os Clientes":
+                    df_view_receber = df_view_receber[df_view_receber['Cliente'] == cliente_selecionado]
                     
-                st.dataframe(df_view.drop(columns=['Data_Venc_Obj', 'ID Parcela']), use_container_width=True, hide_index=True)
+                    # Calcula as métricas exclusivas do cliente selecionado
+                    v_pago_cli = df_view_receber[df_view_receber['Status'] == 'Pago']['Valor (R$)'].sum()
+                    v_aberto_cli = df_view_receber[df_view_receber['Status'] == 'Pendente']['Valor (R$)'].sum()
+                    mask_atraso_cli = (df_view_receber['Status'] == 'Pendente') & (df_view_receber['Data_Venc_Obj'] < hoje)
+                    v_atraso_cli = df_view_receber[mask_atraso_cli]['Valor (R$)'].sum()
+                    v_no_prazo_cli = v_aberto_cli - v_atraso_cli
+                    
+                    st.markdown(f"**👤 Resumo Financeiro: {cliente_selecionado}**")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("✅ Total Já Pago", f"R$ {v_pago_cli:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    c2.metric("⏳ A Pagar (No Prazo)", f"R$ {v_no_prazo_cli:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    c3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atraso_cli:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Dívida" if v_atraso_cli > 0 else "Tudo em dia!", delta_color="inverse")
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                
+                # 4. Aplica o filtro de status em cima do resultado (geral ou por cliente)
+                if filtro_status_receber == "Pendentes":
+                    df_view_receber = df_view_receber[df_view_receber['Status'] == 'Pendente']
+                elif filtro_status_receber == "Pagos":
+                    df_view_receber = df_view_receber[df_view_receber['Status'] == 'Pago']
+                elif filtro_status_receber == "Atrasados":
+                    df_view_receber = df_view_receber[(df_view_receber['Status'] == 'Pendente') & (df_view_receber['Data_Venc_Obj'] < hoje)]
+                
+                # 5. Exibe a tabela final
+                df_exibicao_receber = df_view_receber.drop(columns=['Data_Venc_Obj'], errors='ignore')
+                st.dataframe(df_exibicao_receber, use_container_width=True, hide_index=True)
             else:
-                st.info("Nenhuma movimentação financeira registrada ainda. Faça sua primeira venda para alimentar o caixa!")
+                st.info("Nenhuma conta a receber registrada.")         
                 
         # --- CONTAS A PAGAR COMPLETÃO (CRUD + BAIXA) ---
         with tab_pag:
