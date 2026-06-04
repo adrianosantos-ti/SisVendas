@@ -414,7 +414,7 @@ else:
             else: 
                 st.info("Faça vendas para ver gráficos.")
 
-            with aba_hist:
+        with aba_hist:
             st.header("📜 Histórico Geral e Faturamento")
             
             query_todas_vendas = """
