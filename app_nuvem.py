@@ -1531,19 +1531,40 @@ else:
             # --- TABELA DE LEITURA COMPLETA (COM FILTRO DE CLIENTE E STATUS) ---
             st.subheader("📋 Relatório de Parcelas e Boletos")
             
+            # 1. Busca os dados no banco e cria a variável df_receber_geral
+            df_receber_geral = carregar_dados("""
+                SELECT cr.venda_codigo AS "Nº Venda",
+                       c.nome AS "Cliente",
+                       cr.num_parcela AS "Parcela",
+                       cr.total_parcelas AS "De",
+                       cr.valor_parcela AS "Valor (R$)",
+                       cr.data_vencimento AS "Vencimento",
+                       cr.status AS "Status"
+                FROM contas_receber cr
+                LEFT JOIN clientes c ON cr.cliente_id = c.id
+                WHERE cr.empresa_id = %s
+                ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') DESC
+            """, (emp_id,))
+            
             if not df_receber_geral.empty:
+                import datetime
+                hoje = datetime.date.today()
+                
+                # Cria uma coluna de data real (oculta) para a matemática de atrasos funcionar
+                df_receber_geral['Data_Venc_Obj'] = pd.to_datetime(df_receber_geral['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
+                
                 col_f1, col_f2 = st.columns([1, 2])
                 
-                # 1. Filtro de Cliente (Busca os nomes únicos no dataframe)
+                # 2. Filtro de Cliente (Busca os nomes únicos no dataframe)
                 lista_clientes = ["Todos os Clientes"] + sorted(df_receber_geral['Cliente'].dropna().unique().tolist())
                 cliente_selecionado = col_f1.selectbox("🔍 Buscar por Cliente:", options=lista_clientes)
                 
-                # 2. Filtro de Status
+                # 3. Filtro de Status
                 filtro_status_receber = col_f2.radio("Filtrar por Status da Parcela:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True, key="rad_status_receber")
                 
                 st.markdown("---")
                 
-                # 3. Aplica o filtro de cliente e calcula as métricas individuais
+                # 4. Aplica o filtro de cliente e calcula as métricas individuais
                 df_view_receber = df_receber_geral.copy()
                 
                 if cliente_selecionado != "Todos os Clientes":
@@ -1564,7 +1585,7 @@ else:
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                 
-                # 4. Aplica o filtro de status em cima do resultado (geral ou por cliente)
+                # 5. Aplica o filtro de status em cima do resultado (geral ou por cliente)
                 if filtro_status_receber == "Pendentes":
                     df_view_receber = df_view_receber[df_view_receber['Status'] == 'Pendente']
                 elif filtro_status_receber == "Pagos":
@@ -1572,7 +1593,7 @@ else:
                 elif filtro_status_receber == "Atrasados":
                     df_view_receber = df_view_receber[(df_view_receber['Status'] == 'Pendente') & (df_view_receber['Data_Venc_Obj'] < hoje)]
                 
-                # 5. Exibe a tabela final
+                # 6. Exibe a tabela final
                 df_exibicao_receber = df_view_receber.drop(columns=['Data_Venc_Obj'], errors='ignore')
                 st.dataframe(df_exibicao_receber, use_container_width=True, hide_index=True)
             else:
