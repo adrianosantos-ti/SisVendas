@@ -499,114 +499,117 @@ else:
                 
                 st.markdown("---")
 
-                st.subheader("📲 Enviar Recibo via WhatsApp")
-                
-                # 1. Filtramos o DataFrame para mostrar cada venda apenas UMA VEZ no selectbox
-                df_vendas_unicas = df_todas_vendas.drop_duplicates(subset=['Nº Venda'])
-                opcoes_recibo = df_vendas_unicas.apply(lambda x: f"Venda Nº {x['Nº Venda']} | Cliente: {x['Cliente']}", axis=1).tolist()
-                
-                venda_recibo_sel = st.selectbox("Selecione a venda para gerar o recibo", options=opcoes_recibo, key="sel_recibo")
+                # ==========================================================
+                # EXPANDER DO RECIBO DO WHATSAPP
+                # ==========================================================
+                with st.expander("📲 Enviar Recibo via WhatsApp", expanded=False):
+                    
+                    # 1. Filtramos o DataFrame para mostrar cada venda apenas UMA VEZ no selectbox
+                    df_vendas_unicas = df_todas_vendas.drop_duplicates(subset=['Nº Venda'])
+                    opcoes_recibo = df_vendas_unicas.apply(lambda x: f"Venda Nº {x['Nº Venda']} | Cliente: {x['Cliente']}", axis=1).tolist()
+                    
+                    venda_recibo_sel = st.selectbox("Selecione a venda para gerar o recibo", options=opcoes_recibo, key="sel_recibo")
 
-                if venda_recibo_sel:
-                    # Extraímos o código da venda a partir do texto do selectbox
-                    venda_id_recibo = int(venda_recibo_sel.split("Nº ")[1].split(" |")[0])
-                    
-                    conn = conectar_banco()
-                    cursor = conn.cursor()
-                    
-                    # 2. Buscamos TODOS os itens daquele codigo_venda
-                    cursor.execute("""
-                        SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
-                               v.valor_total, v.valor_entrada, v.valor_restante, 
-                               v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
-                        FROM vendas v 
-                        JOIN clientes c ON v.cliente_id = c.id 
-                        JOIN produtos p ON v.produto_id = p.id 
-                        WHERE v.codigo_venda = %s AND v.empresa_id = %s
-                    """, (venda_id_recibo, emp_id))
-                    
-                    dados_recibo = cursor.fetchall()
-                    conn.close()
+                    if venda_recibo_sel:
+                        # Extraímos o código da venda a partir do texto do selectbox
+                        venda_id_recibo = int(venda_recibo_sel.split("Nº ")[1].split(" |")[0])
+                        
+                        conn = conectar_banco()
+                        cursor = conn.cursor()
+                        
+                        # 2. Buscamos TODOS os itens daquele codigo_venda
+                        cursor.execute("""
+                            SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
+                                   v.valor_total, v.valor_entrada, v.valor_restante, 
+                                   v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
+                            FROM vendas v 
+                            JOIN clientes c ON v.cliente_id = c.id 
+                            JOIN produtos p ON v.produto_id = p.id 
+                            WHERE v.codigo_venda = %s AND v.empresa_id = %s
+                        """, (venda_id_recibo, emp_id))
+                        
+                        dados_recibo = cursor.fetchall()
+                        conn.close()
 
-                    if dados_recibo:
-                        tel = dados_recibo[0][0]
-                        nome_cli = dados_recibo[0][1]
-                        data_v = dados_recibo[0][2]
-                        
-                        v_ent = dados_recibo[0][6] or 0
-                        v_rest = dados_recibo[0][7] or 0
-                        forma_pag = dados_recibo[0][8]
-                        qtd_parc = dados_recibo[0][10] or 1 
-                        
-                        lista_produtos_msg = ""
-                        total_venda = 0
-                        subtotal_recibo = 0.0 
-                        
-                        for item in dados_recibo:
-                            nome_prod = item[3]
-                            qtd = item[4]
-                            v_total_item = item[5]
-                            v_unitario = item[9]
+                        if dados_recibo:
+                            tel = dados_recibo[0][0]
+                            nome_cli = dados_recibo[0][1]
+                            data_v = dados_recibo[0][2]
                             
-                            subtotal_item = float(v_unitario) * int(qtd)
-                            subtotal_recibo += subtotal_item
+                            v_ent = dados_recibo[0][6] or 0
+                            v_rest = dados_recibo[0][7] or 0
+                            forma_pag = dados_recibo[0][8]
+                            qtd_parc = dados_recibo[0][10] or 1 
                             
-                            preco_formatado = f"{v_unitario:.2f}".replace('.', ',')
-                            lista_produtos_msg += f"▫️ {int(qtd)}x {nome_prod} (R$ {preco_formatado})\n"
-                            total_venda += v_total_item
+                            lista_produtos_msg = ""
+                            total_venda = 0
+                            subtotal_recibo = 0.0 
+                            
+                            for item in dados_recibo:
+                                nome_prod = item[3]
+                                qtd = item[4]
+                                v_total_item = item[5]
+                                v_unitario = item[9]
+                                
+                                subtotal_item = float(v_unitario) * int(qtd)
+                                subtotal_recibo += subtotal_item
+                                
+                                preco_formatado = f"{v_unitario:.2f}".replace('.', ',')
+                                lista_produtos_msg += f"▫️ {int(qtd)}x {nome_prod} (R$ {preco_formatado})\n"
+                                total_venda += v_total_item
 
-                        total_str = f"{total_venda:.2f}".replace('.', ',')
-                        v_ent_str = f"{v_ent:.2f}".replace('.', ',')
-                        v_rest_str = f"{v_rest:.2f}".replace('.', ',')
+                            total_str = f"{total_venda:.2f}".replace('.', ',')
+                            v_ent_str = f"{v_ent:.2f}".replace('.', ',')
+                            v_rest_str = f"{v_rest:.2f}".replace('.', ',')
 
-                        msg = f"Olá, {nome_cli}! 🌸\n\n"
-                        msg += f"Aqui está o resumo da sua compra do dia *{data_v}*:\n\n"
-                        msg += f"🧾 *Venda Nº {venda_id_recibo}*\n\n"
-                        msg += f"*Produtos:*\n{lista_produtos_msg}\n"
-                        
-                        if subtotal_recibo > total_venda:
-                            valor_desconto = subtotal_recibo - total_venda
-                            subtotal_str = f"{subtotal_recibo:.2f}".replace('.', ',')
-                            desconto_str = f"{valor_desconto:.2f}".replace('.', ',')
-                            msg += f"🏷️ *Subtotal:* R$ {subtotal_str}\n"
-                            msg += f"🎁 *Desconto:* - R$ {desconto_str}\n"
-                        
-                        msg += f"💰 *Valor Total:* R$ {total_str}\n"
-                        
-                        # --- 3. DETALHAMENTO DO CREDIÁRIO COM PARCELAS ---
-                        if forma_pag == "Crediário":
-                            if v_ent > 0: 
-                                msg += f"💸 *Entrada Paga:* R$ {v_ent_str}\n"
-                                msg += f"⏳ *Restante:* R$ {v_rest_str} (em {qtd_parc}x)\n"
+                            msg = f"Olá, {nome_cli}! 🌸\n\n"
+                            msg += f"Aqui está o resumo da sua compra do dia *{data_v}*:\n\n"
+                            msg += f"🧾 *Venda Nº {venda_id_recibo}*\n\n"
+                            msg += f"*Produtos:*\n{lista_produtos_msg}\n"
+                            
+                            if subtotal_recibo > total_venda:
+                                valor_desconto = subtotal_recibo - total_venda
+                                subtotal_str = f"{subtotal_recibo:.2f}".replace('.', ',')
+                                desconto_str = f"{valor_desconto:.2f}".replace('.', ',')
+                                msg += f"🏷️ *Subtotal:* R$ {subtotal_str}\n"
+                                msg += f"🎁 *Desconto:* - R$ {desconto_str}\n"
+                            
+                            msg += f"💰 *Valor Total:* R$ {total_str}\n"
+                            
+                            # --- 3. DETALHAMENTO DO CREDIÁRIO COM PARCELAS ---
+                            if forma_pag == "Crediário":
+                                if v_ent > 0: 
+                                    msg += f"💸 *Entrada Paga:* R$ {v_ent_str}\n"
+                                    msg += f"⏳ *Restante:* R$ {v_rest_str} (em {qtd_parc}x)\n"
+                                elif qtd_parc > 1:
+                                    valor_parc = total_venda / qtd_parc
+                                    valor_parc_str = f"{valor_parc:.2f}".replace('.', ',')
+                                    msg += f"💳 *Crediário:* {qtd_parc}x de R$ {valor_parc_str}\n"
+                                else:
+                                    msg += f"💳 *Forma de Pagto:* Crediário\n"
                             elif qtd_parc > 1:
                                 valor_parc = total_venda / qtd_parc
                                 valor_parc_str = f"{valor_parc:.2f}".replace('.', ',')
-                                msg += f"💳 *Crediário:* {qtd_parc}x de R$ {valor_parc_str}\n"
+                                msg += f"💳 *Parcelamento:* {qtd_parc}x de R$ {valor_parc_str}\n"
                             else:
-                                msg += f"💳 *Forma de Pagto:* Crediário\n"
-                        elif qtd_parc > 1:
-                            valor_parc = total_venda / qtd_parc
-                            valor_parc_str = f"{valor_parc:.2f}".replace('.', ',')
-                            msg += f"💳 *Parcelamento:* {qtd_parc}x de R$ {valor_parc_str}\n"
-                        else:
-                            msg += f"💳 *Forma de Pagto:* {forma_pag}\n"
+                                msg += f"💳 *Forma de Pagto:* {forma_pag}\n"
+                                
+                            msg += "\nMuito obrigada pela preferência! ✨"
                             
-                        msg += "\nMuito obrigada pela preferência! ✨"
-                        
-                        st.text_area("Pré-visualização da Mensagem:", value=msg, height=250, disabled=True)
+                            st.text_area("Pré-visualização da Mensagem:", value=msg, height=250, disabled=True)
 
-                        if tel:
-                            import urllib.parse
-                            tel_limpo = ''.join(filter(str.isdigit, str(tel)))
-                            if len(tel_limpo) >= 10:
-                                if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
-                                link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
-                                st.link_button("🟢 Abrir no WhatsApp", link_wpp, type="primary", use_container_width=True)
+                            if tel:
+                                import urllib.parse
+                                tel_limpo = ''.join(filter(str.isdigit, str(tel)))
+                                if len(tel_limpo) >= 10:
+                                    if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
+                                    link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                    st.link_button("🟢 Abrir no WhatsApp", link_wpp, type="primary", use_container_width=True)
+                                else: 
+                                    st.warning("⚠️ Telefone incompleto.")
                             else: 
-                                st.warning("⚠️ Telefone incompleto.")
-                        else: 
-                            st.warning("⚠️ Cliente sem telefone.")                                          
-                            
+                                st.warning("⚠️ Cliente sem telefone.")
+                
                 st.markdown("---")                
                 
                 # ==========================================================
