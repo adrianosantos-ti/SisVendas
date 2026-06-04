@@ -1413,7 +1413,7 @@ else:
             """
             <style>
             [data-testid="stMetric"] {
-                margin-top: -25px;
+                margin-top: -5px;
                 margin-bottom: -10px;
             }
             </style>
