@@ -414,7 +414,7 @@ else:
             else: 
                 st.info("Faça vendas para ver gráficos.")
 
-        with aba_hist:
+            with aba_hist:
             st.header("📜 Histórico Geral e Faturamento")
             
             query_todas_vendas = """
@@ -514,7 +514,7 @@ else:
                     conn = conectar_banco()
                     cursor = conn.cursor()
                     
-                    # 2. Buscamos TODOS os itens daquele codigo_venda# 1. Adicionamos a coluna das parcelas no SELECT (ex: v.qtd_parcelas)
+                    # 2. Buscamos TODOS os itens daquele codigo_venda
                     cursor.execute("""
                         SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
                                v.valor_total, v.valor_entrada, v.valor_restante, 
@@ -536,7 +536,6 @@ else:
                         v_ent = dados_recibo[0][6] or 0
                         v_rest = dados_recibo[0][7] or 0
                         forma_pag = dados_recibo[0][8]
-                        # 2. Capturamos a quantidade de parcelas no índice 10
                         qtd_parc = dados_recibo[0][10] or 1 
                         
                         lista_produtos_msg = ""
@@ -586,7 +585,6 @@ else:
                             else:
                                 msg += f"💳 *Forma de Pagto:* Crediário\n"
                         elif qtd_parc > 1:
-                            # Serve também para cartão de crédito parcelado
                             valor_parc = total_venda / qtd_parc
                             valor_parc_str = f"{valor_parc:.2f}".replace('.', ',')
                             msg += f"💳 *Parcelamento:* {qtd_parc}x de R$ {valor_parc_str}\n"
@@ -598,6 +596,7 @@ else:
                         st.text_area("Pré-visualização da Mensagem:", value=msg, height=250, disabled=True)
 
                         if tel:
+                            import urllib.parse
                             tel_limpo = ''.join(filter(str.isdigit, str(tel)))
                             if len(tel_limpo) >= 10:
                                 if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
@@ -606,34 +605,64 @@ else:
                             else: 
                                 st.warning("⚠️ Telefone incompleto.")
                         else: 
-                            st.warning("⚠️ Cliente sem telefone.")                                           
+                            st.warning("⚠️ Cliente sem telefone.")                                          
                             
                 st.markdown("---")                
+                
+                # ==========================================================
+                # NOVA SEÇÃO: FILTROS UNIFICADOS E MÉTRICAS DE CLIENTE
+                # ==========================================================
                 df_todas_vendas['Data_Filtro'] = pd.to_datetime(df_todas_vendas['Data'], dayfirst=True, errors='coerce').dt.date
                 data_min = df_todas_vendas['Data_Filtro'].min() if not pd.isna(df_todas_vendas['Data_Filtro'].min()) else date.today()
                 data_max = df_todas_vendas['Data_Filtro'].max() if not pd.isna(df_todas_vendas['Data_Filtro'].max()) else date.today()
                 
-                st.subheader("🔍 Filtrar Tabela por Período")
-                col_data1, col_data2 = st.columns(2)
+                st.subheader("🔍 Filtros de Busca")
+                col_data1, col_data2, col_cli = st.columns([1, 1, 2])
+                
                 data_inicio = col_data1.date_input("Data Inicial", value=data_min, format="DD/MM/YYYY")
                 data_fim = col_data2.date_input("Data Final", value=data_max, format="DD/MM/YYYY")
                 
-                mask = (df_todas_vendas['Data_Filtro'] >= data_inicio) & (df_todas_vendas['Data_Filtro'] <= data_fim)
-                df_filtrado = df_todas_vendas.loc[mask].drop(columns=['Data_Filtro'])
+                # Lista de clientes únicos para o filtro
+                lista_clientes_hist = ["Todos os Clientes"] + sorted(df_todas_vendas['Cliente'].dropna().unique().tolist())
+                cliente_selecionado = col_cli.selectbox("Filtrar por Cliente", options=lista_clientes_hist)
+                
+                # Aplicação dos Filtros (Data + Cliente)
+                mask_data = (df_todas_vendas['Data_Filtro'] >= data_inicio) & (df_todas_vendas['Data_Filtro'] <= data_fim)
+                df_filtrado = df_todas_vendas.loc[mask_data].copy()
+                
+                if cliente_selecionado != "Todos os Clientes":
+                    df_filtrado = df_filtrado[df_filtrado['Cliente'] == cliente_selecionado]
+                
+                df_filtrado = df_filtrado.drop(columns=['Data_Filtro'], errors='ignore')
                 
                 if not df_filtrado.empty:
+                    # Se um cliente específico for selecionado, mostra as métricas de LTV dele
+                    if cliente_selecionado != "Todos os Clientes":
+                        total_comprado = df_filtrado['Total (R$)'].sum()
+                        qtd_compras = df_filtrado['Nº Venda'].nunique()
+                        ticket_medio = total_comprado / qtd_compras if qtd_compras > 0 else 0
+                        
+                        st.markdown(f"**👤 Resumo do Cliente: {cliente_selecionado} (no período)**")
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("🛒 Total Comprado", f"R$ {total_comprado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        c2.metric("📦 Qtd. de Pedidos", f"{qtd_compras}")
+                        c3.metric("🎯 Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        st.markdown("<br>", unsafe_allow_html=True)
+
                     colunas_exibicao = ['Nº Venda', 'Cliente', 'Produto', 'Qtd', 'Preço Tabela', 'Desconto Unit', 'Total (R$)', 'Entrada (R$)', 'Restante (R$)', 'Data', 'Pagamento', 'Prazo']
                     st.dataframe(df_filtrado[colunas_exibicao], use_container_width=True, hide_index=True)
                     
-                    st.markdown("### 📊 Resumo do Período Filtrado")
+                    st.markdown("### 📊 Resumo Geral do Filtro")
                     col_res1, col_res2, col_res3, col_res4 = st.columns(4)
                     col_res1.metric("💰 Faturamento", f"R$ {df_filtrado['Total (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                     col_res2.metric("⏳ A Receber", f"R$ {df_filtrado['Restante (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                     col_res3.metric("🛒 Vendas", f"{df_filtrado['Nº Venda'].nunique()}")
                     col_res4.metric("🧴 Produtos", f"{df_filtrado['Qtd'].sum()}")
-                else: st.warning("Nenhuma venda neste período.")
-            else: st.info("Nenhuma venda registrada.")
-
+                else: 
+                    st.warning("Nenhuma venda encontrada para este filtro.")
+            else: 
+                st.info("Nenhuma venda registrada.")
+                
     # ==========================================
     # MÓDULO 2: CADASTROS (Produtos, Categorias, Clientes, Fornecedores)
     # ==========================================
