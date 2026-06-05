@@ -665,11 +665,13 @@ else:
                     st.dataframe(df_filtrado[colunas_exibicao], use_container_width=True, hide_index=True)
                     
                     st.markdown("### 📊 Resumo Geral do Filtro")
-                    col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+                    
+                    # Trocamos para 3 colunas e removemos a métrica de "A Receber"
+                    col_res1, col_res2, col_res3 = st.columns(3)
+                    
                     col_res1.metric("💰 Faturamento", f"R$ {df_filtrado['Total (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    col_res2.metric("⏳ A Receber", f"R$ {df_filtrado['Restante (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    col_res3.metric("🛒 Vendas", f"{df_filtrado['Nº Venda'].nunique()}")
-                    col_res4.metric("🧴 Produtos", f"{df_filtrado['Qtd'].sum()}")
+                    col_res2.metric("🛒 Vendas", f"{df_filtrado['Nº Venda'].nunique()}")
+                    col_res3.metric("🧴 Produtos", f"{df_filtrado['Qtd'].sum()}")
                 else: 
                     st.warning("Nenhuma venda encontrada para este filtro.")
             else: 
