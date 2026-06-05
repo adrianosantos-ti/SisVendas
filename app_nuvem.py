@@ -81,43 +81,52 @@ if 'logado' not in st.session_state:
 if not st.session_state['logado']:
     # 1. Função para converter a imagem e poder usar no HTML
     def get_base64_image(caminho_imagem):
+        import base64
         with open(caminho_imagem, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode()
 
     # 2. Converte a sua logo (verifique se o nome do arquivo está certinho)
     img_base64 = get_base64_image("Apprimory_logo_branca.png")
 
-    # 3. Exibe a imagem centralizada e com tamanho controlado (200px)
-    st.markdown(
-        f"""
-        <div style="text-align: center;">
-            <img src="data:image/png;base64,{img_base64}" width="400">
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    st.write("") # Dá um pequeno espaço extra
-    st.markdown("### 🔐 Bem vindo ao Apprimory")
-    with st.container(border=True):
-        login_input = st.text_input("Usuário")
-        senha_input = st.text_input("Senha", type="password")
+    # --- APLICAÇÃO DAS COLUNAS INVISÍVEIS PARA CENTRALIZAR O CARD ---
+    col_vazia_esq, col_login, col_vazia_dir = st.columns([1, 1.2, 1])
+
+    with col_login:
+        # 3. Exibe a imagem centralizada e com tamanho controlado
+        st.markdown(
+            f"""
+            <div style="text-align: center;">
+                <img src="data:image/png;base64,{img_base64}" width="350">
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         
-        if st.button("Entrar no Sistema", type="primary", use_container_width=True):
-            conn = conectar_banco()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
-            usuario = cursor.fetchone()
-            conn.close()
+        st.write("") # Dá um pequeno espaço extra
+        
+        # Centralizando também o texto de boas-vindas para acompanhar o design
+        st.markdown("<h3 style='text-align: center;'>🔐 Bem vindo ao Apprimory</h3>", unsafe_allow_html=True)
+        
+        with st.container(border=True):
+            login_input = st.text_input("Usuário")
+            senha_input = st.text_input("Senha", type="password")
             
-            if usuario:
-                st.session_state['logado'] = True
-                st.session_state['usuario_id'] = usuario[0]
-                st.session_state['usuario_nome'] = usuario[1]
-                st.session_state['perfil'] = usuario[2]
-                st.session_state['empresa_id'] = usuario[3]
-                st.rerun()
-            else:
-                st.error("❌ Usuário ou senha incorretos.")
+            if st.button("Entrar no Sistema", type="primary", use_container_width=True):
+                conn = conectar_banco()
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
+                usuario = cursor.fetchone()
+                conn.close()
+                
+                if usuario:
+                    st.session_state['logado'] = True
+                    st.session_state['usuario_id'] = usuario[0]
+                    st.session_state['usuario_nome'] = usuario[1]
+                    st.session_state['perfil'] = usuario[2]
+                    st.session_state['empresa_id'] = usuario[3]
+                    st.rerun()
+                else:
+                    st.error("❌ Usuário ou senha incorretos.")
 
 # --- PAINEL DO ADMINISTRADOR MASTER ---
 elif st.session_state['perfil'] == 'master':
