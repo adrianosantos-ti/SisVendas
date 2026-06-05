@@ -362,7 +362,8 @@ else:
     # ==========================================
     if modulo == "📊 Análises":
         st.markdown("### 📊 Gestão e Performance")
-        aba_dash, aba_hist = st.tabs(["Painel Visual", "Histórico de Movimentação"])
+        # 1. Adicionamos a aba "Alertas de Estoque" aqui na lista
+        aba_dash, aba_hist, aba_alertas = st.tabs(["Painel Visual", "Histórico de Movimentação", "🚨 Alertas de Estoque"])
         
         with aba_dash:
             # 1. CORREÇÃO SQL: Puxando a coluna 'codigo_venda' da sua tabela
@@ -676,6 +677,60 @@ else:
                     st.warning("Nenhuma venda encontrada para este filtro.")
             else: 
                 st.info("Nenhuma venda registrada.")
+
+        # --- NOVA ABA: ALERTAS DE ESTOQUE ---
+        with aba_alertas:
+            st.markdown("### 📦 Alertas de Reposição de Estoque")
+            
+            df_estoque = carregar_dados("""
+                SELECT 
+                    referencia AS "Ref.", 
+                    nome AS "Produto", 
+                    marca AS "Marca", 
+                    categoria AS "Categoria", 
+                    quantidade AS "Qtd Atual"
+                FROM produtos
+                WHERE empresa_id = %s
+                ORDER BY quantidade ASC
+            """, (emp_id,))
+            
+            if not df_estoque.empty:
+                limite_critico = 5
+                
+                df_zerados = df_estoque[df_estoque['Qtd Atual'] == 0]
+                df_alerta = df_estoque[(df_estoque['Qtd Atual'] > 0) & (df_estoque['Qtd Atual'] <= limite_critico)]
+                qtd_saudavel = len(df_estoque) - len(df_zerados) - len(df_alerta)
+                
+                col_e1, col_e2, col_e3 = st.columns(3)
+                col_e1.metric("🔴 Estoque Zerado", f"{len(df_zerados)} itens")
+                col_e2.metric("🟡 Estoque Crítico", f"{len(df_alerta)} itens", help=f"Produtos com {limite_critico} unidades ou menos.")
+                col_e3.metric("🟢 Estoque Saudável", f"{qtd_saudavel} itens")
+                
+                st.markdown("---")
+                
+                if not df_zerados.empty or not df_alerta.empty:
+                    st.subheader("⚠️ Produtos que precisam de reposição")
+                    
+                    df_criticos_total = pd.concat([df_zerados, df_alerta])
+                    
+                    def colorir_estoque(val):
+                        if pd.isna(val):
+                            return ''
+                        if val == 0:
+                            return 'color: white; background-color: #ff4b4b; font-weight: bold;'
+                        elif val <= limite_critico:
+                            return 'color: black; background-color: #ffc107; font-weight: bold;'
+                        return ''
+                    
+                    st.dataframe(
+                        df_criticos_total.style.map(colorir_estoque, subset=['Qtd Atual']),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.success("🎉 Tudo certo! Nenhum cosmético com estoque crítico ou zerado no momento.")
+            else:
+                st.info("Nenhum produto cadastrado.")
                 
     # ==========================================
     # MÓDULO 2: CADASTROS (Produtos, Categorias, Clientes, Fornecedores)
