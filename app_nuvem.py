@@ -1471,8 +1471,9 @@ else:
         # --- CONTAS A RECEBER 100% RESTAURADO ---
         with tab_rec:
             st.markdown("### 💰 Controle de Parcelas")
+            # Adicionado c.telefone na consulta para puxarmos o número do WhatsApp
             df_financeiro = carregar_dados("""
-                SELECT cr.id AS "ID Parcela", cr.venda_codigo AS "Nº Venda", c.nome AS "Cliente",
+                SELECT cr.id AS "ID Parcela", cr.venda_codigo AS "Nº Venda", c.nome AS "Cliente", c.telefone AS "Telefone",
                        cr.num_parcela AS "Parcela", cr.total_parcelas AS "De",
                        cr.valor_parcela AS "Valor (R$)", cr.data_vencimento AS "Vencimento", cr.status AS "Status"
                 FROM contas_receber cr JOIN clientes c ON cr.cliente_id = c.id WHERE cr.empresa_id = %s ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') ASC
@@ -1495,7 +1496,9 @@ else:
                 st.markdown("---")
                 
                 df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
-                with st.expander("✅ Registrar Recebimento de Parcela", expanded=True):
+                
+                # --- LÓGICA DE REGISTRAR PAGAMENTO ---
+                with st.expander("✅ Registrar Recebimento de Parcela", expanded=False):
                     if not df_p.empty:
                         with st.form("form_baixa"):
                             op_b = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
@@ -1514,6 +1517,44 @@ else:
                                 st.rerun()
                     else:
                         st.success("🎉 Nenhuma parcela pendente! Todos os clientes estão em dia.")
+
+                # --- NOVO EXPANDER DE LEMBRETE DO WHATSAPP ---
+                with st.expander("📲 Enviar Lembrete via WhatsApp", expanded=False):
+                    if not df_p.empty:
+                        import urllib.parse
+                        
+                        op_lembrete = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
+                        lembrete_sel = st.selectbox("Selecione a parcela para enviar lembrete:", options=op_lembrete, key="sel_lembrete")
+                        
+                        if lembrete_sel:
+                            idx_l = op_lembrete.index(lembrete_sel)
+                            linha_sel = df_p.iloc[idx_l]
+                            
+                            nome_cli = linha_sel['Cliente']
+                            telefone_cli = linha_sel['Telefone']
+                            valor_parc = linha_sel['Valor (R$)']
+                            data_venc = linha_sel['Vencimento']
+                            
+                            valor_formatado = f"{valor_parc:.2f}".replace('.', ',')
+                            
+                            msg = f"Olá, {nome_cli}! 🌸 Tudo bem com você?\n\n"
+                            msg += f"Passando aqui rapidinho só para deixar um lembrete sobre a sua parcela de R$ {valor_formatado} referente aos seus produtinhos, com vencimento para o dia {data_venc}.\n\n"
+                            msg += "Qualquer dúvida ou se precisar de algo, estou à disposição! Um ótimo dia para você! ✨"
+
+                            st.text_area("Pré-visualização da Mensagem:", value=msg, height=180, disabled=True)
+
+                            if pd.notna(telefone_cli) and str(telefone_cli).strip() != "":
+                                tel_limpo = ''.join(filter(str.isdigit, str(telefone_cli)))
+                                if len(tel_limpo) >= 10:
+                                    if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
+                                    link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                    st.link_button("🟢 Enviar Lembrete no WhatsApp", link_wpp, type="primary", use_container_width=True)
+                                else: 
+                                    st.warning("⚠️ Telefone incompleto no cadastro (precisa ter DDD).")
+                            else: 
+                                st.warning("⚠️ Cliente sem telefone cadastrado.")
+                    else:
+                        st.success("🎉 Nenhuma parcela pendente para cobrar!")
                 
                 st.markdown("---")
 
@@ -1640,7 +1681,7 @@ else:
                 df_exibicao_receber = df_view_receber.drop(columns=['Data_Venc_Obj'], errors='ignore')
                 st.dataframe(df_exibicao_receber, use_container_width=True, hide_index=True)
             else:
-                st.info("Nenhuma conta a receber registrada.")         
+                st.info("Nenhuma conta a receber registrada.")    
                 
         # --- CONTAS A PAGAR COMPLETÃO (CRUD + BAIXA) ---
         with tab_pag:
