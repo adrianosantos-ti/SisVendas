@@ -1556,7 +1556,7 @@ else:
                     else:
                         st.success("🎉 Nenhuma parcela pendente para cobrar!")
                 
-                st.markdown("---")
+                #st.markdown("---")
 
                 # --- LÓGICA PARA REAJUSTE DE PARCELAS E DATAS ---
                 with st.expander("⚖️ Reajustar Valores e Datas das Parcelas"):
