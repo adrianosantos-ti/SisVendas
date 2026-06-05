@@ -105,7 +105,7 @@ if not st.session_state['logado']:
         st.write("") # Dá um pequeno espaço extra
         
         # Centralizando também o texto de boas-vindas para acompanhar o design
-        st.markdown("<h3 style='text-align: center;'>🔐 Bem vindo ao Apprimory</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='text-align: center;'>🔐 Identifique-se</h3>", unsafe_allow_html=True)
         
         with st.container(border=True):
             login_input = st.text_input("Usuário")
