@@ -1558,11 +1558,11 @@ else:
                 
                 st.markdown("---")
 
-                # --- LÓGICA PARA REAJUSTE DE PARCELAS ---
-                with st.expander("⚖️ Reajustar Valores das Parcelas"):
-                    st.markdown("Use esta opção quando a cliente pagar um valor diferente na parcela atual para recalcular as próximas.")
+                # --- LÓGICA PARA REAJUSTE DE PARCELAS E DATAS ---
+                with st.expander("⚖️ Reajustar Valores e Datas das Parcelas"):
+                    st.markdown("Use esta opção quando precisar alterar o valor ou a data de vencimento das parcelas (o total da venda deve ser mantido).")
     
-                    venda_ajuste = st.number_input("Digite o Nº da Venda (ex: 36)", min_value=1, step=1)
+                    venda_ajuste = st.number_input("Digite o Nº da Venda (ex: 36)", min_value=1, step=1, key="num_ajuste_venda")
     
                     if st.button("Buscar Parcelas"):
                         st.session_state['venda_editando'] = venda_ajuste
@@ -1577,36 +1577,62 @@ else:
                             st.info(f"💰 **Valor Total Original da Venda:** R$ {total_original:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
             
                             with st.form(f"f_reajuste_{v_id}"):
-                                novos_valores = {}
+                                novos_dados = {}
+                                import datetime
                 
                                 for index, row in df_parc.iterrows():
                                     st.write(f"**Parcela {row['num_parcela']} de {row['total_parcelas']}** - Status: {row['status']}")
-                                    novo_val = st.number_input(
-                                        f"Valor da Parcela {row['num_parcela']} (R$)", 
+                                    
+                                    # Converte a data string do banco (DD/MM/YYYY) para objeto date do Python
+                                    try:
+                                        data_atual = datetime.datetime.strptime(row['data_vencimento'], "%d/%m/%Y").date()
+                                    except:
+                                        data_atual = datetime.date.today() # Proteção anti-erro
+                                        
+                                    # Coloca o Valor e a Data lado a lado
+                                    col_val, col_dat = st.columns(2)
+                                    
+                                    novo_val = col_val.number_input(
+                                        f"Novo Valor (R$)", 
                                         value=float(row['valor_parcela']), 
                                         min_value=0.0, 
                                         format="%.2f",
                                         key=f"val_{row['id']}"
                                     )
-                                    novos_valores[row['id']] = novo_val
+                                    
+                                    nova_data = col_dat.date_input(
+                                        "Nova Data de Vencimento",
+                                        value=data_atual,
+                                        format="DD/MM/YYYY",
+                                        key=f"dat_{row['id']}"
+                                    )
+                                    
+                                    # Guarda o valor e a data formatada de volta para string
+                                    novos_dados[row['id']] = {
+                                        'valor': novo_val, 
+                                        'data': nova_data.strftime("%d/%m/%Y")
+                                    }
+                                    
                                     st.markdown("---")
                 
                                 if st.form_submit_button("💾 Validar e Salvar Reajuste"):
-                                    soma_novas_parcelas = sum(novos_valores.values())
+                                    # Soma os novos valores dentro do dicionário
+                                    soma_novas_parcelas = sum(item['valor'] for item in novos_dados.values())
                     
                                     if round(soma_novas_parcelas, 2) != round(total_original, 2):
                                         st.error(f"❌ **Operação Bloqueada:** A soma das novas parcelas (R$ {soma_novas_parcelas:.2f}) é diferente do total da venda (R$ {total_original:.2f}). A diferença é de R$ {abs(total_original - soma_novas_parcelas):.2f}.")
                                     else:
                                         conn = conectar_banco()
-                                        for parcela_id, valor_atualizado in novos_valores.items():
+                                        for parcela_id, dados in novos_dados.items():
+                                            # Atualiza agora o valor_parcela E a data_vencimento no banco
                                             conn.cursor().execute(
-                                                "UPDATE contas_receber SET valor_parcela=%s WHERE id=%s AND empresa_id=%s", 
-                                                (valor_atualizado, parcela_id, emp_id)
+                                                "UPDATE contas_receber SET valor_parcela=%s, data_vencimento=%s WHERE id=%s AND empresa_id=%s", 
+                                                (dados['valor'], dados['data'], parcela_id, emp_id)
                                             )
                                         conn.commit()
                                         conn.close()
                         
-                                        st.success("✅ Valores reajustados com sucesso mantendo o total da venda!")
+                                        st.success("✅ Valores e datas reajustados com sucesso!")
                                         del st.session_state['venda_editando']
                                         st.rerun()
                         else:
