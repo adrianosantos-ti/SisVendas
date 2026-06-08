@@ -744,6 +744,7 @@ else:
             df_c = carregar_dados("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
             
+            # --- EXPANDER 1: NOVO PRODUTO ---
             with st.expander("➕ Novo Produto"):
                 with st.form("f_novo_p", clear_on_submit=True):
                     c1, c2 = st.columns(2)
@@ -761,13 +762,11 @@ else:
                         conn.close()
                         st.rerun()
 
-            # --- NOVO BLOCO: EDITAR PRODUTO ---
+            # --- EXPANDER 2: EDITAR PRODUTO ---
             with st.expander("✏️ Editar Produto"):
                 if not df_p.empty:
-                    # Usa o ID no selectbox para evitar erros com produtos de mesmo nome
                     opcoes_edicao = df_p['id'].tolist()
                     
-                    # Função para mostrar o nome bonito no dropdown, mas usar o ID por trás
                     def formatar_produto(prod_id):
                         linha = df_p[df_p['id'] == prod_id].iloc[0]
                         ref = f" (Ref: {linha['referencia']})" if linha['referencia'] else ""
@@ -776,7 +775,6 @@ else:
                     prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto)
                     
                     if prod_id_selecionado:
-                        # Puxa os dados atuais do produto selecionado
                         p_atual = df_p[df_p['id'] == prod_id_selecionado].iloc[0]
                         
                         with st.form("f_edita_p", clear_on_submit=False):
@@ -785,12 +783,10 @@ else:
                             e_ref = c2.text_input("Referência", value=p_atual['referencia'] if p_atual['referencia'] else "")
                             
                             c3, c4, c5 = st.columns(3)
-                            # Preenche com a quantidade e valor atuais
                             e_qtd = c3.number_input("Quantidade Atualizada", min_value=0, step=1, value=int(p_atual['quantidade']))
                             e_valor = c4.number_input("Novo Valor Venda (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']))
                             e_marca = c5.text_input("Marca", value=p_atual['marca'])
                             
-                            # Descobre o índice da categoria atual para deixar selecionado
                             try:
                                 cat_index = lista_cat.index(p_atual['categoria'])
                             except ValueError:
@@ -800,7 +796,6 @@ else:
                             
                             if st.form_submit_button("💾 Salvar Alterações"):
                                 conn = conectar_banco()
-                                # Faz o UPDATE apenas no ID selecionado, garantindo a segurança do dado
                                 conn.cursor().execute("""
                                     UPDATE produtos 
                                     SET nome=%s, quantidade=%s, valor=%s, marca=%s, categoria=%s, referencia=%s 
@@ -809,18 +804,103 @@ else:
                                 conn.commit()
                                 conn.close()
                                 
-                                st.success("Produto atualizado com sucesso!")
+                                st.success("Produto updated successfully!")
                                 st.rerun()
                 else:
                     st.info("Não há produtos cadastrados para editar.")
+
+            # --- NOVO EXPANDER 3: MONTAGEM DE KITS PROMOCIONAIS ---
+            with st.expander("🎁 Montar Kit Promocional"):
+                # Filtra o DataFrame existente para listar apenas itens que possuem estoque positivo
+                df_produtos_base = df_p[df_p['quantidade'] > 0] if not df_p.empty else pd.DataFrame()
+                
+                if not df_produtos_base.empty:
+                    with st.form("f_montagem_kit", clear_on_submit=True):
+                        st.markdown("**1. Selecione os produtos que farão parte do Kit:**")
+                        
+                        dict_produtos = dict(zip(df_produtos_base['nome'], df_produtos_base['id']))
+                        produtos_selecionados = st.multiselect("Produtos Base", options=list(dict_produtos.keys()))
+                        
+                        qtd_composicao = {}
+                        
+                        if produtos_selecionados:
+                            st.markdown("Quantidade de cada item **para montar 1 único Kit**:")
+                            colunas_itens = st.columns(len(produtos_selecionados))
+                            for idx, prod_nome in enumerate(produtos_selecionados):
+                                qtd_disp = df_produtos_base[df_produtos_base['nome'] == prod_nome]['quantidade'].values[0]
+                                with colunas_itens[idx]:
+                                    qtd_composicao[prod_nome] = st.number_input(
+                                        f"{prod_nome} (Disp: {qtd_disp})", 
+                                        min_value=1, 
+                                        max_value=int(qtd_disp), 
+                                        value=1, 
+                                        key=f"kit_fk_{prod_nome}"
+                                    )
+                        
+                        st.markdown("---")
+                        st.markdown("**2. Dados do Novo Kit Promocional:**")
+                        col_k1, col_k2 = st.columns(2)
+                        nome_kit = col_k1.text_input("Nome do Kit", placeholder="Ex: Kit Batom + Lápis Promocional")
+                        ref_kit = col_k2.text_input("Referência / Código do Kit", placeholder="Ex: KIT-BAT-LAP")
+                        
+                        col_k3, col_k4, col_k5 = st.columns(3)
+                        preco_kit = col_k3.number_input("Preço de Venda do Kit (R$)", min_value=0.0, format="%.2f")
+                        marca_kit = col_k4.text_input("Marca do Kit", value="Kits Promocionais")
+                        qtd_kits_montar = col_k5.number_input("Quantos kits deseja montar agora?", min_value=1, value=1, step=1)
+                        
+                        # Validação de segurança em tempo real do estoque total necessário
+                        estoque_suficiente = True
+                        for prod, qtd_necessaria in qtd_composicao.items():
+                            qtd_total_necessaria = qtd_necessaria * qtd_kits_montar
+                            qtd_disp = df_produtos_base[df_produtos_base['nome'] == prod]['quantidade'].values[0]
+                            if qtd_total_necessaria > qtd_disp:
+                                estoque_suficiente = False
+                                st.error(f"❌ Estoque insuficiente de '{prod}'. Necessário: {qtd_total_necessaria} | Disponível: {qtd_disp}")
+
+                        st.markdown("---")
+                        if st.form_submit_button("📦 Finalizar e Montar Kit", type="primary"):
+                            if not produtos_selecionados:
+                                st.warning("Selecione os produtos que compõem o kit.")
+                            elif not nome_kit:
+                                st.warning("Por favor, digite o nome do kit.")
+                            elif not estoque_suficiente:
+                                st.error("Ajuste as quantidades para respeitar o estoque disponível.")
+                            else:
+                                conn = conectar_banco()
+                                cursor = conn.cursor()
+                                try:
+                                    # 1. Reduz o estoque dos itens que compõem o kit
+                                    for prod_nome, qtd_por_kit in qtd_composicao.items():
+                                        id_prod_base = dict_produtos[prod_nome]
+                                        baixa_total = qtd_por_kit * qtd_kits_montar
+                                        cursor.execute("""
+                                            UPDATE produtos 
+                                            SET quantidade = quantidade - %s 
+                                            WHERE id = %s AND empresa_id = %s
+                                        """, (baixa_total, id_prod_base, emp_id))
+                                    
+                                    # 2. Cria ou soma no estoque o novo Kit estruturado
+                                    cursor.execute("""
+                                        INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                    """, (nome_kit, qtd_kits_montar, preco_kit, marca_kit, 'Kits e Combos', emp_id, ref_kit))
+                                    
+                                    conn.commit()
+                                    st.success(f"✅ Combo criado! {qtd_kits_montar} unidades de '{nome_kit}' adicionadas ao estoque.")
+                                    st.rerun()
+                                except Exception as e:
+                                    conn.rollback()
+                                    st.error(f"Erro na transação do banco: {e}")
+                                finally:
+                                    conn.close()
+                else:
+                    st.info("Não há produtos suficientes com estoque disponível para criar um kit.")
                     
+            # --- PAINEL DE FILTROS E EXIBIÇÃO DA TABELA ---
             if not df_p.empty:
                 st.markdown("---")
-                
-                # --- PAINEL DE FILTROS (INVERTIDOS VISUALMENTE) ---
                 col_filtro_nome, col_filtro_cat = st.columns(2)
                 
-                # 1. Filtro de Categoria (Lógica processada primeiro, mas renderizada na DIREITA)
                 opcoes_cat = ["📦 Todas as Categorias"] + lista_cat
                 cat_selecionada = col_filtro_cat.selectbox("📑 Filtrar por Categoria:", options=opcoes_cat)
                 
@@ -829,7 +909,6 @@ else:
                 else:
                     df_filtrado_cat = df_p
                 
-                # 2. Busca Dinâmica (Renderizada na ESQUERDA)
                 if not df_filtrado_cat.empty:
                     df_filtrado_cat['display_pesquisa'] = df_filtrado_cat.apply(
                         lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
@@ -840,13 +919,11 @@ else:
                     
                 prod_busca = col_filtro_nome.selectbox("🔍 Pesquise o Produto:", options=opcoes_busca)
                 
-                # Aplica o filtro de nome final
                 if prod_busca not in ["🔍 Todos os Produtos listados", "🔍 Nenhum produto nesta categoria"]:
                     df_final = df_filtrado_cat[df_filtrado_cat['display_pesquisa'] == prod_busca]
                 else:
                     df_final = df_filtrado_cat
                     
-                # --- EXIBIÇÃO E TOTALIZADOR ---
                 if not df_final.empty:
                     df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa'], errors='ignore')
                     st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
