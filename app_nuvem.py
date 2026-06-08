@@ -319,21 +319,22 @@ else:
 
     # 2. Configuração da página - DEVE SER O PRIMEIRO COMANDO STREAMLIT
     st.set_page_config(
-        page_title="Apprimory - Inteligência para Gestão", # Deixei mais curto para ficar elegante na aba
+        page_title="Apprimory - Inteligência para Gestão", 
         page_icon=icone,
         layout="wide"
     )
 
     st.sidebar.image("logo.png", width=100)
-    # st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1063/1063376.png", width=80)
     st.sidebar.title(f"Módulos")
+    
+    # ADICIONADO O PARÂMETRO key="menu_principal" NO FINAL DO RADIO
     modulo = st.sidebar.radio("Navegação Principal:", [
         "📊 Análises", 
         "🗂️ Cadastros", 
         "🔄 Movimentações", 
         "💰 Financeiro",
         "📣 CRM & Pós-Venda"
-    ])
+    ], key="menu_principal")
     
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"👤 **{st.session_state['usuario_nome']}**")
@@ -362,8 +363,8 @@ else:
     # ==========================================
     if modulo == "📊 Análises":
         st.markdown("### 📊 Gestão e Performance")
-        # 1. Adicionamos a aba "Alertas de Estoque" aqui na lista
-        aba_dash, aba_hist, aba_alertas = st.tabs(["Painel Visual", "Histórico de Movimentação", "🚨 Alertas de Estoque"])
+        # 1. Adicionamos a aba "📱 Visão App" aqui na lista
+        aba_dash, aba_hist, aba_alertas, aba_app = st.tabs(["Painel Visual", "Histórico de Movimentação", "🚨 Alertas", "📱 Visão App"])
         
         with aba_dash:
             # 1. CORREÇÃO SQL: Puxando a coluna 'codigo_venda' da sua tabela
@@ -731,6 +732,86 @@ else:
                     st.success("🎉 Tudo certo! Nenhum cosmético com estoque crítico ou zerado no momento.")
             else:
                 st.info("Nenhum produto cadastrado.")
+                
+        # ==========================================
+        # NOVA TELA: VISÃO APP (Acompanhamento Rápido)
+        # ==========================================
+        with aba_app:
+            st.markdown("### 📱 Acompanhamento Diário")
+            
+            # Filtro Rápido de Mês e Ano
+            import calendar
+            from datetime import date
+            hoje = date.today()
+            
+            c_mes, c_ano = st.columns([2, 1])
+            meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+            mes_sel = c_mes.selectbox("Mês", meses_nomes, index=hoje.month - 1)
+            ano_sel = c_ano.number_input("Ano", min_value=2024, max_value=2050, value=hoje.year)
+            
+            mes_num = meses_nomes.index(mes_sel) + 1
+            
+            # Consulta SQL: Traz as vendas e cruza com os recebimentos para descobrir o status
+            # Atenção: Ajuste os nomes das colunas de clientes e valores se necessário
+            query_app = """
+                SELECT 
+                    v.codigo_venda,
+                    TO_CHAR(v.data_venda::date, 'DD/MM/YYYY') AS "Data",
+                    v.cliente_nome AS "Cliente",
+                    v.valor_total AS "Valor Total (R$)",
+                    CASE 
+                        WHEN (SELECT SUM(valor_parcela) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pago') >= v.valor_total THEN '🟢 QUITADO'
+                        WHEN (SELECT COUNT(id) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pendente' AND data_vencimento::date < CURRENT_DATE) > 0 THEN '🔴 ATRASADO'
+                        ELSE '🔵 PENDENTE'
+                    END AS "Status"
+                FROM vendas v
+                WHERE EXTRACT(MONTH FROM v.data_venda::date) = %s 
+                  AND EXTRACT(YEAR FROM v.data_venda::date) = %s
+                  AND v.empresa_id = %s
+                ORDER BY v.data_venda DESC
+            """
+            
+            # Aqui fazemos a busca (se der erro de data, ajuste o cast de data_venda no SQL)
+            df_app = carregar_dados(query_app, (mes_num, ano_sel, emp_id))
+            
+            if not df_app.empty:
+                # Calculadora do rodapé
+                total_mes = df_app['Valor Total (R$)'].sum()
+                
+                # Exibição visual da tabela clicável
+                st.markdown("Selecione uma venda abaixo para abrir o painel de recebimento:")
+                
+                evento_clique = st.dataframe(
+                    df_app,
+                    use_container_width=True,
+                    hide_index=True,
+                    selection_mode="single_row",
+                    on_select="rerun"
+                )
+                
+                # Rodapé no estilo do App
+                st.markdown(f"""
+                    <div style="background-color: #d11181; padding: 15px; border-radius: 10px; text-align: center; color: white; font-size: 20px; font-weight: bold; margin-top: 10px;">
+                        Total do Mês: R$ {total_mes:,.2f}
+                    </div>
+                """.replace(".", "v").replace(",", ".").replace("v", ","), unsafe_allow_html=True)
+                
+                # ---------------------------------------------------------
+                # A MÁGICA DO REDIRECIONAMENTO: Se houver clique na tabela
+                # ---------------------------------------------------------
+                if evento_clique and len(evento_clique["selection"]["rows"]) > 0:
+                    linha_clicada = evento_clique["selection"]["rows"][0]
+                    venda_id = int(df_app.iloc[linha_clicada]['codigo_venda'])
+                    
+                    # Salva a venda na memória
+                    st.session_state['venda_editando'] = venda_id
+                    st.session_state['abrir_expander_reajuste'] = True
+                    
+                    # Força a mudança de página no menu lateral (deve bater com o nome exato escrito no menu)
+                    st.session_state['menu_principal'] = "💰 Financeiro" 
+                    st.rerun()
+            else:
+                st.info(f"Nenhuma venda registrada em {mes_sel} de {ano_sel}.")
                 
     # ==========================================
     # MÓDULO 2: CADASTROS (Produtos, Categorias, Clientes, Fornecedores)
