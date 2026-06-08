@@ -787,7 +787,7 @@ else:
                     df_app,
                     use_container_width=True,
                     hide_index=True,
-                    selection_mode="single_row",
+                    selection_mode="single-row", # <--- A CORREÇÃO ESTÁ AQUI (traço no lugar do underline)
                     on_select="rerun"
                 )
                 
