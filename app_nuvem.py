@@ -756,19 +756,21 @@ else:
             query_app = """
                 SELECT 
                     v.codigo_venda,
-                    TO_CHAR(v.data_venda::date, 'DD/MM/YYYY') AS "Data",
-                    v.cliente_nome AS "Cliente",
-                    v.valor_total AS "Valor Total (R$)",
+                    MAX(v.data_venda) AS "Data",
+                    MAX(c.nome) AS "Cliente",
+                    MAX(v.valor_total) AS "Valor Total (R$)",
                     CASE 
-                        WHEN (SELECT SUM(valor_parcela) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pago') >= v.valor_total THEN '🟢 QUITADO'
-                        WHEN (SELECT COUNT(id) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pendente' AND data_vencimento::date < CURRENT_DATE) > 0 THEN '🔴 ATRASADO'
+                        WHEN COALESCE((SELECT SUM(valor_parcela) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pago'), 0) >= MAX(v.valor_total) THEN '🟢 QUITADO'
+                        WHEN (SELECT COUNT(id) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pendente' AND TO_DATE(data_vencimento, 'DD/MM/YYYY') < CURRENT_DATE) > 0 THEN '🔴 ATRASADO'
                         ELSE '🔵 PENDENTE'
                     END AS "Status"
                 FROM vendas v
-                WHERE EXTRACT(MONTH FROM v.data_venda::date) = %s 
-                  AND EXTRACT(YEAR FROM v.data_venda::date) = %s
+                LEFT JOIN clientes c ON v.cliente_id = c.id
+                WHERE EXTRACT(MONTH FROM TO_DATE(v.data_venda, 'DD/MM/YYYY')) = %s 
+                  AND EXTRACT(YEAR FROM TO_DATE(v.data_venda, 'DD/MM/YYYY')) = %s
                   AND v.empresa_id = %s
-                ORDER BY v.data_venda DESC
+                GROUP BY v.codigo_venda
+                ORDER BY TO_DATE(MAX(v.data_venda), 'DD/MM/YYYY') DESC
             """
             
             # Aqui fazemos a busca (se der erro de data, ajuste o cast de data_venda no SQL)
