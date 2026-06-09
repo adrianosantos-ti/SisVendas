@@ -835,19 +835,26 @@ else:
                 """, unsafe_allow_html=True)
                 
                 # ---------------------------------------------------------
-                # A MÁGICA DO CLIQUE: Pega a linha do df_mobile, mas puxa o ID do df_app original
+                # A MÁGICA DO CLIQUE: Captura a seleção e muda de tela
                 # ---------------------------------------------------------
                 if evento_clique and len(evento_clique["selection"]["rows"]) > 0:
+                    # Descobre qual linha o usuário clicou na tela
                     linha_clicada = evento_clique["selection"]["rows"][0]
+                    
+                    # Puxa o código real da venda diretamente do DataFrame original (df_app)
                     venda_id = int(df_app.iloc[linha_clicada]['codigo_venda'])
                     
-                    # Salva a venda na memória e aciona os gatilhos de mudança de tela
+                    # Guarda as instruções na memória temporária do sistema (Session State)
                     st.session_state['venda_editando'] = venda_id
                     st.session_state['abrir_expander_recebimento'] = True
+                    
+                    # Altera o valor do menu lateral para forçar a mudança de tela
                     st.session_state['menu_principal'] = "💰 Financeiro" 
+                    
+                    # Recarrega o sistema instantaneamente já na nova tela
                     st.rerun()
             else:
-                st.info(f"Nenhuma venda registrada em {mes_sel} de {ano_sel}.")
+                st.info(f"Nenhuma venda registrada em {periodo_sel}.")
                 
     # ==========================================
     # MÓDULO 2: CADASTROS (Produtos, Categorias, Clientes, Fornecedores)
@@ -1746,12 +1753,29 @@ else:
                 
                 df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
                 
-                # --- LÓGICA DE REGISTRAR PAGAMENTO ---
-                with st.expander("✅ Registrar Recebimento de Parcela", expanded=False):
+                # --- LÓGICA DE REGISTRAR PAGAMENTO (ADAPTADA COM INTELIGÊNCIA DE CLIQUE) ---
+                
+                # 1. Captura os comandos vindos lá do clique da Visão App
+                abrir_recebimento = st.session_state.get('abrir_expander_recebimento', False)
+                venda_id_alvo = st.session_state.get('venda_editando', None)
+                
+                # 2. O expander agora obedece ao gatilho automático de abertura
+                with st.expander("✅ Registrar Recebimento de Parcela", expanded=abrir_recebimento):
                     if not df_p.empty:
+                        
+                        # 3. MÁGICA DA PRÉ-SELEÇÃO: Descobre qual linha da lista pertence à venda clicada
+                        idx_padrao = 0
+                        if venda_id_alvo is not None:
+                            # Procura a posição exata do código da venda dentro do DataFrame de parcelas
+                            indices_da_venda = [i for i, x in enumerate(df_p['Nº Venda'].tolist()) if int(x) == int(venda_id_alvo)]
+                            if indices_da_venda:
+                                idx_padrao = indices_da_venda[0] # Define a primeira parcela encontrada como padrão
+                        
                         with st.form("form_baixa"):
                             op_b = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
-                            p_sel = st.selectbox("Selecione a parcela paga:", options=op_b)
+                            
+                            # 4. Injetamos o 'index=idx_padrao'. O dropdown já inicia travado na cliente certa!
+                            p_sel = st.selectbox("Selecione a parcela paga:", options=op_b, index=idx_padrao)
                             
                             col_b1, col_b2 = st.columns([1, 2])
                             data_pag_real = col_b1.date_input("Data do Pagamento", value=hoje, format="DD/MM/YYYY")
@@ -1762,8 +1786,19 @@ else:
                                 conn.cursor().execute("UPDATE contas_receber SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
                                 conn.commit()
                                 conn.close()
+                                
+                                # Limpa o ID da memória após dar a baixa com sucesso
+                                if 'venda_editando' in st.session_state:
+                                    st.session_state['venda_editando'] = None
+                                    
                                 st.success("Pagamento registrado com sucesso!")
                                 st.rerun()
+                        
+                        # 5. LIMPEZA DE MEMÓRIA: Desativa os gatilhos após a renderização da tela
+                        # Isso garante que se o usuário fechar o expander ou mudar de página, o sistema não fique travado abrindo sempre a mesma venda.
+                        if abrir_recebimento:
+                            st.session_state['abrir_expander_recebimento'] = False
+                            st.session_state['venda_editando'] = None
                     else:
                         st.success("🎉 Nenhuma parcela pendente! Todos os clientes estão em dia.")
 
