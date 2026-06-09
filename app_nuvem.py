@@ -739,12 +739,29 @@ else:
         with aba_app:
             st.markdown("### 📱 Acompanhamento Diário")
             
-            # Filtro Rápido de Mês e Ano
+            # --- TRUQUE DE CSS: Forçar colunas lado a lado no celular ---
+            st.markdown("""
+                <style>
+                /* Impede a quebra de linha em telas pequenas especificamente para os filtros */
+                @media (max-width: 768px) {
+                    div[data-testid="stHorizontalBlock"]:has(label:contains("Mês")) {
+                        flex-wrap: nowrap !important;
+                    }
+                    div[data-testid="stHorizontalBlock"]:has(label:contains("Mês")) > div[data-testid="column"] {
+                        width: 50% !important;
+                        min-width: 50% !important;
+                    }
+                }
+                </style>
+            """, unsafe_allow_html=True)
+            
             import calendar
             from datetime import date
             hoje = date.today()
             
-            c_mes, c_ano = st.columns([2, 1])
+            # Alterado de [2, 1] para apenas 2 colunas iguais para dividir perfeitamente a tela
+            c_mes, c_ano = st.columns(2)
+            
             meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
             mes_sel = c_mes.selectbox("Mês", meses_nomes, index=hoje.month - 1)
             ano_sel = c_ano.number_input("Ano", min_value=2024, max_value=2050, value=hoje.year)
