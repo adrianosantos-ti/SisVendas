@@ -326,6 +326,11 @@ else:
 
     st.sidebar.image("logo.png", width=100)
     st.sidebar.title(f"Módulos")
+
+    # --- CORREÇÃO: Lê o bilhete ANTES de desenhar o menu ---
+    if 'forcar_menu' in st.session_state:
+        st.session_state['menu_principal'] = st.session_state['forcar_menu']
+        del st.session_state['forcar_menu'] # Apaga o bilhete para não ficar travado
     
     # ADICIONADO O PARÂMETRO key="menu_principal" NO FINAL DO RADIO
     modulo = st.sidebar.radio("Navegação Principal:", [
@@ -849,7 +854,7 @@ else:
                     st.session_state['abrir_expander_recebimento'] = True
                     
                     # Altera o valor do menu lateral para forçar a mudança de tela
-                    st.session_state['menu_principal'] = "💰 Financeiro" 
+                    st.session_state['forcar_menu'] = "💰 Financeiro" 
                     
                     # Recarrega o sistema instantaneamente já na nova tela
                     st.rerun()
