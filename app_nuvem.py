@@ -789,21 +789,22 @@ else:
                 # 1ª Coluna: Junta o Nome e a Data (ex: Jaqueline Corpvs • 31/05)
                 df_mobile['Cliente / Data'] = df_app['Cliente'] + " • " + df_app['Data'].str[0:5]
                 
-                # 2ª Coluna: Abrevia o Status e junta com o Valor (ex: 🔵 Pend. | R$ 65,90)
+                # 2ª Coluna: Mapeamento alterado para Amarelo (🟡) no Pendente
                 status_map = {
                     '🟢 QUITADO': '🟢 Pago',
                     '🔴 ATRASADO': '🔴 Atraso',
-                    '🔵 PENDENTE': '🔵 Pend.'
+                    '🔵 PENDENTE': '🟡 Pend.'
                 }
                 status_curto = df_app['Status'].map(status_map).fillna(df_app['Status'])
                 valores_br = df_app['Valor Total (R$)'].apply(lambda x: f"R$ {x:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
                 
-                df_mobile['Status / Valor'] = status_curto + " | " + valores_br
+                # INVERSÃO APLICADA: Valor vem antes do Status agora
+                df_mobile['Valor / Status'] = valores_br + " | " + status_curto
                 
                 # --- EXIBIÇÃO ---
                 st.markdown("Selecione uma venda abaixo para abrir o painel de recebimento:")
                 
-                # Renderiza a tabela de 2 colunas (cabe perfeitamente no mobile sem rolar pro lado)
+                # Renderiza a tabela de 2 colunas atualizada
                 evento_clique = st.dataframe(
                     df_mobile,
                     use_container_width=True,
@@ -811,7 +812,6 @@ else:
                     selection_mode="single-row",
                     on_select="rerun"
                 )
-                
                 # Rodapé no estilo do App
                 total_formatado = f"{total_mes:,.2f}".replace(".", "v").replace(",", ".").replace("v", ",")
                 st.markdown(f"""
