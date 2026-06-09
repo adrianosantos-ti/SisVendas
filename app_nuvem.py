@@ -739,34 +739,31 @@ else:
         with aba_app:
             st.markdown("### 📱 Acompanhamento Diário")
             
-            # --- TRUQUE DE CSS: Forçar colunas lado a lado no celular ---
-            st.markdown("""
-                <style>
-                /* Impede a quebra de linha em telas pequenas especificamente para os filtros */
-                @media (max-width: 768px) {
-                    div[data-testid="stHorizontalBlock"]:has(label:contains("Mês")) {
-                        flex-wrap: nowrap !important;
-                    }
-                    div[data-testid="stHorizontalBlock"]:has(label:contains("Mês")) > div[data-testid="column"] {
-                        width: 50% !important;
-                        min-width: 50% !important;
-                    }
-                }
-                </style>
-            """, unsafe_allow_html=True)
-            
-            import calendar
             from datetime import date
             hoje = date.today()
             
-            # Alterado de [2, 1] para apenas 2 colunas iguais para dividir perfeitamente a tela
-            c_mes, c_ano = st.columns(2)
-            
             meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-            mes_sel = c_mes.selectbox("Mês", meses_nomes, index=hoje.month - 1)
-            ano_sel = c_ano.number_input("Ano", min_value=2024, max_value=2050, value=hoje.year)
             
-            mes_num = meses_nomes.index(mes_sel) + 1
+            # Cria uma lista combinada de Mês e Ano (Ex: "Maio de 2026") para ficar idêntico ao app
+            opcoes_periodo = []
+            for ano in range(2024, hoje.year + 2):
+                for m in range(1, 13):
+                    opcoes_periodo.append(f"{meses_nomes[m-1]} de {ano}")
+            
+            # Encontra o mês atual para deixar selecionado por padrão
+            periodo_atual = f"{meses_nomes[hoje.month-1]} de {hoje.year}"
+            try:
+                idx_atual = opcoes_periodo.index(periodo_atual)
+            except ValueError:
+                idx_atual = 0
+            
+            # Único campo de seleção (Fica perfeito e limpo no celular)
+            periodo_sel = st.selectbox("Período:", opcoes_periodo, index=idx_atual)
+            
+            # O sistema pega a frase "Maio de 2026" e separa os números para a consulta SQL
+            mes_str, ano_str = periodo_sel.split(" de ")
+            mes_num = meses_nomes.index(mes_str) + 1
+            ano_sel = int(ano_str)
             
             # Consulta SQL: Traz as vendas e cruza com os recebimentos para descobrir o status
             # Atenção: Ajuste os nomes das colunas de clientes e valores se necessário
