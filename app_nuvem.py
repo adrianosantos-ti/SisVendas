@@ -1749,10 +1749,13 @@ else:
                 mask_atraso = (df_financeiro['Status'] == 'Pendente') & (df_financeiro['Data_Venc_Obj'] < hoje)
                 v_atr = df_financeiro[mask_atraso]['Valor (R$)'].sum()
                 
-                col_met1, col_met2, col_met3 = st.columns(3)
-                col_met1.metric("✅ Total Já Recebido", f"R$ {v_rec:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(v_pend - v_atr):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atr:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Atenção" if v_atr > 0 else "Tudo em dia!", delta_color="inverse")
+                # --- ENVELOPAMENTO DA MATRIZ DE CARD FINANCEIRO ---
+                # O resumo inicia compactado para abrir espaço para o painel de baixa no mobile
+                with st.expander("📊 Ver Resumo Geral (Recebidos, No Prazo e Atrasos)", expanded=False):
+                    col_met1, col_met2, col_met3 = st.columns(3)
+                    col_met1.metric("✅ Total Já Recebido", f"R$ {v_rec:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(v_pend - v_atr):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atr:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Atenção" if v_atr > 0 else "Tudo em dia!", delta_color="inverse")
                 
                 st.markdown("---")
                 
