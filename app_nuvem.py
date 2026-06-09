@@ -780,21 +780,40 @@ else:
                 # Calculadora do rodapé
                 total_mes = df_app['Valor Total (R$)'].sum()
                 
-                # Exibição visual da tabela clicável
+                # ==========================================
+                # OTIMIZAÇÃO VISUAL PARA TELA DE CELULAR
+                # ==========================================
+                # Criamos um "dataframe espelho" super enxuto com apenas 2 colunas
+                df_mobile = pd.DataFrame()
+                
+                # 1ª Coluna: Junta o Nome e a Data (ex: Jaqueline Corpvs • 31/05)
+                df_mobile['Cliente / Data'] = df_app['Cliente'] + " • " + df_app['Data'].str[0:5]
+                
+                # 2ª Coluna: Abrevia o Status e junta com o Valor (ex: 🔵 Pend. | R$ 65,90)
+                status_map = {
+                    '🟢 QUITADO': '🟢 Pago',
+                    '🔴 ATRASADO': '🔴 Atraso',
+                    '🔵 PENDENTE': '🔵 Pend.'
+                }
+                status_curto = df_app['Status'].map(status_map).fillna(df_app['Status'])
+                valores_br = df_app['Valor Total (R$)'].apply(lambda x: f"R$ {x:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
+                
+                df_mobile['Status / Valor'] = status_curto + " | " + valores_br
+                
+                # --- EXIBIÇÃO ---
                 st.markdown("Selecione uma venda abaixo para abrir o painel de recebimento:")
                 
+                # Renderiza a tabela de 2 colunas (cabe perfeitamente no mobile sem rolar pro lado)
                 evento_clique = st.dataframe(
-                    df_app,
+                    df_mobile,
                     use_container_width=True,
                     hide_index=True,
-                    selection_mode="single-row", # <--- A CORREÇÃO ESTÁ AQUI (traço no lugar do underline)
+                    selection_mode="single-row",
                     on_select="rerun"
                 )
                 
-                # 1. Primeiro formatamos APENAS o número
+                # Rodapé no estilo do App
                 total_formatado = f"{total_mes:,.2f}".replace(".", "v").replace(",", ".").replace("v", ",")
-                
-                # 2. Depois injetamos o número já formatado no HTML (sem alterar as tags)
                 st.markdown(f"""
                     <div style="background-color: #d11181; padding: 15px; border-radius: 10px; text-align: center; color: white; font-size: 20px; font-weight: bold; margin-top: 10px;">
                         Total do Mês: R$ {total_formatado}
@@ -802,17 +821,15 @@ else:
                 """, unsafe_allow_html=True)
                 
                 # ---------------------------------------------------------
-                # A MÁGICA DO REDIRECIONAMENTO: Se houver clique na tabela
+                # A MÁGICA DO CLIQUE: Pega a linha do df_mobile, mas puxa o ID do df_app original
                 # ---------------------------------------------------------
                 if evento_clique and len(evento_clique["selection"]["rows"]) > 0:
                     linha_clicada = evento_clique["selection"]["rows"][0]
                     venda_id = int(df_app.iloc[linha_clicada]['codigo_venda'])
                     
-                    # Salva a venda na memória
+                    # Salva a venda na memória e aciona os gatilhos de mudança de tela
                     st.session_state['venda_editando'] = venda_id
-                    st.session_state['abrir_expander_reajuste'] = True
-                    
-                    # Força a mudança de página no menu lateral (deve bater com o nome exato escrito no menu)
+                    st.session_state['abrir_expander_recebimento'] = True
                     st.session_state['menu_principal'] = "💰 Financeiro" 
                     st.rerun()
             else:
