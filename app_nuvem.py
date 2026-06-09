@@ -867,54 +867,93 @@ else:
     elif modulo == "🗂️ Cadastros":
         st.markdown("### 🗂️ Central de Cadastros")
         tab_prod, tab_cat, tab_cli, tab_for = st.tabs(["📦 Estoque", "🏷️ Categorias", "👥 Clientes", "🤝 Fornecedores"])
+        # ==========================================
+        # ABA: GERENCIAR PRODUTOS E SERVIÇOS
+        # ==========================================
         with tab_prod:
-            #st.subheader("Gerenciar Estoque")
+            # --- ADAPTAÇÃO 1: Buscando a coluna 'tipo' ---
             df_p = carregar_dados("SELECT * FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             df_c = carregar_dados("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
             
-            # --- EXPANDER 1: NOVO PRODUTO ---
-            with st.expander("➕ Novo Produto"):
+            # --- EXPANDER 1: NOVO PRODUTO / SERVIÇO ---
+            with st.expander("➕ Novo Item (Produto ou Serviço)"):
                 with st.form("f_novo_p", clear_on_submit=True):
+                    
+                    # --- ADAPTAÇÃO 2: Seletor de Tipo ---
+                    tipo_item_desc = st.radio("O que você está cadastrando?", ["Produto Físico", "Serviço Prestado"], horizontal=True)
+                    tipo_letra = 'P' if tipo_item_desc == "Produto Físico" else 'S'
+                    
+                    st.markdown("---")
+                    
                     c1, c2 = st.columns(2)
-                    n_p = c1.text_input("Nome do Produto")
-                    ref_p = c2.text_input("Referência (Código Fabricante / EAN)")
+                    n_p = c1.text_input("Nome do Item")
+                    ref_p = c2.text_input("Referência / Código Interno", placeholder="Opcional")
+                    
                     c3, c4, c5 = st.columns(3)
-                    q_p = c3.number_input("Qtd Inicial", min_value=0, step=1)
-                    v_p = c4.number_input("Valor Venda (R$)", min_value=0.0, format="%.2f")
-                    m_p = c5.text_input("Marca", value="Mary Kay")
+                    
+                    # Se for serviço, desabilita a inserção de quantidade inicial
+                    if tipo_letra == 'P':
+                        q_p = c3.number_input("Qtd Inicial em Estoque", min_value=0, step=1)
+                    else:
+                        q_p = 0
+                        c3.number_input("Qtd Inicial", min_value=0, value=0, disabled=True, help="Serviços não possuem controle de estoque físico.")
+                        
+                    v_p = c4.number_input("Valor Padrão (R$)", min_value=0.0, format="%.2f")
+                    m_p = c5.text_input("Marca / Linha", value="Mary Kay" if tipo_letra == 'P' else "Serviço Próprio")
+                    
                     cat_p = st.selectbox("Categoria", lista_cat)
-                    if st.form_submit_button("Cadastrar"):
-                        conn = conectar_banco()
-                        conn.cursor().execute("INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) VALUES (%s,%s,%s,%s,%s,%s,%s)", (n_p, q_p, v_p, m_p, cat_p, emp_id, ref_p))
-                        conn.commit()
-                        conn.close()
-                        st.rerun()
+                    
+                    if st.form_submit_button("💾 Salvar Cadastro"):
+                        if not n_p:
+                            st.warning("O nome do item é obrigatório.")
+                        else:
+                            conn = conectar_banco()
+                            # --- ADAPTAÇÃO 3: Inserindo a coluna tipo no banco ---
+                            conn.cursor().execute(
+                                "INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia, tipo) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", 
+                                (n_p, q_p, v_p, m_p, cat_p, emp_id, ref_p, tipo_letra)
+                            )
+                            conn.commit()
+                            conn.close()
+                            st.success(f"{tipo_item_desc} cadastrado com sucesso!")
+                            st.rerun()
 
-            # --- EXPANDER 2: EDITAR PRODUTO ---
-            with st.expander("✏️ Editar Produto"):
+            # --- EXPANDER 2: EDITAR PRODUTO / SERVIÇO ---
+            with st.expander("✏️ Editar Cadastro"):
                 if not df_p.empty:
                     opcoes_edicao = df_p['id'].tolist()
                     
                     def formatar_produto(prod_id):
                         linha = df_p[df_p['id'] == prod_id].iloc[0]
                         ref = f" (Ref: {linha['referencia']})" if linha['referencia'] else ""
-                        return f"{linha['nome']}{ref}"
+                        tipo_str = "[SERVIÇO]" if linha.get('tipo', 'P') == 'S' else "[PRODUTO]"
+                        return f"{tipo_str} {linha['nome']}{ref}"
                         
-                    prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto)
+                    prod_id_selecionado = st.selectbox("Selecione o item que deseja atualizar:", opcoes_edicao, format_func=formatar_produto)
                     
                     if prod_id_selecionado:
                         p_atual = df_p[df_p['id'] == prod_id_selecionado].iloc[0]
+                        tipo_atual = p_atual.get('tipo', 'P') # Garante que sistemas antigos não quebrem
                         
                         with st.form("f_edita_p", clear_on_submit=False):
+                            st.caption(f"Editando um **{'Serviço Prestado' if tipo_atual == 'S' else 'Produto Físico'}**")
+                            
                             c1, c2 = st.columns(2)
-                            e_nome = c1.text_input("Nome do Produto", value=p_atual['nome'])
+                            e_nome = c1.text_input("Nome", value=p_atual['nome'])
                             e_ref = c2.text_input("Referência", value=p_atual['referencia'] if p_atual['referencia'] else "")
                             
                             c3, c4, c5 = st.columns(3)
-                            e_qtd = c3.number_input("Quantidade Atualizada", min_value=0, step=1, value=int(p_atual['quantidade']))
-                            e_valor = c4.number_input("Novo Valor Venda (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']))
-                            e_marca = c5.text_input("Marca", value=p_atual['marca'])
+                            
+                            # Mantém a mesma lógica de desabilitar estoque para serviços
+                            if tipo_atual == 'P':
+                                e_qtd = c3.number_input("Quantidade em Estoque Atualizada", min_value=0, step=1, value=int(p_atual['quantidade']))
+                            else:
+                                e_qtd = 0
+                                c3.number_input("Estoque", value=0, disabled=True)
+                                
+                            e_valor = c4.number_input("Novo Valor (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']))
+                            e_marca = c5.text_input("Marca / Linha", value=p_atual['marca'])
                             
                             try:
                                 cat_index = lista_cat.index(p_atual['categoria'])
@@ -933,19 +972,22 @@ else:
                                 conn.commit()
                                 conn.close()
                                 
-                                st.success("Produto updated successfully!")
+                                st.success("Cadastro atualizado com sucesso!")
                                 st.rerun()
                 else:
-                    st.info("Não há produtos cadastrados para editar.")
+                    st.info("Não há itens cadastrados para editar.")
 
-            # --- NOVO EXPANDER 3: MONTAGEM DE KITS PROMOCIONAIS ---
+            # --- EXPANDER 3: MONTAGEM DE KITS PROMOCIONAIS ---
             with st.expander("🎁 Montar Kit Promocional"):
-                # Filtra o DataFrame existente para listar apenas itens que possuem estoque positivo
-                df_produtos_base = df_p[df_p['quantidade'] > 0] if not df_p.empty else pd.DataFrame()
+                # --- ADAPTAÇÃO: Só permite montar kits com PRODUTOS FÍSICOS ---
+                if 'tipo' in df_p.columns:
+                    df_produtos_base = df_p[(df_p['quantidade'] > 0) & (df_p['tipo'] == 'P')] if not df_p.empty else pd.DataFrame()
+                else:
+                    df_produtos_base = df_p[df_p['quantidade'] > 0] if not df_p.empty else pd.DataFrame()
                 
                 if not df_produtos_base.empty:
                     with st.form("f_montagem_kit", clear_on_submit=True):
-                        st.markdown("**1. Selecione os produtos que farão parte do Kit:**")
+                        st.markdown("**1. Selecione os produtos físicos que farão parte do Kit:**")
                         
                         dict_produtos = dict(zip(df_produtos_base['nome'], df_produtos_base['id']))
                         produtos_selecionados = st.multiselect("Produtos Base", options=list(dict_produtos.keys()))
@@ -977,7 +1019,6 @@ else:
                         marca_kit = col_k4.text_input("Marca do Kit", value="Kits Promocionais")
                         qtd_kits_montar = col_k5.number_input("Quantos kits deseja montar agora?", min_value=1, value=1, step=1)
                         
-                        # Validação de segurança em tempo real do estoque total necessário
                         estoque_suficiente = True
                         for prod, qtd_necessaria in qtd_composicao.items():
                             qtd_total_necessaria = qtd_necessaria * qtd_kits_montar
@@ -998,7 +1039,6 @@ else:
                                 conn = conectar_banco()
                                 cursor = conn.cursor()
                                 try:
-                                    # 1. Reduz o estoque dos itens que compõem o kit
                                     for prod_nome, qtd_por_kit in qtd_composicao.items():
                                         id_prod_base = dict_produtos[prod_nome]
                                         baixa_total = qtd_por_kit * qtd_kits_montar
@@ -1008,10 +1048,10 @@ else:
                                             WHERE id = %s AND empresa_id = %s
                                         """, (baixa_total, id_prod_base, emp_id))
                                     
-                                    # 2. Cria ou soma no estoque o novo Kit estruturado
+                                    # O kit montado é sempre um Produto Físico (P)
                                     cursor.execute("""
-                                        INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia)
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                        INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia, tipo)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'P')
                                     """, (nome_kit, qtd_kits_montar, preco_kit, marca_kit, 'Kits e Combos', emp_id, ref_kit))
                                     
                                     conn.commit()
@@ -1023,7 +1063,7 @@ else:
                                 finally:
                                     conn.close()
                 else:
-                    st.info("Não há produtos suficientes com estoque disponível para criar um kit.")
+                    st.info("Não há produtos físicos com estoque disponível para criar um kit.")
                     
             # --- PAINEL DE FILTROS E EXIBIÇÃO DA TABELA ---
             if not df_p.empty:
@@ -1034,21 +1074,21 @@ else:
                 cat_selecionada = col_filtro_cat.selectbox("📑 Filtrar por Categoria:", options=opcoes_cat)
                 
                 if cat_selecionada != "📦 Todas as Categorias":
-                    df_filtrado_cat = df_p[df_p['categoria'] == cat_selecionada]
+                    df_filtrado_cat = df_p[df_p['categoria'] == cat_selecionada].copy()
                 else:
-                    df_filtrado_cat = df_p
+                    df_filtrado_cat = df_p.copy()
                 
                 if not df_filtrado_cat.empty:
                     df_filtrado_cat['display_pesquisa'] = df_filtrado_cat.apply(
-                        lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
+                        lambda x: f"[SERVIÇO] {x['nome']}" if x.get('tipo', 'P') == 'S' else f"[PRODUTO] {x['nome']} (Estoque: {int(x['quantidade'])})", axis=1
                     )
-                    opcoes_busca = ["🔍 Todos os Produtos listados"] + df_filtrado_cat['display_pesquisa'].tolist()
+                    opcoes_busca = ["🔍 Todos os Itens listados"] + df_filtrado_cat['display_pesquisa'].tolist()
                 else:
-                    opcoes_busca = ["🔍 Nenhum produto nesta categoria"]
+                    opcoes_busca = ["🔍 Nenhum item nesta categoria"]
                     
-                prod_busca = col_filtro_nome.selectbox("🔍 Pesquise o Produto:", options=opcoes_busca)
+                prod_busca = col_filtro_nome.selectbox("🔍 Pesquise o Item:", options=opcoes_busca)
                 
-                if prod_busca not in ["🔍 Todos os Produtos listados", "🔍 Nenhum produto nesta categoria"]:
+                if prod_busca not in ["🔍 Todos os Itens listados", "🔍 Nenhum item nesta categoria"]:
                     df_final = df_filtrado_cat[df_filtrado_cat['display_pesquisa'] == prod_busca]
                 else:
                     df_final = df_filtrado_cat
@@ -1057,12 +1097,13 @@ else:
                     df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa'], errors='ignore')
                     st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
                     
+                    # O Capital Total ignora serviços na hora da soma (quantidade é sempre zero ou irrelevante)
                     val_est = (df_final['quantidade'] * df_final['valor']).sum()
-                    titulo_metrica = "Capital Total em Estoque (Venda)" if cat_selecionada == "📦 Todas as Categorias" and prod_busca.startswith("🔍 Todos") else f"Capital Projetado (Filtro Atual)"
+                    titulo_metrica = "Capital Total em Estoque Físico (Venda)" if cat_selecionada == "📦 Todas as Categorias" and prod_busca.startswith("🔍 Todos") else f"Capital Projetado (Filtro Atual)"
                     
                     st.metric(titulo_metrica, f"R$ {val_est:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
                 else:
-                    st.info("Nenhum produto encontrado com os filtros atuais.")
+                    st.info("Nenhum item encontrado com os filtros atuais.")         
                     
         with tab_cat:
             c1, c2 = st.columns(2)
