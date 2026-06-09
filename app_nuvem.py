@@ -791,12 +791,15 @@ else:
                     on_select="rerun"
                 )
                 
-                # Rodapé no estilo do App
+                # 1. Primeiro formatamos APENAS o número
+                total_formatado = f"{total_mes:,.2f}".replace(".", "v").replace(",", ".").replace("v", ",")
+                
+                # 2. Depois injetamos o número já formatado no HTML (sem alterar as tags)
                 st.markdown(f"""
                     <div style="background-color: #d11181; padding: 15px; border-radius: 10px; text-align: center; color: white; font-size: 20px; font-weight: bold; margin-top: 10px;">
-                        Total do Mês: R$ {total_mes:,.2f}
+                        Total do Mês: R$ {total_formatado}
                     </div>
-                """.replace(".", "v").replace(",", ".").replace("v", ","), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
                 
                 # ---------------------------------------------------------
                 # A MÁGICA DO REDIRECIONAMENTO: Se houver clique na tabela
