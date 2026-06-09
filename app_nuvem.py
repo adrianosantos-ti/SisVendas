@@ -866,7 +866,7 @@ else:
     # ==========================================
     elif modulo == "🗂️ Cadastros":
         st.markdown("### 🗂️ Central de Cadastros")
-        tab_prod, tab_cat, tab_cli, tab_for = st.tabs(["📦 Estoque", "🏷️ Categorias", "👥 Clientes", "🤝 Fornecedores"])
+        tab_prod, tab_cat, tab_cli, tab_for, tab_colab = st.tabs(["📦 Produtos & Serviços", "🏷️ Categorias", "👥 Clientes", "🤝 Fornecedores", "👤 Equipe"])
         # ==========================================
         # ABA: GERENCIAR PRODUTOS E SERVIÇOS
         # ==========================================
@@ -1214,6 +1214,111 @@ else:
                     if st.form_submit_button("Salvar Fornecedor"):
                         conn = conectar_banco(); conn.cursor().execute("INSERT INTO fornecedores (nome, cnpj, telefone, empresa_id) VALUES (%s,%s,%s,%s)",(n_f, c_f, t_f, emp_id)); conn.commit(); conn.close(); st.rerun()
             st.dataframe(carregar_dados("SELECT nome, cnpj, telefone FROM fornecedores WHERE empresa_id=%s ORDER BY nome",(emp_id,)), use_container_width=True)
+
+        # ==========================================
+        # ABA: GERENCIAR COLABORADORES
+        # ==========================================
+        with tab_colab:
+            st.markdown("### 👤 Equipe e Profissionais")
+            
+            # Carrega a lista atual de colaboradores
+            df_colab = carregar_dados("SELECT id, nome, cargo, telefone, ativo FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+            
+            # --- EXPANDER 1: NOVO COLABORADOR ---
+            with st.expander("➕ Cadastrar Novo Colaborador"):
+                with st.form("form_novo_colab", clear_on_submit=True):
+                    c1, c2 = st.columns(2)
+                    nome_c = c1.text_input("Nome Completo *")
+                    cargo_c = c2.text_input("Cargo / Especialidade", placeholder="Ex: Cabeleireira, Maquiadora...")
+                    
+                    c3, c4 = st.columns(2)
+                    tel_c = c3.text_input("WhatsApp / Telefone", placeholder="(XX) 9XXXX-XXXX")
+                    status_c = c4.selectbox("Status Inicial", ["Ativo", "Inativo"])
+                    
+                    st.markdown("---")
+                    if st.form_submit_button("💾 Salvar Colaborador", type="primary"):
+                        if not nome_c:
+                            st.warning("O nome do colaborador é obrigatório!")
+                        else:
+                            is_ativo = True if status_c == "Ativo" else False
+                            
+                            conn = conectar_banco()
+                            conn.cursor().execute("""
+                                INSERT INTO colaboradores (nome, cargo, telefone, ativo, empresa_id) 
+                                VALUES (%s, %s, %s, %s, %s)
+                            """, (nome_c, cargo_c, tel_c, is_ativo, emp_id))
+                            conn.commit()
+                            conn.close()
+                            
+                            st.success(f"Colaborador(a) {nome_c} cadastrado(a) com sucesso!")
+                            st.rerun()
+
+            # --- EXPANDER 2: EDITAR COLABORADOR ---
+            with st.expander("✏️ Editar Cadastro de Colaborador"):
+                if not df_colab.empty:
+                    # Cria um dicionário para facilitar a busca do ID pelo nome
+                    dict_colabs = dict(zip(df_colab['nome'], df_colab['id']))
+                    nome_selecionado = st.selectbox("Selecione o profissional para editar:", options=list(dict_colabs.keys()))
+                    
+                    if nome_selecionado:
+                        id_selecionado = dict_colabs[nome_selecionado]
+                        dados_atuais = df_colab[df_colab['id'] == id_selecionado].iloc[0]
+                        
+                        with st.form("form_edita_colab", clear_on_submit=False):
+                            c1, c2 = st.columns(2)
+                            e_nome = c1.text_input("Nome Completo *", value=dados_atuais['nome'])
+                            e_cargo = c2.text_input("Cargo / Especialidade", value=dados_atuais['cargo'] if dados_atuais['cargo'] else "")
+                            
+                            c3, c4 = st.columns(2)
+                            e_tel = c3.text_input("WhatsApp / Telefone", value=dados_atuais['telefone'] if dados_atuais['telefone'] else "")
+                            
+                            # Define o index do selectbox baseado no status atual do banco
+                            index_status = 0 if dados_atuais['ativo'] else 1
+                            e_status = c4.selectbox("Status", ["Ativo", "Inativo"], index=index_status)
+                            
+                            st.markdown("---")
+                            if st.form_submit_button("💾 Salvar Alterações"):
+                                if not e_nome:
+                                    st.warning("O nome não pode ficar em branco.")
+                                else:
+                                    is_ativo_edit = True if e_status == "Ativo" else False
+                                    
+                                    conn = conectar_banco()
+                                    conn.cursor().execute("""
+                                        UPDATE colaboradores 
+                                        SET nome=%s, cargo=%s, telefone=%s, ativo=%s 
+                                        WHERE id=%s AND empresa_id=%s
+                                    """, (e_nome, e_cargo, e_tel, is_ativo_edit, id_selecionado, emp_id))
+                                    conn.commit()
+                                    conn.close()
+                                    
+                                    st.success("Cadastro atualizado com sucesso!")
+                                    st.rerun()
+                else:
+                    st.info("Não há colaboradores cadastrados para editar.")
+
+            # --- EXIBIÇÃO DA EQUIPE ATUAL ---
+            if not df_colab.empty:
+                st.markdown("---")
+                st.markdown("#### 📋 Equipe Cadastrada")
+                
+                # Tratamento visual dos dados para a tabela
+                df_exibicao = df_colab.copy()
+                df_exibicao['ativo'] = df_exibicao['ativo'].apply(lambda x: "🟢 Ativo" if x else "🔴 Inativo")
+                df_exibicao = df_exibicao.rename(columns={
+                    'nome': 'Nome do Profissional',
+                    'cargo': 'Especialidade',
+                    'telefone': 'Contato',
+                    'ativo': 'Status'
+                })
+                
+                # Removemos o ID da visualização para ficar mais limpo
+                df_exibicao = df_exibicao.drop(columns=['id'])
+                
+                st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
+            else:
+                st.info("Sua lista de colaboradores está vazia. Adicione o primeiro profissional acima.")
+                
 
     # ==========================================
     # MÓDULO 3: MOVIMENTAÇÕES (Vendas e Compras)
