@@ -1757,7 +1757,7 @@ else:
                     col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(v_pend - v_atr):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                     col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atr:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Atenção" if v_atr > 0 else "Tudo em dia!", delta_color="inverse")
                 
-                st.markdown("---")
+                #st.markdown("---")
                 
                 df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
                 
