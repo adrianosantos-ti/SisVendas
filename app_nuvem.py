@@ -369,7 +369,7 @@ else:
     if modulo == "📊 Análises":
         st.markdown("### 📊 Gestão e Performance")
         # 1. Adicionamos a aba "📱 Visão App" aqui na lista
-        aba_dash, aba_hist, aba_alertas, aba_app = st.tabs(["Painel Visual", "Histórico de Movimentação", "🚨 Alertas", "📱 Visão App"])
+        aba_dash, aba_hist, aba_alertas, aba_app = st.tabs(["Analise Vendas", "Histórico de Movimentação", "🚨 Alertas", "📱 Visão App"])
         
         with aba_dash:
             # 1. CORREÇÃO SQL: Puxando a coluna 'codigo_venda' da sua tabela
