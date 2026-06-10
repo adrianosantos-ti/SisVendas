@@ -1138,7 +1138,7 @@ else:
             sub_add_cli, sub_edit_cli, sub_del_cli, sub_hist_cli = st.tabs(["➕ Cadastrar", "✏️ Editar", "❌ Excluir", "🛍️ Histórico de Compras"])
             
             with sub_add_cli:
-            with st.form("form_cliente", clear_on_submit=True):
+                with st.form("form_cliente", clear_on_submit=True):
                     col1, col2, col3 = st.columns(3)
                     nome_cli = col1.text_input("Nome do Cliente *")
                     nasc_cli = col2.text_input("Dia de Aniversário (DD/MM)", placeholder="Ex: 25/12", max_chars=5)
