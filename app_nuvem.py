@@ -1911,7 +1911,7 @@ else:
         # ABA: MOVIMENTAÇÕES (TROCAS E EMPRÉSTIMOS)
         # ==========================================
         with tab_trocas:
-            st.header("🔄 Movimentação de Trocas & Empréstimos")
+            st.subheader("🔄 Movimentação de Trocas & Empréstimos")
             
             # --- INICIALIZAÇÃO DOS CARRINHOS DE TROCA ---
             if 'troca_saida' not in st.session_state:
