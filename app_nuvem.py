@@ -1346,7 +1346,13 @@ else:
     # ==========================================
     elif modulo == "🔄 Movimentações":
         st.markdown("### 🔄 Operações Diárias")
-        tab_venda, tab_orcamentos, tab_compra, tab_historico_compras = st.tabs(["🛒 Vendas", "📋 Orçamentos Salvos", "📥 Entrada de Mercadorias", "📋 Histórico de Entradas"])        
+        tab_venda, tab_orcamentos, tab_compra, tab_historico_compras, tab_trocas = st.tabs([
+            "🛒 Vendas", 
+            "📋 Orçamentos Salvos", 
+            "📥 Entrada de Mercadorias", 
+            "📋 Histórico de Entradas", 
+            "🔄 Trocas e Empréstimos"
+        ])
         with tab_venda:
             st.subheader("🛒 Vendas")
         
@@ -1900,6 +1906,186 @@ else:
                     st.metric(label="Valor Total da Nota", value=f"R$ {dados_compra['valor_total']:.2f}")
             else:
                 st.warning("Nenhuma nota de entrada processada neste período.")
+
+        # ==========================================
+        # ABA: MOVIMENTAÇÕES (TROCAS E EMPRÉSTIMOS)
+        # ==========================================
+        with tab_trocas:
+            st.header("🔄 Movimentação de Trocas & Empréstimos")
+            
+            # --- INICIALIZAÇÃO DOS CARRINHOS DE TROCA ---
+            if 'troca_saida' not in st.session_state:
+                st.session_state['troca_saida'] = []
+            if 'troca_entrada' not in st.session_state:
+                st.session_state['troca_entrada'] = []
+
+            # 1. SELEÇÃO DA CONSULTORA (Filtra apenas tipo = 'T')
+            df_consultoras = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s AND tipo='T' ORDER BY nome", (emp_id,))
+            
+            if not df_consultoras.empty:
+                lista_consultoras = df_consultoras['nome'].tolist()
+                consultora_sel = st.selectbox("👤 Selecione a Consultora:", options=lista_consultoras)
+                id_consultora = int(df_consultoras[df_consultoras['nome'] == consultora_sel].iloc[0]['id'])
+                
+                st.markdown("---")
+                
+                # Carrega catálogo de produtos para os lançamentos
+                df_produtos = carregar_dados("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                
+                if not df_produtos.empty:
+                    # Formata a lista para o Selectbox
+                    df_produtos['display'] = df_produtos.apply(lambda x: f"{x['nome']} | R$ {x['valor']:.2f} (Estoque: {int(x['quantidade'])})", axis=1)
+                    opcoes_prod = df_produtos['display'].tolist()
+
+                    # 2. INTERFACE DE LANÇAMENTO (ABAS INTERNAS)
+                    aba_saida, aba_entrada = st.tabs(["📤 O que está SAINDO (Para Consultora)", "📥 O que está ENTRANDO (Retorno)"])
+                    
+                    # --- ABA DE SAÍDA ---
+                    with aba_saida:
+                        st.subheader("Produtos que vão para a Consultora")
+                        with st.form("form_add_saida", clear_on_submit=True):
+                            c1, c2, c3 = st.columns([2, 1, 1])
+                            item_sel_s = c1.selectbox("Produto:", options=opcoes_prod)
+                            qtd_s = c2.number_input("Qtd Saída:", min_value=1, step=1, value=1)
+                            
+                            # Pega o preço padrão do produto selecionado
+                            idx_s = opcoes_prod.index(item_sel_s)
+                            preco_base_s = float(df_produtos.iloc[idx_s]['valor'])
+                            
+                            preco_s = c3.number_input("Valor Unit (R$):", min_value=0.0, value=preco_base_s, step=1.0, format="%.2f")
+                            
+                            if st.form_submit_button("➕ Adicionar à Saída"):
+                                item_info = df_produtos.iloc[idx_s]
+                                if item_info['tipo'] == 'P' and qtd_s > item_info['quantidade']:
+                                    st.error("❌ Estoque insuficiente para esta saída!")
+                                else:
+                                    st.session_state['troca_saida'].append({
+                                        'id': int(item_info['id']),
+                                        'nome': str(item_info['nome']),
+                                        'qtd': int(qtd_s),
+                                        'unit': float(preco_s),
+                                        'total': float(qtd_s * preco_s),
+                                        'tipo': str(item_info['tipo'])
+                                    })
+                                    st.rerun()
+                        
+                        # Exibe a tabela de Saídas se houver itens
+                        if st.session_state['troca_saida']:
+                            st.table(pd.DataFrame(st.session_state['troca_saida'])[['nome', 'qtd', 'unit', 'total']])
+                            if st.button("🗑️ Limpar Lista de Saída", key="limpar_s"):
+                                st.session_state['troca_saida'] = []
+                                st.rerun()
+
+                    # --- ABA DE ENTRADA ---
+                    with aba_entrada:
+                        st.subheader("Produtos que retornam para o seu estoque")
+                        with st.form("form_add_entrada", clear_on_submit=True):
+                            c1, c2, c3 = st.columns([2, 1, 1])
+                            item_sel_e = c1.selectbox("Produto:", options=opcoes_prod)
+                            qtd_e = c2.number_input("Qtd Entrada:", min_value=1, step=1, value=1)
+                            
+                            # Pega o preço padrão do produto selecionado
+                            idx_e = opcoes_prod.index(item_sel_e)
+                            preco_base_e = float(df_produtos.iloc[idx_e]['valor'])
+                            
+                            preco_e = c3.number_input("Valor Unit (R$):", min_value=0.0, value=preco_base_e, step=1.0, format="%.2f")
+                            
+                            if st.form_submit_button("➕ Adicionar à Entrada"):
+                                item_info = df_produtos.iloc[idx_e]
+                                st.session_state['troca_entrada'].append({
+                                    'id': int(item_info['id']),
+                                    'nome': str(item_info['nome']),
+                                    'qtd': int(qtd_e),
+                                    'unit': float(preco_e),
+                                    'total': float(qtd_e * preco_e),
+                                    'tipo': str(item_info['tipo'])
+                                })
+                                st.rerun()
+                                
+                        # Exibe a tabela de Entradas se houver itens
+                        if st.session_state['troca_entrada']:
+                            st.table(pd.DataFrame(st.session_state['troca_entrada'])[['nome', 'qtd', 'unit', 'total']])
+                            if st.button("🗑️ Limpar Lista de Entrada", key="limpar_e"):
+                                st.session_state['troca_entrada'] = []
+                                st.rerun()
+
+                st.markdown("---")
+                st.subheader("📊 Balanço Geral da Operação")
+                
+                # Cálculos dos totais dos carrinhos em memória
+                total_s = sum(item['total'] for item in st.session_state['troca_saida']) if st.session_state['troca_saida'] else 0.0
+                total_e = sum(item['total'] for item in st.session_state['troca_entrada']) if st.session_state['troca_entrada'] else 0.0
+                diferenca_balanco = total_s - total_e
+                
+                c_m1, c_m2, c_m3 = st.columns(3)
+                c_m1.metric("Total Saída", f"R$ {total_s:.2f}".replace('.', ','))
+                c_m2.metric("Total Entrada", f"R$ {total_e:.2f}".replace('.', ','))
+                
+                # 3. ANÁLISE DINÂMICA DA DIFERENÇA FINANCEIRA
+                if diferenca_balanco == 0:
+                    c_m3.metric("Balanço", "R$ 0,00", delta="Permuta Perfeita")
+                    status_final = 'Compensado'
+                elif diferenca_balanco > 0:
+                    c_m3.metric("Balanço", f"R$ {diferenca_balanco:.2f}".replace('.', ','), delta="Consultora Deve", delta_color="inverse")
+                    status_final = 'Pendente Consultora'
+                    st.warning(f"⚠️ Esta operação gerará uma **pendência financeira ativa** para a consultora no valor de R$ {diferenca_balanco:.2f}".replace('.', ','))
+                else:
+                    c_m3.metric("Balanço", f"R$ {abs(diferenca_balanco):.2f}".replace('.', ','), delta="Empresa Deve")
+                    status_final = 'Pendente Empresa'
+                    st.info(f"ℹ️ Esta operação gerará um **crédito/pendência da empresa** com a consultora no valor de R$ {abs(diferenca_balanco):.2f}".replace('.', ','))
+
+                # 4. BOTÃO DE CONFIRMAÇÃO E GRAVAÇÃO
+                if st.button("✅ Confirmar e Processar Troca", type="primary", use_container_width=True):
+                    if not st.session_state['troca_saida'] and not st.session_state['troca_entrada']:
+                        st.error("Adicione pelo menos um item em um das listas para processar.")
+                    else:
+                        try:
+                            conn = conectar_banco()
+                            cur = conn.cursor()
+                            
+                            # 1. Grava na tabela mestre 'public.trocas'
+                            cur.execute("""
+                                INSERT INTO trocas (empresa_id, cliente_id, total_saida, total_entrada, diferenca, status_financeiro)
+                                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+                            """, (emp_id, id_consultora, total_s, total_e, diferenca_balanco, status_final))
+                            id_troca_gerada = cur.fetchone()[0]
+                            
+                            # 2. Loop para processar os itens de SAÍDA (Diminui meu estoque)
+                            for item in st.session_state['troca_saida']:
+                                cur.execute("INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'S')",
+                                            (id_troca_gerada, item['id'], item['qtd'], item['unit']))
+                                if item['tipo'] == 'P': # Só mexe no estoque se for produto físico
+                                    cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (item['qtd'], item['id']))
+                                    
+                            # 3. Loop para processar os itens de ENTRADA (Soma no meu estoque)
+                            for item in st.session_state['troca_entrada']:
+                                cur.execute("INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'E')",
+                                            (id_troca_gerada, item['id'], item['qtd'], item['unit']))
+                                if item['tipo'] == 'P':
+                                    cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id=%s", (item['qtd'], item['id']))
+                            
+                            # 4. SE GEROU DIFERENÇA COMPENSADA FINANCEIRAMENTE, LANÇA NO CONTAS A RECEBER
+                            if status_final == 'Pendente Consultora':
+                                # Adiciona 90000 ao ID da troca para não conflitar com números de vendas normais
+                                cur.execute("""
+                                    INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
+                                    VALUES (%s, %s, 1, 1, %s, %s, 'Pendente', %s)
+                                """, (int(id_troca_gerada + 90000), id_consultora, float(diferenca_balanco), date.today().strftime("%d/%m/%Y"), emp_id))
+                            
+                            conn.commit()
+                            conn.close()
+                            
+                            # Limpa os estados da memória
+                            st.session_state['troca_saida'] = []
+                            st.session_state['troca_entrada'] = []
+                            st.success(f"Troca Nº {id_troca_gerada} registrada com sucesso e estoques atualizados!")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Erro ao processar transação: {e}")
+                            if 'conn' in locals(): conn.close()
+            else:
+                st.warning("Nenhuma Consultora cadastrada no sistema. Vá em Cadastros e altere o tipo de um registro para 'Consultora'.")
     
     # ==========================================
     # MÓDULO 4: FINANCEIRO (Contas a Receber e Pagar COMPLETOS)
