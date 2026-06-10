@@ -1138,17 +1138,26 @@ else:
             sub_add_cli, sub_edit_cli, sub_del_cli, sub_hist_cli = st.tabs(["➕ Cadastrar", "✏️ Editar", "❌ Excluir", "🛍️ Histórico de Compras"])
             
             with sub_add_cli:
-                with st.form("form_cliente", clear_on_submit=True):
+            with st.form("form_cliente", clear_on_submit=True):
                     col1, col2, col3 = st.columns(3)
-                    nome_cli = col1.text_input("Nome do Cliente")
+                    nome_cli = col1.text_input("Nome do Cliente *")
                     nasc_cli = col2.text_input("Dia de Aniversário (DD/MM)", placeholder="Ex: 25/12", max_chars=5)
                     tel_cli = col3.text_input("Telefone")
+                    
+                    # --- NOVO CAMPO: Tipo de Cadastro (Padrão: Cliente) ---
+                    tipo_cli_desc = st.selectbox("Tipo de Cadastro:", ["Cliente", "Consultora"], index=0)
+                    tipo_cli_letra = 'C' if tipo_cli_desc == "Cliente" else 'T'
+                    
                     if st.form_submit_button("Cadastrar Cliente") and nome_cli:
                         conn = conectar_banco()
-                        conn.cursor().execute("INSERT INTO clientes (nome, data_nascimento, telefone, empresa_id) VALUES (%s, %s, %s, %s)", (nome_cli, nasc_cli, tel_cli, emp_id))
+                        # Adicionado a coluna 'tipo' e a variável 'tipo_cli_letra' no final do INSERT
+                        conn.cursor().execute(
+                            "INSERT INTO clientes (nome, data_nascimento, telefone, empresa_id, tipo) VALUES (%s, %s, %s, %s, %s)", 
+                            (nome_cli, nasc_cli, tel_cli, emp_id, tipo_cli_letra)
+                        )
                         conn.commit()
                         conn.close()
-                        st.success("Cliente cadastrado!")
+                        st.success(f"{tipo_cli_desc} cadastrado com sucesso!")
                         st.rerun()
 
             df_clientes = carregar_dados("SELECT * FROM clientes WHERE empresa_id = %s ORDER BY nome", (emp_id,))
@@ -1165,9 +1174,21 @@ else:
                         novo_nome_cli = col1.text_input("Nome", value=cli_atual['nome'])
                         novo_nasc_cli = col2.text_input("Aniversário", value=cli_atual['data_nascimento'], max_chars=5)
                         novo_tel_cli = col3.text_input("Telefone", value=cli_atual['telefone'])
+                        
+                        # --- ADAPTAÇÃO: Carrega o tipo atual e monta o componente de edição ---
+                        tipo_atual = cli_atual.get('tipo', 'C') # Garante o padrão 'C' se a coluna estiver nula
+                        index_tipo = 0 if tipo_atual == 'C' else 1
+                        
+                        novo_tipo_desc = st.selectbox("Tipo de Cadastro:", ["Cliente", "Consultora"], index=index_tipo)
+                        novo_tipo_letra = 'C' if novo_tipo_desc == "Cliente" else 'T'
+                        
                         if st.form_submit_button("Salvar Alterações"):
                             conn = conectar_banco()
-                            conn.cursor().execute("UPDATE clientes SET nome=%s, data_nascimento=%s, telefone=%s WHERE id=%s AND empresa_id=%s", (novo_nome_cli, novo_nasc_cli, novo_tel_cli, cli_id, emp_id))
+                            # Incluído o campo tipo=%s na query SQL e a variável na tupla de parâmetros
+                            conn.cursor().execute(
+                                "UPDATE clientes SET nome=%s, data_nascimento=%s, telefone=%s, tipo=%s WHERE id=%s AND empresa_id=%s", 
+                                (novo_nome_cli, novo_nasc_cli, novo_tel_cli, novo_tipo_letra, cli_id, emp_id)
+                            )
                             conn.commit()
                             conn.close()
                             st.success("Atualizado com sucesso!")
