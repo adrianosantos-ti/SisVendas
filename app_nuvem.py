@@ -1911,7 +1911,7 @@ else:
         # ABA: MOVIMENTAÇÕES (TROCAS E EMPRÉSTIMOS)
         # ==========================================
         with tab_trocas:
-            st.subheader("🔄 Movimentação de Trocas & Empréstimos")
+            st.subheader("🔄 Trocas")
             
             # --- INICIALIZAÇÃO DOS CARRINHOS DE TROCA ---
             if 'troca_saida' not in st.session_state:
@@ -2010,7 +2010,7 @@ else:
                                 st.rerun()
 
                 st.markdown("---")
-                st.subheader("📊 Balanço Geral da Operação")
+                st.subheader("📊 Resumo da Operação")
                 
                 # Cálculos dos totais dos carrinhos em memória
                 total_s = sum(item['total'] for item in st.session_state['troca_saida']) if st.session_state['troca_saida'] else 0.0
