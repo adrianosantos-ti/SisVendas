@@ -2200,55 +2200,90 @@ else:
                 
                 df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
                 
-                # --- LÓGICA DE REGISTRAR PAGAMENTO (ADAPTADA COM INTELIGÊNCIA DE CLIQUE) ---
+                # --- LÓGICA DE REGISTRAR PAGAMENTO REFORMULADA (CARD LAYOUT MOBILE) ---
                 
                 # 1. Captura os comandos vindos lá do clique da Visão App
                 abrir_recebimento = st.session_state.get('abrir_expander_recebimento', False)
                 venda_id_alvo = st.session_state.get('venda_editando', None)
                 
-                # 2. O expander agora obedece ao gatilho automático de abertura
+                # 2. O expander obedece ao gatilho automático de abertura
                 with st.expander("✅ Registrar Recebimento de Parcela", expanded=abrir_recebimento):
                     if not df_p.empty:
                         
-                        # 3. MÁGICA DA PRÉ-SELEÇÃO: Descobre qual linha da lista pertence à venda clicada
-                        idx_padrao = 0
+                        # 3. FILTRAGEM INTELIGENTE: Descobre quais parcelas exibir
                         if venda_id_alvo is not None:
-                            # Procura a posição exata do código da venda dentro do DataFrame de parcelas
-                            indices_da_venda = [i for i, x in enumerate(df_p['Nº Venda'].tolist()) if int(x) == int(venda_id_alvo)]
-                            if indices_da_venda:
-                                idx_padrao = indices_da_venda[0] # Define a primeira parcela encontrada como padrão
+                            # Se veio o clique da Visão App, filtra apenas as parcelas dessa venda específica
+                            df_filtrado = df_p[df_p['Nº Venda'].astype(int) == int(venda_id_alvo)]
+                            st.markdown(f"✨ **Mostrando parcelas da Venda Nº {venda_id_alvo}**")
+                        else:
+                            # Se abriu manualmente, mostra um seletor limpo e curto apenas para escolher a Venda/Cliente
+                            df_p['venda_display'] = df_p['Nº Venda'].astype(str) + " - " + df_p['Cliente']
+                            opcoes_vendas = sorted(list(df_p['venda_display'].unique()))
+                            venda_escolhida = st.selectbox("Escolha a Venda / Cliente:", options=opcoes_vendas)
+                            cod_venda_sel = venda_escolhida.split(" - ")[0]
+                            df_filtrado = df_p[df_p['Nº Venda'].astype(int) == int(cod_venda_sel)]
                         
-                        with st.form("form_baixa"):
-                            op_b = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
+                        if not df_filtrado.empty:
+                            st.markdown("---")
+                            # Campo de data único no topo do painel
+                            data_pag_real = st.date_input("📅 Data do Recebimento:", value=hoje, format="DD/MM/YYYY")
                             
-                            # 4. Injetamos o 'index=idx_padrao'. O dropdown já inicia travado na cliente certa!
-                            p_sel = st.selectbox("Selecione a parcela paga:", options=op_b, index=idx_padrao)
-                            
-                            col_b1, col_b2 = st.columns([1, 2])
-                            data_pag_real = col_b1.date_input("Data do Pagamento", value=hoje, format="DD/MM/YYYY")
-                            
-                            if st.form_submit_button("💰 Confirmar Baixa", type="primary"):
-                                idx_b = df_p['ID Parcela'].tolist()[op_b.index(p_sel)]
-                                conn = conectar_banco()
-                                conn.cursor().execute("UPDATE contas_receber SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
-                                conn.commit()
-                                conn.close()
+                            # 4. RENDERIZAÇÃO DOS CARDS EXCLUSIVOS (Perfeito para leitura no celular)
+                            for _, row in df_filtrado.iterrows():
+                                idx_b = row['ID Parcela']
+                                num_parc = row['Parcela']
+                                total_parc = row['De']
+                                valor_parc = row['Valor (R$)']
+                                venc_parc = row['Vencimento']
+                                cliente_nome = row['Cliente']
                                 
-                                # Limpa o ID da memória após dar a baixa com sucesso
-                                if 'venda_editando' in st.session_state:
-                                    st.session_state['venda_editando'] = None
+                                # Cada parcela vira um cartão visual independente
+                                with st.container(border=True):
+                                    st.markdown(f"👤 **{cliente_nome}** | Parcela **{num_parc}/{total_parc}**")
                                     
-                                st.success("Pagamento registrado com sucesso!")
+                                    # Separa Valor e Vencimento em colunas grandes e legíveis
+                                    c_card1, c_card2 = st.columns(2)
+                                    c_card1.metric("Valor", f"R$ {valor_parc:.2f}".replace('.', ','))
+                                    c_card2.metric("Vencimento", venc_parc)
+                                    
+                                    # Botão de ação direta (sem st.form para garantir processamento instantâneo)
+                                    if st.button(f"💰 Confirmar Baixa da Parcela {num_parc}", key=f"btn_baixar_{idx_b}", use_container_width=True, type="primary"):
+                                        try:
+                                            conn = conectar_banco()
+                                            cur = conn.cursor()
+                                            
+                                            # Executa a baixa cirúrgica pelo ID único da parcela
+                                            cur.execute("""
+                                                UPDATE contas_receber 
+                                                SET status = 'Pago', data_pagamento = %s 
+                                                WHERE id = %s AND empresa_id = %s
+                                            """, (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
+                                            
+                                            conn.commit()
+                                            conn.close()
+                                            
+                                            # Limpa completamente a memória de controle após o sucesso
+                                            st.session_state['venda_editando'] = None
+                                            st.session_state['abrir_expander_recebimento'] = False
+                                            
+                                            st.success("Pagamento registrado com sucesso!")
+                                            st.rerun()
+                                            
+                                        except Exception as e:
+                                            st.error(f"Erro ao salvar no banco: {e}")
+                                            if 'conn' in locals(): conn.close()
+                            
+                            # Botão extra para caso você queira fechar o painel sem baixar nada
+                            st.markdown("---")
+                            if st.button("❌ Cancelar / Fechar Seleção", use_container_width=True):
+                                st.session_state['venda_editando'] = None
+                                st.session_state['abrir_expander_recebimento'] = False
                                 st.rerun()
-                        
-                        # 5. LIMPEZA DE MEMÓRIA: Desativa os gatilhos após a renderização da tela
-                        # Isso garante que se o usuário fechar o expander ou mudar de página, o sistema não fique travado abrindo sempre a mesma venda.
-                        if abrir_recebimento:
-                            st.session_state['abrir_expander_recebimento'] = False
-                            st.session_state['venda_editando'] = None
+                        else:
+                            st.info("Nenhuma parcela pendente encontrada para este registro.")
                     else:
                         st.success("🎉 Nenhuma parcela pendente! Todos os clientes estão em dia.")
-
+                        
                 # --- NOVO EXPANDER DE LEMBRETE DO WHATSAPP ---
                 with st.expander("📲 Enviar Lembrete via WhatsApp", expanded=False):
                     if not df_p.empty:
