@@ -2237,17 +2237,17 @@ else:
                                 venc_parc = row['Vencimento']
                                 cliente_nome = row['Cliente']
                                 
-                                # Cada parcela vira um cartão visual independente
+                                # Cada parcela vira um cartão visual mais compacto
                                 with st.container(border=True):
-                                    st.markdown(f"👤 **{cliente_nome}** | Parcela **{num_parc}/{total_parc}**")
+                                    # Linha 1: Cliente e qual é a parcela
+                                    st.markdown(f"👤 **{cliente_nome}** — Parc. **{num_parc}/{total_parc}**")
                                     
-                                    # Separa Valor e Vencimento em colunas grandes e legíveis
-                                    c_card1, c_card2 = st.columns(2)
-                                    c_card1.metric("Valor", f"R$ {valor_parc:.2f}".replace('.', ','))
-                                    c_card2.metric("Vencimento", venc_parc)
+                                    # Linha 2: Valor e Data lado a lado com fonte em tamanho normal
+                                    valor_formatado = f"R$ {valor_parc:.2f}".replace('.', ',')
+                                    st.markdown(f"💰 **Valor:** {valor_formatado} &nbsp; | &nbsp; 📅 **Venc:** {venc_parc}")
                                     
-                                    # Botão de ação direta (sem st.form para garantir processamento instantâneo)
-                                    if st.button(f"💰 Confirmar Baixa da Parcela {num_parc}", key=f"btn_baixar_{idx_b}", use_container_width=True, type="primary"):
+                                    # Botão de ação direta
+                                    if st.button(f"✅ Confirmar Baixa da Parcela {num_parc}", key=f"btn_baixar_{idx_b}", use_container_width=True):
                                         try:
                                             conn = conectar_banco()
                                             cur = conn.cursor()
