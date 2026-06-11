@@ -2160,19 +2160,20 @@ else:
             aba_ver_agenda, aba_novo_agendamento = st.tabs(["📱 Visualizar Agenda", "➕ Marcar Horário"])
             
             # ---------------------------------------------------------
-            # SUB-ABA 1: VISUALIZAR AGENDA (TIMELINE INTELIGENTE)
+            # SUB-ABA 1: VISUALIZAR AGENDA (TIMELINE COM FILTRO DE DATAS)
             # ---------------------------------------------------------
             with aba_ver_agenda:
-                # Controle rápido para não poluir a tela com agendamentos de meses atrás
-                filtro_vista = st.radio("Visualização:", ["A partir de Hoje", "Histórico Passado"], horizontal=True)
+                from datetime import date, timedelta
+                hoje = date.today()
                 
-                if filtro_vista == "A partir de Hoje":
-                    filtro_sql = "a.data_agendamento >= CURRENT_DATE"
-                else:
-                    filtro_sql = "a.data_agendamento < CURRENT_DATE"
+                # Controle por período (De / Até) lado a lado
+                st.markdown("**Filtre o período dos atendimentos:**")
+                c_dt1, c_dt2 = st.columns(2)
+                dt_inicio = c_dt1.date_input("De:", value=hoje, format="DD/MM/YYYY")
+                dt_fim = c_dt2.date_input("Até:", value=hoje + timedelta(days=7), format="DD/MM/YYYY")
                 
-                # Busca os agendamentos já ordenados por data e depois por horário
-                query_agenda = f"""
+                # Busca os agendamentos respeitando o intervalo de datas escolhido
+                query_agenda = """
                     SELECT 
                         a.id,
                         a.data_agendamento,
@@ -2186,10 +2187,13 @@ else:
                     JOIN clientes c ON a.cliente_id = c.id
                     JOIN colaboradores col ON a.colaboradora_id = col.id
                     JOIN produtos p ON a.servico_id = p.id
-                    WHERE a.empresa_id = %s AND {filtro_sql}
+                    WHERE a.empresa_id = %s 
+                      AND a.data_agendamento >= %s 
+                      AND a.data_agendamento <= %s
                     ORDER BY a.data_agendamento ASC, a.hora_inicio ASC
                 """
-                df_compromissos = carregar_dados(query_agenda, (emp_id,))
+                # Passamos as duas datas diretamente para o banco de dados
+                df_compromissos = carregar_dados(query_agenda, (emp_id, dt_inicio, dt_fim))
                 
                 st.markdown('<hr style="margin: 5px 0px 15px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
                 
@@ -2202,15 +2206,14 @@ else:
                         df_dia = df_compromissos[df_compromissos['data_agendamento'] == data_alvo]
                         qtd_atendimentos = len(df_dia)
                         
-                        # Formata a data para o padrão brasileiro de forma segura
+                        # Formata a data para o padrão brasileiro
                         try:
                             data_br = data_alvo.strftime('%d/%m/%Y')
                         except:
                             data_br = str(data_alvo)
                         
-                        # Mágica de Usabilidade: Se a data do bloco for HOJE, o expander já vem aberto sozinho!
-                        from datetime import date
-                        eh_hoje = (data_br == date.today().strftime('%d/%m/%Y'))
+                        # Mágica de Usabilidade: Se a data do bloco for HOJE, o expander já vem aberto
+                        eh_hoje = (data_br == hoje.strftime('%d/%m/%Y'))
                         
                         # Cria a caixinha inteligente do dia
                         with st.expander(f"📅 {data_br} — {qtd_atendimentos} atendimento(s)", expanded=eh_hoje):
@@ -2257,7 +2260,7 @@ else:
                                     else:
                                         st.caption(f"Status da operação: **{status_atual}**")
                 else:
-                    st.info("🌴 Nenhum atendimento agendado para o período selecionado.")
+                    st.info(f"🌴 Nenhum atendimento encontrado no período de {dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')}.")
 
             # ---------------------------------------------------------
             # SUB-ABA 2: MARCAR NOVO HORÁRIO (FORMULÁRIO DE CADASTRO)
