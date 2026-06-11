@@ -11,6 +11,7 @@ import pandas as pd
 import plotly.express as px
 import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
+hoje = date.today()
 import urllib.parse
 import base64
 import json
