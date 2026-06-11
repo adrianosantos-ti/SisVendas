@@ -2160,16 +2160,22 @@ else:
             aba_ver_agenda, aba_novo_agendamento = st.tabs(["📱 Visualizar Agenda", "➕ Marcar Horário"])
             
             # ---------------------------------------------------------
-            # SUB-ABA 1: VISUALIZAR AGENDA (FORMATO CALENDÁRIO COMPACTO)
+            # SUB-ABA 1: VISUALIZAR AGENDA (TIMELINE INTELIGENTE)
             # ---------------------------------------------------------
             with aba_ver_agenda:
-                # Seletor de data que funciona como o controle do calendário
-                data_filtro = st.date_input("📆 Selecione o Dia para Visualizar:", value=hoje, format="DD/MM/YYYY")
+                # Controle rápido para não poluir a tela com agendamentos de meses atrás
+                filtro_vista = st.radio("Visualização:", ["A partir de Hoje", "Histórico Passado"], horizontal=True)
                 
-                # Busca os agendamentos do dia selecionado cruzando com Clientes, Colaboradoras e Serviços
-                query_agenda = """
+                if filtro_vista == "A partir de Hoje":
+                    filtro_sql = "a.data_agendamento >= CURRENT_DATE"
+                else:
+                    filtro_sql = "a.data_agendamento < CURRENT_DATE"
+                
+                # Busca os agendamentos já ordenados por data e depois por horário
+                query_agenda = f"""
                     SELECT 
                         a.id,
+                        a.data_agendamento,
                         a.hora_inicio,
                         c.nome AS cliente,
                         col.nome AS colaboradora,
@@ -2180,60 +2186,78 @@ else:
                     JOIN clientes c ON a.cliente_id = c.id
                     JOIN colaboradores col ON a.colaboradora_id = col.id
                     JOIN produtos p ON a.servico_id = p.id
-                    WHERE a.empresa_id = %s AND a.data_agendamento = %s
-                    ORDER BY a.hora_inicio ASC
+                    WHERE a.empresa_id = %s AND {filtro_sql}
+                    ORDER BY a.data_agendamento ASC, a.hora_inicio ASC
                 """
-                df_compromissos = carregar_dados(query_agenda, (emp_id, data_filtro))
+                df_compromissos = carregar_dados(query_agenda, (emp_id,))
                 
                 st.markdown('<hr style="margin: 5px 0px 15px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
                 
                 if not df_compromissos.empty:
-                    st.markdown(f"📌 **Compromissos para o dia {data_filtro.strftime('%d/%m/%Y')}:**")
+                    # Pegamos as datas únicas onde há atendimento para criar os Expanders
+                    datas_com_agenda = df_compromissos['data_agendamento'].unique()
                     
-                    for _, compromisso in df_compromissos.iterrows():
-                        id_agendamento = compromisso['id']
-                        hora_formatada = str(compromisso['hora_inicio'])[0:5] # Pega apenas HH:MM
-                        status_atual = compromisso['status']
+                    for data_alvo in datas_com_agenda:
+                        # Separa apenas os agendamentos deste dia específico
+                        df_dia = df_compromissos[df_compromissos['data_agendamento'] == data_alvo]
+                        qtd_atendimentos = len(df_dia)
                         
-                        # Define a cor do indicador com base no status
-                        cor_status = "🔵" if status_atual == "Agendado" else "🟢" if status_atual == "Concluído" else "🔴"
+                        # Formata a data para o padrão brasileiro de forma segura
+                        try:
+                            data_br = data_alvo.strftime('%d/%m/%Y')
+                        except:
+                            data_br = str(data_alvo)
                         
-                        # Card de atendimento compacto para o celular
-                        with st.container(border=True):
-                            st.markdown(f"{cor_status} **{hora_formatada}** — 👤 **{compromisso['cliente']}**")
-                            st.markdown(f"💇‍♀️ **Profissional:** {compromisso['colaboradora']} | 🛠️ **Serviço:** {compromisso['servico']}")
-                            st.markdown(f"💰 **Valor:** R$ {compromisso['valor']:.2f}".replace('.', ','))
+                        # Mágica de Usabilidade: Se a data do bloco for HOJE, o expander já vem aberto sozinho!
+                        from datetime import date
+                        eh_hoje = (data_br == date.today().strftime('%d/%m/%Y'))
+                        
+                        # Cria a caixinha inteligente do dia
+                        with st.expander(f"📅 {data_br} — {qtd_atendimentos} atendimento(s)", expanded=eh_hoje):
                             
-                            # Ações rápidas do agendamento
-                            if status_atual == "Agendado":
-                                c_btn1, c_btn2 = st.columns(2)
-                                if c_btn1.button("✅ Concluir", key=f"btn_concluir_{id_agendamento}", use_container_width=True):
-                                    try:
-                                        conn = conectar_banco()
-                                        cur = conn.cursor()
-                                        cur.execute("UPDATE agendamentos SET status = 'Concluído' WHERE id = %s", (id_agendamento,))
-                                        conn.commit()
-                                        conn.close()
-                                        st.success("Atendimento concluído!")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Erro: {e}")
+                            for _, compromisso in df_dia.iterrows():
+                                id_agendamento = compromisso['id']
+                                hora_formatada = str(compromisso['hora_inicio'])[0:5]
+                                status_atual = compromisso['status']
                                 
-                                if c_btn2.button("❌ Cancelar", key=f"btn_cancelar_{id_agendamento}", use_container_width=True):
-                                    try:
-                                        conn = conectar_banco()
-                                        cur = conn.cursor()
-                                        cur.execute("UPDATE agendamentos SET status = 'Cancelar' WHERE id = %s", (id_agendamento,))
-                                        conn.commit()
-                                        conn.close()
-                                        st.warning("Agendamento cancelado.")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Erro: {e}")
-                            else:
-                                st.caption(f"Status da operação: **{status_atual}**")
+                                cor_status = "🔵" if status_atual == "Agendado" else "🟢" if status_atual == "Concluído" else "🔴"
+                                
+                                # Card de atendimento
+                                with st.container(border=True):
+                                    st.markdown(f"{cor_status} **{hora_formatada}** — 👤 **{compromisso['cliente']}**")
+                                    st.markdown(f"💇‍♀️ **Profissional:** {compromisso['colaboradora']} | 🛠️ **Serviço:** {compromisso['servico']}")
+                                    st.markdown(f"💰 **Valor:** R$ {compromisso['valor']:.2f}".replace('.', ','))
+                                    
+                                    # Botões de ação (só aparecem se o status for 'Agendado')
+                                    if status_atual == "Agendado":
+                                        c_btn1, c_btn2 = st.columns(2)
+                                        if c_btn1.button("✅ Concluir", key=f"btn_concluir_{id_agendamento}", use_container_width=True):
+                                            try:
+                                                conn = conectar_banco()
+                                                cur = conn.cursor()
+                                                cur.execute("UPDATE agendamentos SET status = 'Concluído' WHERE id = %s", (id_agendamento,))
+                                                conn.commit()
+                                                conn.close()
+                                                st.success("Atendimento concluído!")
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"Erro: {e}")
+                                        
+                                        if c_btn2.button("❌ Cancelar", key=f"btn_cancelar_{id_agendamento}", use_container_width=True):
+                                            try:
+                                                conn = conectar_banco()
+                                                cur = conn.cursor()
+                                                cur.execute("UPDATE agendamentos SET status = 'Cancelado' WHERE id = %s", (id_agendamento,))
+                                                conn.commit()
+                                                conn.close()
+                                                st.warning("Agendamento cancelado.")
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"Erro: {e}")
+                                    else:
+                                        st.caption(f"Status da operação: **{status_atual}**")
                 else:
-                    st.info(f"🌴 Nenhum atendimento marcado para o dia {data_filtro.strftime('%d/%m/%Y')}.")
+                    st.info("🌴 Nenhum atendimento agendado para o período selecionado.")
 
             # ---------------------------------------------------------
             # SUB-ABA 2: MARCAR NOVO HORÁRIO (FORMULÁRIO DE CADASTRO)
