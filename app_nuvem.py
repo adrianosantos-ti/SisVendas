@@ -2232,8 +2232,10 @@ else:
                                     st.markdown(f"💰 **Valor:** R$ {compromisso['valor']:.2f}".replace('.', ','))
                                     
                                     # Botões de ação (só aparecem se o status for 'Agendado')
+                                    # Agora dividimos o espaço em 3 colunas
+                                    c_btn1, c_btn2, c_btn3 = st.columns(3)
+                                    
                                     if status_atual == "Agendado":
-                                        c_btn1, c_btn2 = st.columns(2)
                                         if c_btn1.button("✅ Concluir", key=f"btn_concluir_{id_agendamento}", use_container_width=True):
                                             try:
                                                 conn = conectar_banco()
@@ -2258,7 +2260,22 @@ else:
                                             except Exception as e:
                                                 st.error(f"Erro: {e}")
                                     else:
-                                        st.caption(f"Status da operação: **{status_atual}**")
+                                        # Se já finalizou, apenas exibe o status na primeira coluna
+                                        with c_btn1:
+                                            st.caption(f"Status da operação: **{status_atual}**")
+                                            
+                                    # O botão de Excluir fica sempre visível na terceira coluna
+                                    if c_btn3.button("🗑️ Excluir", key=f"btn_excluir_{id_agendamento}", use_container_width=True):
+                                        try:
+                                            conn = conectar_banco()
+                                            cur = conn.cursor()
+                                            cur.execute("DELETE FROM agendamentos WHERE id = %s AND empresa_id = %s", (id_agendamento, emp_id))
+                                            conn.commit()
+                                            conn.close()
+                                            st.success("Agendamento excluído!")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Erro: {e}")
                 else:
                     st.info(f"🌴 Nenhum atendimento encontrado no período de {dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')}.")
 
