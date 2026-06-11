@@ -770,8 +770,7 @@ else:
             mes_num = meses_nomes.index(mes_str) + 1
             ano_sel = int(ano_str)
             
-            # Consulta SQL: Traz as vendas e cruza com os recebimentos para descobrir o status
-            # Atenção: Ajuste os nomes das colunas de clientes e valores se necessário
+            # Consulta SQL Otimizada: Critérios exatos baseados no status da parcela, sem somar centavos
             query_app = """
                 SELECT 
                     v.codigo_venda,
@@ -779,8 +778,13 @@ else:
                     MAX(c.nome) AS "Cliente",
                     MAX(v.valor_total) AS "Valor Total (R$)",
                     CASE 
-                        WHEN COALESCE((SELECT SUM(valor_parcela) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pago'), 0) >= MAX(v.valor_total) THEN '🟢 QUITADO'
+                        -- 1. Se NÃO existe nenhuma parcela 'Pendente', significa que tudo está 'Pago'
+                        WHEN (SELECT COUNT(id) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pendente') = 0 THEN '🟢 QUITADO'
+                        
+                        -- 2. Se existe parcela 'Pendente' e a data do banco é MENOR que a data de hoje
                         WHEN (SELECT COUNT(id) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pendente' AND TO_DATE(data_vencimento, 'DD/MM/YYYY') < CURRENT_DATE) > 0 THEN '🔴 ATRASADO'
+                        
+                        -- 3. Caso contrário (Sobrou apenas parcelas no prazo)
                         ELSE '🔵 PENDENTE'
                     END AS "Status"
                 FROM vendas v
