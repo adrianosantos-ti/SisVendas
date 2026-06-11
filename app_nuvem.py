@@ -1345,12 +1345,13 @@ else:
     # ==========================================
     elif modulo == "🔄 Movimentações":
         st.markdown("### 🔄 Operações Diárias")
-        tab_venda, tab_orcamentos, tab_compra, tab_historico_compras, tab_trocas = st.tabs([
+        tab_venda, tab_orcamentos, tab_compra, tab_historico_compras, tab_trocas, tab_agenda = st.tabs([
             "🛒 Vendas", 
             "📋 Orçamentos Salvos", 
             "📥 Entrada de Mercadorias", 
             "📋 Histórico de Entradas", 
-            "🔄 Trocas e Empréstimos"
+            "🔄 Trocas e Empréstimos",
+            "📅 Agenda de Atendimentos"
         ])
         with tab_venda:
             st.subheader("🛒 Vendas")
@@ -2146,6 +2147,147 @@ else:
                     
             else:
                 st.warning("Nenhuma Consultora cadastrada no sistema. Vá em Cadastros e altere o tipo de um registro para 'Consultora'.")
+
+
+        # ==========================================
+        # ABA: AGENDA DE ATENDIMENTOS
+        # ==========================================
+        with tab_agenda:
+            st.subheader("📅 Agenda de Atendimentos")
+            
+            # Criamos duas sub-abas internas para organizar o espaço no celular
+            aba_ver_agenda, aba_novo_agendamento = st.tabs(["📱 Visualizar Agenda", "➕ Marcar Horário"])
+            
+            # ---------------------------------------------------------
+            # SUB-ABA 1: VISUALIZAR AGENDA (FORMATO CALENDÁRIO COMPACTO)
+            # ---------------------------------------------------------
+            with aba_ver_agenda:
+                # Seletor de data que funciona como o controle do calendário
+                data_filtro = st.date_input("📆 Selecione o Dia para Visualizar:", value=hoje, format="DD/MM/YYYY")
+                
+                # Busca os agendamentos do dia selecionado cruzando com Clientes, Colaboradoras e Serviços
+                query_agenda = """
+                    SELECT 
+                        a.id,
+                        a.hora_inicio,
+                        c.nome AS cliente,
+                        col.nome AS colaboradora,
+                        p.nome AS servico,
+                        p.valor,
+                        a.status
+                    FROM agendamentos a
+                    JOIN clientes c ON a.cliente_id = c.id
+                    JOIN colaboradores col ON a.colaboradora_id = col.id
+                    JOIN produtos p ON a.servico_id = p.id
+                    WHERE a.empresa_id = %s AND a.data_agendamento = %s
+                    ORDER BY a.hora_inicio ASC
+                """
+                df_compromissos = carregar_dados(query_agenda, (emp_id, data_filtro))
+                
+                st.markdown('<hr style="margin: 5px 0px 15px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
+                
+                if not df_compromissos.empty:
+                    st.markdown(f"📌 **Compromissos para o dia {data_filtro.strftime('%d/%m/%Y')}:**")
+                    
+                    for _, compromisso in df_compromissos.iterrows():
+                        id_agendamento = compromisso['id']
+                        hora_formatada = str(compromisso['hora_inicio'])[0:5] # Pega apenas HH:MM
+                        status_atual = compromisso['status']
+                        
+                        # Define a cor do indicador com base no status
+                        cor_status = "🔵" if status_atual == "Agendado" else "🟢" if status_atual == "Concluído" else "🔴"
+                        
+                        # Card de atendimento compacto para o celular
+                        with st.container(border=True):
+                            st.markdown(f"{cor_status} **{hora_formatada}** — 👤 **{compromisso['cliente']}**")
+                            st.markdown(f"💇‍♀️ **Profissional:** {compromisso['colaboradora']} | 🛠️ **Serviço:** {compromisso['servico']}")
+                            st.markdown(f"💰 **Valor:** R$ {compromisso['valor']:.2f}".replace('.', ','))
+                            
+                            # Ações rápidas do agendamento
+                            if status_atual == "Agendado":
+                                c_btn1, c_btn2 = st.columns(2)
+                                if c_btn1.button("✅ Concluir", key=f"btn_concluir_{id_agendamento}", use_container_width=True):
+                                    try:
+                                        conn = conectar_banco()
+                                        cur = conn.cursor()
+                                        cur.execute("UPDATE agendamentos SET status = 'Concluído' WHERE id = %s", (id_agendamento,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("Atendimento concluído!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Erro: {e}")
+                                
+                                if c_btn2.button("❌ Cancelar", key=f"btn_cancelar_{id_agendamento}", use_container_width=True):
+                                    try:
+                                        conn = conectar_banco()
+                                        cur = conn.cursor()
+                                        cur.execute("UPDATE agendamentos SET status = 'Cancelar' WHERE id = %s", (id_agendamento,))
+                                        conn.commit()
+                                        conn.close()
+                                        st.warning("Agendamento cancelado.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Erro: {e}")
+                            else:
+                                st.caption(f"Status da operação: **{status_atual}**")
+                else:
+                    st.info(f"🌴 Nenhum atendimento marcado para o dia {data_filtro.strftime('%d/%m/%Y')}.")
+
+            # ---------------------------------------------------------
+            # SUB-ABA 2: MARCAR NOVO HORÁRIO (FORMULÁRIO DE CADASTRO)
+            # ---------------------------------------------------------
+            with aba_novo_agendamento:
+                st.markdown("### 📝 Agendar Novo Serviço")
+                
+                # Carrega as listas necessárias do banco de dados
+                df_cli_ag = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                df_col_ag = carregar_dados("SELECT id, nome FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                df_ser_ag = carregar_dados("SELECT id, nome, valor FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+                
+                if not df_cli_ag.empty and not df_col_ag.empty and not df_ser_ag.empty:
+                    with st.form("form_novo_agendamento", clear_on_submit=True):
+                        
+                        sel_cliente = st.selectbox("👤 Selecione a Cliente:", options=df_cli_ag['nome'].tolist())
+                        sel_colaboradora = st.selectbox("💇‍♀️ Escolha a Profissional:", options=df_col_ag['nome'].tolist())
+                        
+                        # Formata o serviço mostrando o preço padrão ao lado
+                        df_ser_ag['display'] = df_ser_ag.apply(lambda x: f"{x['nome']} (R$ {x['valor']:.2f})", axis=1)
+                        sel_servico = st.selectbox("🛠️ Selecione o Serviço:", options=df_ser_ag['display'].tolist())
+                        
+                        c_data, c_hora = st.columns(2)
+                        data_escolhida = c_data.date_input("📅 Data:", value=hoje, format="DD/MM/YYYY")
+                        
+                        # Lista de horários padrão para facilitar o clique no celular
+                        lista_horarios = [f"{h:02d}:{m:02d}" for h in range(7, 21) for m in (0, 30)]
+                        hora_escolhida = c_hora.selectbox("⏰ Horário de Início:", options=lista_horarios, index=4) # Inicia às 09:00 por padrão
+                        
+                        obs_ag = st.text_input("📝 Alguma observação? (Opcional)")
+                        
+                        if st.form_submit_button("🗓️ Confirmar Agendamento", type="primary", use_container_width=True):
+                            id_cli_ag = int(df_cli_ag[df_cli_ag['nome'] == sel_cliente].iloc[0]['id'])
+                            id_col_ag = int(df_col_ag[df_col_ag['nome'] == sel_colaboradora].iloc[0]['id'])
+                            
+                            idx_ser = df_ser_ag['display'].tolist().index(sel_servico)
+                            id_ser_ag = int(df_ser_ag.iloc[idx_ser]['id'])
+                            
+                            try:
+                                conn = conectar_banco()
+                                cur = conn.cursor()
+                                cur.execute("""
+                                    INSERT INTO agendamentos (empresa_id, cliente_id, colaboradora_id, servico_id, data_agendamento, hora_inicio, observacao)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                """, (emp_id, id_cli_ag, id_col_ag, id_ser_ag, data_escolhida, hora_escolhida, obs_ag))
+                                conn.commit()
+                                conn.close()
+                                
+                                st.success("🎯 Horário reservado com sucesso!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro ao salvar agendamento: {e}")
+                                if 'conn' in locals(): conn.close()
+                else:
+                    st.warning("⚠️ Para usar a agenda, certifique-se de ter Clientes, Colaboradoras e Serviços (tipo='S') cadastrados no sistema.")  
     
     # ==========================================
     # MÓDULO 4: FINANCEIRO (Contas a Receber e Pagar COMPLETOS)
