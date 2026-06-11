@@ -2224,7 +2224,9 @@ else:
                             df_filtrado = df_p[df_p['Nº Venda'].astype(int) == int(cod_venda_sel)]
                         
                         if not df_filtrado.empty:
-                            st.markdown("---")
+                            # Linha divisória em HTML com as margens (espaçamentos) espremidas
+                            st.markdown('<hr style="margin: 5px 0px 10px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
+                            
                             # Campo de data único no topo do painel
                             data_pag_real = st.date_input("📅 Data do Recebimento:", value=hoje, format="DD/MM/YYYY")
                             
