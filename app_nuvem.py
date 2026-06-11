@@ -2215,7 +2215,7 @@ else:
                     if filtro_col != "Todos":
                         df_compromissos = df_compromissos[df_compromissos['colaboradora'] == filtro_col]
                 
-                st.markdown('<hr style="margin: 5px 0px 15px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True
+                st.markdown('<hr style="margin: 5px 0px 15px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
                 
                 if not df_compromissos.empty:
                     # Pegamos as datas únicas onde há atendimento para criar os Expanders
