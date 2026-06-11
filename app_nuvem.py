@@ -2160,19 +2160,32 @@ else:
             aba_ver_agenda, aba_novo_agendamento = st.tabs(["📱 Visualizar Agenda", "➕ Marcar Horário"])
             
             # ---------------------------------------------------------
-            # SUB-ABA 1: VISUALIZAR AGENDA (TIMELINE COM FILTRO DE DATAS)
+            # SUB-ABA 1: VISUALIZAR AGENDA (TIMELINE COM FILTROS AVANÇADOS)
             # ---------------------------------------------------------
             with aba_ver_agenda:
                 from datetime import date, timedelta
                 hoje = date.today()
                 
-                # Controle por período (De / Até) lado a lado
-                st.markdown("**Filtre o período dos atendimentos:**")
-                c_dt1, c_dt2 = st.columns(2)
-                dt_inicio = c_dt1.date_input("De:", value=hoje, format="DD/MM/YYYY")
-                dt_fim = c_dt2.date_input("Até:", value=hoje + timedelta(days=7), format="DD/MM/YYYY")
+                st.markdown("**🔍 Filtros de Busca:**")
                 
-                # Busca os agendamentos respeitando o intervalo de datas escolhido
+                # Primeira linha de filtros: Datas (Espremedinhas em 2 colunas)
+                c_dt1, c_dt2 = st.columns(2)
+                dt_inicio = c_dt1.date_input("📅 De:", value=hoje, format="DD/MM/YYYY")
+                dt_fim = c_dt2.date_input("📅 Até:", value=hoje + timedelta(days=7), format="DD/MM/YYYY")
+                
+                # Busca as listas de clientes e colaboradoras no banco para preencher os seletores
+                df_cli_filtro = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                df_col_filtro = carregar_dados("SELECT id, nome FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                
+                lista_clientes = ["Todos"] + df_cli_filtro['nome'].tolist() if not df_cli_filtro.empty else ["Todos"]
+                lista_colaboradoras = ["Todos"] + df_col_filtro['nome'].tolist() if not df_col_filtro.empty else ["Todos"]
+                
+                # Segunda linha de filtros: Pessoas
+                c_pes1, c_pes2 = st.columns(2)
+                filtro_cli = c_pes1.selectbox("👤 Cliente:", options=lista_clientes)
+                filtro_col = c_pes2.selectbox("💇‍♀️ Profissional:", options=lista_colaboradoras)
+                
+                # Busca TODOS os agendamentos do período selecionado
                 query_agenda = """
                     SELECT 
                         a.id,
@@ -2192,10 +2205,17 @@ else:
                       AND a.data_agendamento <= %s
                     ORDER BY a.data_agendamento ASC, a.hora_inicio ASC
                 """
-                # Passamos as duas datas diretamente para o banco de dados
                 df_compromissos = carregar_dados(query_agenda, (emp_id, dt_inicio, dt_fim))
                 
-                st.markdown('<hr style="margin: 5px 0px 15px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
+                # MÁGICA DOS NOVOS FILTROS: Corta o DataFrame se você tiver selecionado alguém específico
+                if not df_compromissos.empty:
+                    if filtro_cli != "Todos":
+                        df_compromissos = df_compromissos[df_compromissos['cliente'] == filtro_cli]
+                        
+                    if filtro_col != "Todos":
+                        df_compromissos = df_compromissos[df_compromissos['colaboradora'] == filtro_col]
+                
+                st.markdown('<hr style="margin: 5px 0px 15px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True
                 
                 if not df_compromissos.empty:
                     # Pegamos as datas únicas onde há atendimento para criar os Expanders
