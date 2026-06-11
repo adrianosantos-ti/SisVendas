@@ -2339,15 +2339,36 @@ else:
                             try:
                                 conn = conectar_banco()
                                 cur = conn.cursor()
-                                cur.execute("""
-                                    INSERT INTO agendamentos (empresa_id, cliente_id, colaboradora_id, servico_id, data_agendamento, hora_inicio, observacao)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                """, (emp_id, id_cli_ag, id_col_ag, id_ser_ag, data_escolhida, hora_escolhida, obs_ag))
-                                conn.commit()
-                                conn.close()
                                 
-                                st.success("🎯 Horário reservado com sucesso!")
-                                st.rerun()
+                                # 🔍 O GUARDIÃO: Verifica se a profissional já está ocupada nesse exato momento
+                                query_verificar_conflito = """
+                                    SELECT id 
+                                    FROM agendamentos 
+                                    WHERE empresa_id = %s 
+                                      AND colaboradora_id = %s 
+                                      AND data_agendamento = %s 
+                                      AND hora_inicio = %s
+                                      AND status != 'Cancelado'
+                                """
+                                cur.execute(query_verificar_conflito, (emp_id, id_col_ag, data_escolhida, hora_escolhida))
+                                conflito = cur.fetchone()
+                                
+                                if conflito:
+                                    # Se encontrou algum registro, barra o agendamento e avisa na tela
+                                    st.error(f"⚠️ **Conflito de Agenda!** {sel_colaboradora} já possui um compromisso marcado para o dia {data_escolhida.strftime('%d/%m/%Y')} às {hora_escolhida}.")
+                                    conn.close()
+                                else:
+                                    # Se o caminho estiver livre, realiza o cadastro normalmente
+                                    cur.execute("""
+                                        INSERT INTO agendamentos (empresa_id, cliente_id, colaboradora_id, servico_id, data_agendamento, hora_inicio, observacao)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                    """, (emp_id, id_cli_ag, id_col_ag, id_ser_ag, data_escolhida, hora_escolhida, obs_ag))
+                                    conn.commit()
+                                    conn.close()
+                                    
+                                    st.success("🎯 Horário reservado com sucesso!")
+                                    st.rerun()
+                                    
                             except Exception as e:
                                 st.error(f"Erro ao salvar agendamento: {e}")
                                 if 'conn' in locals(): conn.close()
