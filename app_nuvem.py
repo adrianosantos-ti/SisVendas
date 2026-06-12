@@ -396,6 +396,10 @@ else:
             p_dia = hoje.replace(day=1)
             d_fim = p_dia - timedelta(days=1)
             d_ini = d_fim.replace(day=1)
+        elif per_sel == "Todo o Período":
+            # Joga a data inicial bem para o passado e a final bem para o futuro
+            d_ini = date(2000, 1, 1)
+            d_fim = date(2099, 12, 31)
         elif per_sel == "Personalizado":
             c1, c2 = st.columns(2)
             d_ini = c1.date_input("Início", hoje - timedelta(days=30))
@@ -450,8 +454,11 @@ else:
         # --- ABA 2: CRM E ANIVERSARIANTES ---
         with aba_crm:
             st.markdown("### 🎂 Aniversariantes do Período")
-            st.caption(f"Exibindo clientes que fazem aniversário entre **{d_ini.strftime('%d/%m/%Y')}** e **{d_fim.strftime('%d/%m/%Y')}**.")
-            
+            if per_sel == "Todo o Período":
+                st.caption("Exibindo **todos** os clientes que possuem data de nascimento cadastrada.")
+            else:
+                st.caption(f"Exibindo clientes que fazem aniversário entre **{d_ini.strftime('%d/%m/%Y')}** e **{d_fim.strftime('%d/%m/%Y')}**.")
+                        
             query_cli = "SELECT nome, telefone, data_nascimento, tipo FROM clientes WHERE empresa_id = %s"
             df_cli = carregar_dados(query_cli, (emp_id,))
             
