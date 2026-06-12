@@ -368,68 +368,143 @@ else:
     # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
     # ==========================================
     if modulo == "📊 Análises":
-        st.markdown("### 📊 Gestão e Performance")
-        # 1. Adicionamos a aba "📱 Visão App" aqui na lista
-        aba_dash, aba_hist, aba_alertas, aba_app = st.tabs(["Analise Vendas", "Histórico de Movimentação", "🚨 Alertas", "📱 Visão App"])
+        st.markdown("### 📊 Gestão e Performance do Apprimory")
         
+        # ==========================================
+        # 1. FILTRO GLOBAL (Controla todas as abas)
+        # ==========================================
+        st.subheader("🔍 Período de Análise")
+        op_per = ["Mês Atual", "Hoje", "Últimos 7 Dias", "Últimos 15 Dias", "Últimos 30 Dias", "Mês Anterior", "Todo o Período", "Personalizado"]
+        per_sel = st.selectbox("Filtrar:", op_per)
+        
+        from datetime import date, timedelta
+        import pandas as pd
+        
+        hoje = date.today()
+        d_ini, d_fim = None, None
+        
+        if per_sel == "Hoje": d_ini, d_fim = hoje, hoje
+        elif per_sel == "Últimos 7 Dias": d_ini, d_fim = hoje - timedelta(days=7), hoje
+        elif per_sel == "Últimos 15 Dias": d_ini, d_fim = hoje - timedelta(days=15), hoje
+        elif per_sel == "Últimos 30 Dias": d_ini, d_fim = hoje - timedelta(days=30), hoje
+        elif per_sel == "Mês Atual": d_ini, d_fim = hoje.replace(day=1), hoje
+        elif per_sel == "Mês Anterior":
+            p_dia = hoje.replace(day=1)
+            d_fim = p_dia - timedelta(days=1)
+            d_ini = d_fim.replace(day=1)
+        elif per_sel == "Personalizado":
+            c1, c2 = st.columns(2)
+            d_ini = c1.date_input("Início", hoje - timedelta(days=30))
+            d_fim = c2.date_input("Fim", hoje)
+
+        # ==========================================
+        # 2. ABAS DE ANÁLISE
+        # ==========================================
+        aba_dash, aba_crm, aba_hist, aba_alertas, aba_app = st.tabs(["📈 Análise de Vendas", "🎯 CRM e Clientes", "📋 Histórico", "🚨 Alertas", "📱 Visão App"])
+        
+        # --- ABA 1: DASHBOARD DE VENDAS (Seu código original adaptado) ---
         with aba_dash:
-            # 1. CORREÇÃO SQL: Puxando a coluna 'codigo_venda' da sua tabela
             query_dash = "SELECT v.codigo_venda, v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.empresa_id = %s"
             df_dash = carregar_dados(query_dash, (emp_id,))
             
-            if not df_dash.empty:
+            if not df_dash.empty and d_ini and d_fim:
                 df_dash['Data_Obj'] = pd.to_datetime(df_dash['data_venda'], format='%d/%m/%Y', errors='coerce').dt.date
-                st.subheader("🔍 Período de Análise")
-                op_per = ["Mês Atual", "Hoje", "Últimos 7 Dias", "Últimos 15 Dias", "Últimos 30 Dias", "Mês Anterior", "Todo o Período", "Personalizado"]
-                per_sel = st.selectbox("Filtrar:", op_per)
-                hoje = date.today()
-                d_ini, d_fim = None, None
                 
-                if per_sel == "Hoje": d_ini, d_fim = hoje, hoje
-                elif per_sel == "Últimos 7 Dias": d_ini, d_fim = hoje - timedelta(days=7), hoje
-                elif per_sel == "Últimos 15 Dias": d_ini, d_fim = hoje - timedelta(days=15), hoje
-                elif per_sel == "Últimos 30 Dias": d_ini, d_fim = hoje - timedelta(days=30), hoje
-                elif per_sel == "Mês Atual": d_ini, d_fim = hoje.replace(day=1), hoje
-                elif per_sel == "Mês Anterior":
-                    p_dia = hoje.replace(day=1)
-                    d_fim = p_dia - timedelta(days=1)
-                    d_ini = d_fim.replace(day=1)
-                elif per_sel == "Personalizado":
-                    c1, c2 = st.columns(2)
-                    d_ini = c1.date_input("Início", hoje - timedelta(days=30))
-                    d_fim = c2.date_input("Fim", hoje)
-                
-                if d_ini and d_fim:
-                    df_dash = df_dash[(df_dash['Data_Obj'] >= d_ini) & (df_dash['Data_Obj'] <= d_fim)]
+                # Aplica o filtro global
+                df_dash = df_dash[(df_dash['Data_Obj'] >= d_ini) & (df_dash['Data_Obj'] <= d_fim)]
                 
                 if not df_dash.empty:
                     col1, col2, col3 = st.columns(3)
                     fat = df_dash['valor_total'].sum()
-                    
-                    # 2. A MÁGICA ACONTECE AQUI: Conta apenas os códigos de venda únicos
                     qtd_vendas_reais = df_dash['codigo_venda'].nunique()
                     ticket_medio = fat / qtd_vendas_reais if qtd_vendas_reais > 0 else 0
                     
                     col1.metric("Faturamento", f"R$ {fat:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
-                    col2.metric("Vendas", qtd_vendas_reais)
+                    col2.metric("Vendas Fechadas", qtd_vendas_reais)
                     col3.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
                     
+                    st.markdown("---")
+                    import plotly.express as px
+                    
                     df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
-                    st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Vendas por Dia", template="plotly_white"), use_container_width=True)
+                    st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
                     
                     c1, c2 = st.columns(2)
                     df_top = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False).head(5).sort_values('quantidade', ascending=True)
                     df_top['produto_curto'] = df_top['produto'].apply(lambda x: (str(x)[:22] + '...') if len(str(x)) > 22 else str(x))
-                    fig_top = px.bar(df_top, x='quantidade', y='produto', orientation='h', text='quantidade', color_discrete_sequence=['#0068c9'], title="Top 5 Produtos")
+                    fig_top = px.bar(df_top, x='quantidade', y='produto', orientation='h', text='quantidade', color_discrete_sequence=['#0068c9'], title="Top 5 Produtos Mais Vendidos")
                     fig_top.update_yaxes(tickmode='array', tickvals=df_top['produto'], ticktext=df_top['produto_curto'])
                     c1.plotly_chart(fig_top, use_container_width=True)
                     
                     fig_cat = px.pie(df_dash.groupby('categoria')['valor_total'].sum().reset_index(), values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria", color_discrete_sequence=px.colors.qualitative.Bold)
                     c2.plotly_chart(fig_cat, use_container_width=True)
                 else: 
-                    st.warning("Sem dados no período")
+                    st.warning(f"Sem vendas registradas no período de {d_ini.strftime('%d/%m/%Y')} a {d_fim.strftime('%d/%m/%Y')}.")
             else: 
                 st.info("Faça vendas para ver gráficos.")
+
+        # --- ABA 2: CRM E ANIVERSARIANTES ---
+        with aba_crm:
+            st.markdown("### 🎂 Aniversariantes do Período")
+            st.caption(f"Exibindo clientes que fazem aniversário entre **{d_ini.strftime('%d/%m/%Y')}** e **{d_fim.strftime('%d/%m/%Y')}**.")
+            
+            query_cli = "SELECT nome, telefone, data_nascimento, tipo FROM clientes WHERE empresa_id = %s"
+            df_cli = carregar_dados(query_cli, (emp_id,))
+            
+            if not df_cli.empty and d_ini and d_fim:
+                df_cli['Data_Nasc_Obj'] = pd.to_datetime(df_cli['data_nascimento'], format='%d/%m/%Y', errors='coerce').dt.date
+                
+                # Função inteligente para checar se o aniversário cai no período selecionado (ignorando o ano de nascimento)
+                def checar_niver(nasc_date):
+                    if pd.isnull(nasc_date): return False
+                    try: b1 = date(d_ini.year, nasc_date.month, nasc_date.day)
+                    except ValueError: b1 = date(d_ini.year, 3, 1) # Tratamento para anos bissextos
+                    
+                    try: b2 = date(d_fim.year, nasc_date.month, nasc_date.day)
+                    except ValueError: b2 = date(d_fim.year, 3, 1)
+                    
+                    return (d_ini <= b1 <= d_fim) or (d_ini <= b2 <= d_fim)
+
+                df_cli['Faz_Niver'] = df_cli['Data_Nasc_Obj'].apply(checar_niver)
+                df_nivers = df_cli[df_cli['Faz_Niver']].copy()
+                
+                if not df_nivers.empty:
+                    # Formata para mostrar apenas Dia/Mês na tela
+                    df_nivers['Aniversário'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%d/%m'))
+                    df_nivers = df_nivers.rename(columns={'nome': 'Cliente', 'telefone': 'Contato', 'tipo': 'Categoria'})
+                    
+                    st.dataframe(
+                        df_nivers[['Cliente', 'Aniversário', 'Contato', 'Categoria']].sort_values('Aniversário'), 
+                        hide_index=True, 
+                        use_container_width=True
+                    )
+                else:
+                    st.info("Nenhum cliente cadastrado faz aniversário neste intervalo de datas.")
+            else:
+                st.info("Nenhum cliente com data de nascimento cadastrada.")
+                
+            st.markdown("---")
+            
+            # --- RANKING DE ENGAJAMENTO (Mesmo filtro de data) ---
+            st.markdown("### 🏆 Top Clientes (Maior LTV no Período)")
+            query_crm_vendas = """
+                SELECT c.nome AS "Cliente", COUNT(v.codigo_venda) AS "Compras", SUM(v.valor_total) AS "Total Gasto (R$)"
+                FROM vendas v
+                JOIN clientes c ON v.cliente_id = c.id
+                WHERE v.empresa_id = %s 
+                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') >= %s 
+                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') <= %s
+                GROUP BY c.id, c.nome
+                ORDER BY "Total Gasto (R$)" DESC
+                LIMIT 5
+            """
+            df_ranking_crm = carregar_dados(query_crm_vendas, (emp_id, d_ini, d_fim))
+            
+            if not df_ranking_crm.empty:
+                df_ranking_crm['Total Gasto (R$)'] = df_ranking_crm['Total Gasto (R$)'].apply(lambda x: f"R$ {x:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
+                st.dataframe(df_ranking_crm, hide_index=True, use_container_width=True)
+            else:
+                st.warning("Nenhuma venda para gerar o ranking neste período.")
 
         with aba_hist:
             st.header("📜 Histórico Geral e Faturamento")
