@@ -495,7 +495,7 @@ else:
                 SELECT 
                     c.nome AS "Cliente", 
                     COUNT(DISTINCT v.codigo_venda) AS "Qtd. Compras",
-                    SUM(v.quantidade) AS "Peças Levadas",
+                    SUM(v.quantidade) AS "Produtos comprados",
                     SUM(v.valor_total) AS "Total Gasto (R$)"
                 FROM vendas v
                 JOIN clientes c ON v.cliente_id = c.id
