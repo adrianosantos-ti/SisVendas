@@ -492,7 +492,11 @@ else:
             # --- RANKING DE ENGAJAMENTO (Mesmo filtro de data) ---
             st.markdown("### 🏆 Top Clientes (Maior LTV no Período)")
             query_crm_vendas = """
-                SELECT c.nome AS "Cliente", COUNT(v.codigo_venda) AS "Compras", SUM(v.valor_total) AS "Total Gasto (R$)"
+                SELECT 
+                    c.nome AS "Cliente", 
+                    COUNT(DISTINCT v.codigo_venda) AS "Qtd. Compras",
+                    SUM(v.quantidade) AS "Peças Levadas",
+                    SUM(v.valor_total) AS "Total Gasto (R$)"
                 FROM vendas v
                 JOIN clientes c ON v.cliente_id = c.id
                 WHERE v.empresa_id = %s 
