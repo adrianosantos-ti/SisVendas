@@ -387,7 +387,11 @@ else:
         elif per_sel == "Últimos 7 Dias": d_ini, d_fim = hoje - timedelta(days=7), hoje
         elif per_sel == "Últimos 15 Dias": d_ini, d_fim = hoje - timedelta(days=15), hoje
         elif per_sel == "Últimos 30 Dias": d_ini, d_fim = hoje - timedelta(days=30), hoje
-        elif per_sel == "Mês Atual": d_ini, d_fim = hoje.replace(day=1), hoje
+        elif per_sel == "Mês Atual": 
+            import calendar
+            d_ini = hoje.replace(day=1)
+            ultimo_dia_mes = calendar.monthrange(hoje.year, hoje.month)[1]
+            d_fim = hoje.replace(day=ultimo_dia_mes)
         elif per_sel == "Mês Anterior":
             p_dia = hoje.replace(day=1)
             d_fim = p_dia - timedelta(days=1)
