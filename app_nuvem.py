@@ -402,8 +402,8 @@ else:
             d_fim = date(2099, 12, 31)
         elif per_sel == "Personalizado":
             c1, c2 = st.columns(2)
-            d_ini = c1.date_input("Início", hoje - timedelta(days=30))
-            d_fim = c2.date_input("Fim", hoje)
+            d_ini = c1.date_input("Início", value=hoje - timedelta(days=30), format="DD/MM/YYYY")
+            d_fim = c2.date_input("Fim", value=hoje, format="DD/MM/YYYY")
 
         # ==========================================
         # 2. ABAS DE ANÁLISE
