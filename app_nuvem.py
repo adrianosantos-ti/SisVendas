@@ -518,8 +518,19 @@ else:
                             if len(num) <= 11:
                                 num = "55" + num
                             
-                            # Mensagem muito mais humana, especial e focada na cliente
-                            msg = f"Olá, {nome_cliente}! 🎉 Hoje é o seu dia! Passando aqui para te desejar um Feliz Aniversário repleto de sorrisos, saúde e conquistas. Que o seu novo ciclo seja incrível e cheio de momentos especiais! 🥳✨"
+                            # A sua mensagem de aniversário personalizada
+                            msg = f"""Olá, {nome_cliente}!
+                            
+Hoje é um dia especial, o seu aniversário! 🥳
+
+E a gente não poderia deixar essa data passar em branco. 💛
+
+Desejamos que o seu novo ciclo seja leve, feliz e cheio de motivos para sorrir. Que não faltem saúde, conquistas, momentos inesquecíveis e pessoas que façam seus dias ainda mais especiais.
+
+Mais do que celebrar uma data, queremos celebrar você e agradecer por fazer parte da nossa história. 
+Aproveite cada momento do seu dia, receba todo o carinho que merece e celebre muito!
+
+Feliz aniversário! 🥳✨"""
                             
                             from urllib.parse import quote
                             return f"https://api.whatsapp.com/send?phone={num}&text={quote(msg)}"
