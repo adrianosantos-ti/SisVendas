@@ -499,24 +499,48 @@ else:
                 df_nivers = df_cli[df_cli['Faz_Niver']].copy()
                 
                 if not df_nivers.empty:
-                    # Ordenação inteligente: quem não tem data vai lá para o final da tabela ('99-99')
+                    # Ordenação inteligente
                     df_nivers['Ordem_Cronologica'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%m-%d') if pd.notnull(x) else '99-99')
                     df_nivers = df_nivers.sort_values('Ordem_Cronologica')
                     
-                    # Formata a exibição: se for nulo, escreve "Não informado"
+                    # Formata a exibição do Aniversário
                     df_nivers['Aniversário'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%d/%m') if pd.notnull(x) else "⚠️ Não informado")
+                    
+                    # 🟢 MÁGICA DO WHATSAPP: Cria o link de mensagem direto
+                    def gerar_link_wpp(telefone, nome_cliente):
+                        if pd.isnull(telefone) or str(telefone).strip() == "":
+                            return None
+                        # Limpa deixando apenas números
+                        num = ''.join(filter(str.isdigit, str(telefone)))
+                        if len(num) >= 10:
+                            # Se for um número local do Brasil sem o código do país, adiciona o 55
+                            if len(num) <= 11:
+                                num = "55" + num
+                            
+                            # Mensagem padrão (você pode alterar o texto aqui)
+                            msg = f"Olá, {nome_cliente}! A equipe Apprimory deseja um Feliz Aniversário! 🎉 Saúde e muito sucesso!"
+                            
+                            from urllib.parse import quote
+                            return f"https://api.whatsapp.com/send?phone={num}&text={quote(msg)}"
+                        return None
+                    
+                    df_nivers['Ação'] = df_nivers.apply(lambda row: gerar_link_wpp(row['telefone'], row['nome']), axis=1)
                     df_nivers = df_nivers.rename(columns={'nome': 'Cliente', 'telefone': 'Contato', 'tipo': 'Categoria'})
                     
-                    # Exibe a listagem completa na tela do dispositivo
+                    # Exibe a listagem com a coluna especial de Link
                     st.dataframe(
-                        df_nivers[['Cliente', 'Aniversário', 'Contato', 'Categoria']], 
+                        df_nivers[['Cliente', 'Aniversário', 'Contato', 'Categoria', 'Ação']],
+                        column_config={
+                            "Ação": st.column_config.LinkColumn(
+                                "📱 Enviar", 
+                                display_text="Mensagem" # O texto que aparece clicável na tabela
+                            )
+                        },
                         hide_index=True, 
                         use_container_width=True
                     )
                 else:
                     st.info("Nenhum cliente atende aos critérios do filtro selecionado.")
-            else:
-                st.info("Nenhum cliente cadastrado na base de dados.")
                 
             st.markdown("---")
             
