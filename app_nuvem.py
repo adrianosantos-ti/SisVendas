@@ -525,22 +525,22 @@ else:
                         return None
                     
                     df_nivers['Ação'] = df_nivers.apply(lambda row: gerar_link_wpp(row['telefone'], row['nome']), axis=1)
-                    df_nivers = df_nivers.rename(columns={'nome': 'Cliente', 'telefone': 'Contato', 'tipo': 'Categoria'})
                     
-                    # Exibe a listagem com a coluna especial de Link
+                    # Removemos a renomeação da categoria aqui
+                    df_nivers = df_nivers.rename(columns={'nome': 'Cliente', 'telefone': 'Contato'})
+                    
+                    # Exibe a listagem sem a coluna 'Categoria'
                     st.dataframe(
-                        df_nivers[['Cliente', 'Aniversário', 'Contato', 'Categoria', 'Ação']],
+                        df_nivers[['Cliente', 'Aniversário', 'Contato', 'Ação']],
                         column_config={
                             "Ação": st.column_config.LinkColumn(
                                 "📱 Enviar", 
-                                display_text="Mensagem" # O texto que aparece clicável na tabela
+                                display_text="Mensagem" 
                             )
                         },
                         hide_index=True, 
                         use_container_width=True
                     )
-                else:
-                    st.info("Nenhum cliente atende aos critérios do filtro selecionado.")
                 
             st.markdown("---")
             
