@@ -510,15 +510,16 @@ else:
                     def gerar_link_wpp(telefone, nome_cliente):
                         if pd.isnull(telefone) or str(telefone).strip() == "":
                             return None
+                        
                         # Limpa deixando apenas números
                         num = ''.join(filter(str.isdigit, str(telefone)))
                         if len(num) >= 10:
-                            # Se for um número local do Brasil sem o código do país, adiciona o 55
+                            # Adiciona o DDI do Brasil se não estiver presente
                             if len(num) <= 11:
                                 num = "55" + num
                             
-                            # Mensagem padrão (você pode alterar o texto aqui)
-                            msg = f"Olá, {nome_cliente}! A equipe Apprimory deseja um Feliz Aniversário! 🎉 Saúde e muito sucesso!"
+                            # Mensagem muito mais humana, especial e focada na cliente
+                            msg = f"Olá, {nome_cliente}! 🎉 Hoje é o seu dia! Passando aqui para te desejar um Feliz Aniversário repleto de sorrisos, saúde e conquistas. Que o seu novo ciclo seja incrível e cheio de momentos especiais! 🥳✨"
                             
                             from urllib.parse import quote
                             return f"https://api.whatsapp.com/send?phone={num}&text={quote(msg)}"
