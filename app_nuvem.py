@@ -455,7 +455,7 @@ else:
         with aba_crm:
             st.markdown("### 🎂 Aniversariantes do Período")
             if per_sel == "Todo o Período":
-                st.caption("Exibindo **todos** os clientes que possuem data de nascimento cadastrada.")
+                st.caption("Exibindo **todos** os clientes cadastrados no Apprimory.")
             else:
                 st.caption(f"Exibindo clientes que fazem aniversário entre **{d_ini.strftime('%d/%m/%Y')}** e **{d_fim.strftime('%d/%m/%Y')}**.")
                         
@@ -463,52 +463,60 @@ else:
             df_cli = carregar_dados(query_cli, (emp_id,))
             
             if not df_cli.empty and d_ini and d_fim:
-                # Converte os textos do banco para formato de data nativo do Python
+                # Conversão flexível: tenta o padrão brasileiro, se falhar mantém o formato nativo do banco
                 df_cli['Data_Nasc_Obj'] = pd.to_datetime(df_cli['data_nascimento'], format='%d/%m/%Y', errors='coerce').dt.date
                 
-                # Nova Função Inteligente e Blindada: ignora o ano e compara apenas Mês-Dia
+                # Tratamento secundário para garantir que nenhuma variação de formato (como YYYY-MM-DD) seja perdida
+                linhas_nulas = df_cli['Data_Nasc_Obj'].isnull() & df_cli['data_nascimento'].notnull() & (df_cli['data_nascimento'] != '')
+                if linhas_nulas.any():
+                    df_cli.loc[linhas_nulas, 'Data_Nasc_Obj'] = pd.to_datetime(df_cli.loc[linhas_nulas, 'data_nascimento'], errors='coerce').dt.date
+                
+                # FUNÇÃO CORRIGIDA: Regra global no topo para não esconder ninguém sem data
                 def checar_niver(nasc_date):
-                    if pd.isnull(nasc_date): return False
+                    # SE FOR TODO O PERÍODO, LIBERA GERAL (Mesmo os que estão sem data preenchida)
+                    if per_sel == "Todo o Período": 
+                        return True
                     
-                    # Se o filtro global for "Todo o Período", exibe todo mundo que tem data válida
-                    if per_sel == "Todo o Período": return True
+                    # Para outros filtros específicos (Ex: Mês Atual), se não tem data, não entra
+                    if pd.isnull(nasc_date): 
+                        return False
                     
-                    # Recorta apenas o "Mês-Dia" do nascimento (ex: "06-01")
                     nasc_md = nasc_date.strftime("%m-%d")
                     
-                    # Se o intervalo de busca for maior ou igual a um ano, todos entram
                     if (d_fim - d_ini).days >= 365:
                         return True
                         
-                    # Monta uma lista com todos os dias "Mês-Dia" contidos dentro do período do filtro
                     dias_do_periodo = []
                     total_dias = (d_fim - d_ini).days + 1
                     for i in range(total_dias):
                         dia_corrente = d_ini + timedelta(days=i)
                         dias_do_periodo.append(dia_corrente.strftime("%m-%d"))
                     
-                    # Valida se o dia da cliente está contido no intervalo do filtro
                     return nasc_md in dias_do_periodo
 
-                # Aplica a validação linha por linha
+                # Aplica a nova lógica
                 df_cli['Faz_Niver'] = df_cli['Data_Nasc_Obj'].apply(checar_niver)
                 df_nivers = df_cli[df_cli['Faz_Niver']].copy()
                 
                 if not df_nivers.empty:
-                    # Formata visualmente para a tabela do Streamlit mostrar apenas Dia/Mês
-                    df_nivers['Aniversário'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%d/%m'))
+                    # Ordenação inteligente: quem não tem data vai lá para o final da tabela ('99-99')
+                    df_nivers['Ordem_Cronologica'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%m-%d') if pd.notnull(x) else '99-99')
+                    df_nivers = df_nivers.sort_values('Ordem_Cronologica')
+                    
+                    # Formata a exibição: se for nulo, escreve "Não informado"
+                    df_nivers['Aniversário'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%d/%m') if pd.notnull(x) else "⚠️ Não informado")
                     df_nivers = df_nivers.rename(columns={'nome': 'Cliente', 'telefone': 'Contato', 'tipo': 'Categoria'})
                     
-                    # Exibe a tabela organizada cronologicamente pelo dia do aniversário
+                    # Exibe a listagem completa na tela do dispositivo
                     st.dataframe(
-                        df_nivers[['Cliente', 'Aniversário', 'Contato', 'Categoria']].sort_values('Aniversário'), 
+                        df_nivers[['Cliente', 'Aniversário', 'Contato', 'Categoria']], 
                         hide_index=True, 
                         use_container_width=True
                     )
                 else:
-                    st.info("Nenhum cliente cadastrado faz aniversário neste intervalo de datas.")
+                    st.info("Nenhum cliente atende aos critérios do filtro selecionado.")
             else:
-                st.info("Nenhum cliente com data de nascimento cadastrada.")
+                st.info("Nenhum cliente cadastrado na base de dados.")
                 
             st.markdown("---")
             
