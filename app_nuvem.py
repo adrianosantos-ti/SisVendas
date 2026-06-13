@@ -463,27 +463,43 @@ else:
             df_cli = carregar_dados(query_cli, (emp_id,))
             
             if not df_cli.empty and d_ini and d_fim:
+                # Converte os textos do banco para formato de data nativo do Python
                 df_cli['Data_Nasc_Obj'] = pd.to_datetime(df_cli['data_nascimento'], format='%d/%m/%Y', errors='coerce').dt.date
                 
-                # Função inteligente para checar se o aniversário cai no período selecionado (ignorando o ano de nascimento)
+                # Nova Função Inteligente e Blindada: ignora o ano e compara apenas Mês-Dia
                 def checar_niver(nasc_date):
                     if pd.isnull(nasc_date): return False
-                    try: b1 = date(d_ini.year, nasc_date.month, nasc_date.day)
-                    except ValueError: b1 = date(d_ini.year, 3, 1) # Tratamento para anos bissextos
                     
-                    try: b2 = date(d_fim.year, nasc_date.month, nasc_date.day)
-                    except ValueError: b2 = date(d_fim.year, 3, 1)
+                    # Se o filtro global for "Todo o Período", exibe todo mundo que tem data válida
+                    if per_sel == "Todo o Período": return True
                     
-                    return (d_ini <= b1 <= d_fim) or (d_ini <= b2 <= d_fim)
+                    # Recorta apenas o "Mês-Dia" do nascimento (ex: "06-01")
+                    nasc_md = nasc_date.strftime("%m-%d")
+                    
+                    # Se o intervalo de busca for maior ou igual a um ano, todos entram
+                    if (d_fim - d_ini).days >= 365:
+                        return True
+                        
+                    # Monta uma lista com todos os dias "Mês-Dia" contidos dentro do período do filtro
+                    dias_do_periodo = []
+                    total_dias = (d_fim - d_ini).days + 1
+                    for i in range(total_dias):
+                        dia_corrente = d_ini + timedelta(days=i)
+                        dias_do_periodo.append(dia_corrente.strftime("%m-%d"))
+                    
+                    # Valida se o dia da cliente está contido no intervalo do filtro
+                    return nasc_md in dias_do_periodo
 
+                # Aplica a validação linha por linha
                 df_cli['Faz_Niver'] = df_cli['Data_Nasc_Obj'].apply(checar_niver)
                 df_nivers = df_cli[df_cli['Faz_Niver']].copy()
                 
                 if not df_nivers.empty:
-                    # Formata para mostrar apenas Dia/Mês na tela
+                    # Formata visualmente para a tabela do Streamlit mostrar apenas Dia/Mês
                     df_nivers['Aniversário'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%d/%m'))
                     df_nivers = df_nivers.rename(columns={'nome': 'Cliente', 'telefone': 'Contato', 'tipo': 'Categoria'})
                     
+                    # Exibe a tabela organizada cronologicamente pelo dia do aniversário
                     st.dataframe(
                         df_nivers[['Cliente', 'Aniversário', 'Contato', 'Categoria']].sort_values('Aniversário'), 
                         hide_index=True, 
