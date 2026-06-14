@@ -3178,7 +3178,7 @@ Feliz aniversário! 🥳✨"""
             df_2_meses = df_crm[(df_crm['dias_passados'] >= 60)]
             
         # 3. --- CARDS DE MÉTRICAS DINÂMICAS ---
-        st.markdown("---")
+        #st.markdown("---")
         c1, c2, c3 = st.columns(3)
         c1.metric("🟢 2 Days (Satisfação)", f"{len(df_2_dias)} clientes")
         c2.metric("🟡 2 Semanas (Acompanhamento)", f"{len(df_2_semanas)} clientes")
