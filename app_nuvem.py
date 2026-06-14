@@ -2078,12 +2078,7 @@ Feliz aniversário! 🥳✨"""
                             st.rerun()
                     else:
                         st.info("Nenhum item adicionado à nota ainda. Use o formulário ao lado para começar.")
-                        
-                if c_cancelar.button("❌ Limpar / Cancelar", use_container_width=True):
-                    if 'produtos_pedido' in st.session_state:
-                        del st.session_state['produtos_pedido']
-                    st.rerun()                    
-                    
+                             
         with tab_historico_compras:
             st.subheader("📋 Consulta de Notas e Pedidos de Entrada")
             
