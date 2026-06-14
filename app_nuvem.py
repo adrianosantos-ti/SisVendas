@@ -2011,8 +2011,9 @@ Feliz aniversário! 🥳✨"""
                             hide_index=True, 
                             use_container_width=True
                         )
-                        
-                        total_nota = df_carrinho['Total (R$)'].sum()
+
+                        # Converte a soma do Pandas para um decimal nativo do Python
+                        total_nota = float(df_carrinho['Total (R$)'].sum())
                         st.metric("Total da Entrada", f"R$ {total_nota:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
                         
                         if st.button("💾 Finalizar Entrada no Estoque", type="primary", use_container_width=True):
@@ -2041,8 +2042,8 @@ Feliz aniversário! 🥳✨"""
                                     for item in st.session_state['carrinho_compra']:
                                         v_cod = item['Código']
                                         v_nome = item['Produto']
-                                        v_qtd = item['Quantidade']
-                                        v_valor = item['Preço Un. (R$)']
+                                        v_qtd = int(item['Quantidade'])
+                                        v_valor = float(item['Preço Un. (R$)']) # Conversão de segurança aqui também
                                         
                                         cur.execute("""
                                             INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
