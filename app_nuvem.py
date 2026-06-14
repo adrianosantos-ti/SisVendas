@@ -1873,87 +1873,117 @@ Feliz aniversário! 🥳✨"""
 
         
         with tab_compra:
-            st.subheader("📥 Entrada de Mercadorias (via PDF Direto)")
-            st.info("Faça o upload do PDF do seu pedido. O sistema vai extrair os produtos e gerar uma planilha para você revisar as quantidades.")
+            st.subheader("📥 Entrada de Mercadorias e Estoque")
+            
+            # Seletor inteligente do método de entrada
+            metodo_entrada = st.radio(
+                "Escolha a forma de lançamento:",
+                ["📥 Importar via PDF", "✍️ Lançamento Manual"],
+                horizontal=True
+            )
+            
+            # --- FLUXO 1: IMPORTAÇÃO VIA PDF ---
+            if metodo_entrada == "📥 Importar via PDF":
+                st.info("Faça o upload do PDF do seu pedido. O sistema vai extrair os produtos e gerar uma planilha para você revisar as quantidades.")
+                arquivo_pdf = st.file_uploader("Selecione o arquivo PDF do Pedido", type=["pdf"], key="uploader_pdf_compras")
 
-            arquivo_pdf = st.file_uploader("Selecione o arquivo PDF do Pedido", type=["pdf"])
-
-            if arquivo_pdf:
-                if st.button("🔍 Processar PDF do Pedido", type="primary"):
-                    import pdfplumber
-                    import re
-                    
-                    try:
-                        texto_extraido = ""
-                        with pdfplumber.open(arquivo_pdf) as pdf:
-                            for pagina in pdf.pages:
-                                texto_extraido += pagina.extract_text() + " "
+                if arquivo_pdf:
+                    if st.button("🔍 Processar PDF do Pedido", type="primary"):
+                        import pdfplumber
+                        import re
                         
-                        if texto_extraido:
-                            texto_limpo = texto_extraido.replace('\n', ' ')
+                        try:
+                            texto_extraido = ""
+                            with pdfplumber.open(arquivo_pdf) as pdf:
+                                for pagina in pdf.pages:
+                                    texto_extraido += pagina.extract_text() + " "
                             
-                            # NOVO PADRÃO: Ajustado exatamente para o que o pdfplumber extraiu
-                            # Busca: 8 dígitos -> Nome -> R$ Preço -> Quantidade
-                            padrao = r'(\d{8})\s+(.*?)\s+R\$\s*([\d.,]+)\s+(\d+)'
-                            
-                            produtos_extraidos = []
-                            for match in re.finditer(padrao, texto_limpo):
-                                codigo = match.group(1)
-                                nome_produto = match.group(2).strip()
-                                preco_str = match.group(3).replace('.', '').replace(',', '.')
-                                quantidade = int(match.group(4))
+                            if texto_extraido:
+                                texto_limpo = texto_extraido.replace('\n', ' ')
+                                padrao = r'(\d{8})\s+(.*?)\s+R\$\s*([\d.,]+)\s+(\d+)'
                                 
-                                # Filtro para evitar lixo
-                                if "Desconto" not in nome_produto and "Folheto" not in nome_produto:
-                                    produtos_extraidos.append({
-                                        "Código": codigo,
-                                        "Produto": nome_produto,
-                                        "Preço Un. (R$)": float(preco_str),
-                                        "Quantidade": quantidade
-                                    })
-                            
-                            if produtos_extraidos:
-                                st.session_state['produtos_pedido'] = produtos_extraidos
-                                st.success(f"📊 {len(produtos_extraidos)} produtos identificados! Ajuste-os abaixo.")
+                                produtos_extraidos = []
+                                for match in re.finditer(padrao, texto_limpo):
+                                    codigo = match.group(1)
+                                    nome_produto = match.group(2).strip()
+                                    preco_str = match.group(3).replace('.', '').replace(',', '.')
+                                    quantidade = int(match.group(4))
+                                    
+                                    if "Desconto" not in nome_produto and "Folheto" not in nome_produto:
+                                        produtos_extraidos.append({
+                                            "Código": codigo,
+                                            "Produto": nome_produto,
+                                            "Preço Un. (R$)": float(preco_str),
+                                            "Quantidade": quantidade
+                                        })
+                                
+                                if produtos_extraidos:
+                                    st.session_state['produtos_pedido'] = produtos_extraidos
+                                    st.success(f"📊 {len(produtos_extraidos)} produtos identificados! Ajuste-os abaixo.")
+                                else:
+                                    st.error("❌ Não encontramos produtos no padrão. Verifique se é o PDF oficial do pedido.")
+                                    with st.expander("Ver texto extraído (Debug)"):
+                                        st.write(texto_extraido[:1000])
                             else:
-                                st.error("❌ Não encontramos produtos no padrão. Verifique se é o PDF oficial do pedido.")
-                                with st.expander("Ver texto extraído (Debug)"):
-                                    st.write(texto_extraido[:1000])
-                        else:
-                            st.error("❌ Não foi possível extrair texto do documento.")
-                            
-                    except Exception as erro_leitura:
-                        st.error(f"Erro ao processar o arquivo PDF: {erro_leitura}")
+                                st.error("❌ Não foi possível extrair texto do documento.")
+                                
+                        except Exception as erro_leitura:
+                            st.error(f"Erro ao processar o arquivo PDF: {erro_leitura}")
+            
+            # --- FLUXO 2: LANÇAMENTO MANUAL (CRUD AUTOMÁTICO) ---
+            else:
+                st.info("✍️ Monte a sua nota manualmente. Clique em '➕ Add item' no final da tabela para incluir novas linhas.")
+                # Se não houver dados de PDF ativos, inicializa uma tabela vazia estruturada para o usuário preencher
+                if 'produtos_pedido' not in st.session_state or not st.session_state['produtos_pedido']:
+                    st.session_state['produtos_pedido'] = [{
+                        "Código": "",
+                        "Produto": "",
+                        "Preço Un. (R$)": 0.00,
+                        "Quantidade": 1
+                    }]
 
-            # Exibição da planilha interativa
+            # --- CORPO UNIFICADO: PLANILHA INTERATIVA E SALVAMENTO ---
             if 'produtos_pedido' in st.session_state and st.session_state['produtos_pedido']:
-                st.markdown("### ✏️ Planilha de Ajuste de Estoque")
-                st.caption("Dê um duplo clique na célula de 'Quantidade' para alterar. Para remover um item, clique no número à esquerda da linha e aperte 'Delete'.")
+                st.markdown("### ✏️ Itens da Entrada de Estoque")
+                st.caption("Dê um duplo clique na célula para editar. Para remover uma linha inteira, selecione-a clicando na caixa à esquerda e pressione 'Delete' no teclado.")
                 
                 df_original = pd.DataFrame(st.session_state['produtos_pedido'])
                 
+                # O data_editor funciona como o CRUD completo na tela do usuário
                 df_editado = st.data_editor(
                     df_original,
                     num_rows="dynamic",
                     use_container_width=True,
-                    key="editor_pedido_estoque"
+                    key="editor_pedido_estoque",
+                    column_config={
+                        "Código": st.column_config.TextColumn("Código/Referência", placeholder="Ex: 10002345", required=True),
+                        "Produto": st.column_config.TextColumn("Nome do Produto", placeholder="Ex: Vestido Midi Preto", required=True),
+                        "Preço Un. (R$)": st.column_config.NumberColumn("Preço de Custo (R$)", min_value=0.0, format="%.2f", required=True),
+                        "Quantidade": st.column_config.NumberColumn("Qtd.", min_value=1, step=1, required=True),
+                    }
                 )
                 
-                # Adicionamos um campo para você digitar o número da nota/pedido antes de salvar
-                numero_nota = st.text_input("Número do Pedido ou NF (Obrigatório para o Histórico):", placeholder="Ex: 134655")
+                numero_nota = st.text_input("Número do Pedido ou NF (Obrigatório para o Histórico):", placeholder="Ex: 134655", key="nf_entrada_mercadoria")
                 
-                if st.button("💾 Confirmar e Dar Entrada no Estoque", type="primary", use_container_width=True):
+                c_salvar, c_cancelar = st.columns([3, 1])
+                
+                if c_salvar.button("💾 Confirmar e Dar Entrada no Estoque", type="primary", use_container_width=True):
+                    # Validações de segurança antes de abrir transação com o banco
                     if not numero_nota:
                         st.warning("⚠️ Por favor, informe o número do pedido ou nota fiscal antes de salvar.")
+                    elif df_editado.empty:
+                        st.warning("⚠️ A tabela de produtos não pode estar vazia.")
+                    elif df_editado['Código'].isnull().any() or (df_editado['Código'] == '').any():
+                        st.warning("⚠️ Todos os produtos inseridos precisam de um código de referência.")
                     else:
                         try:
                             conn = conectar_banco()
                             cur = conn.cursor()
                             
-                            # 1. Calcula o total da nota com base nos itens da tabela editada
+                            # 1. Calcula o valor total total da transação de forma dinâmica
                             valor_total_nota = sum([float(row['Preço Un. (R$)']) * int(row['Quantidade']) for _, row in df_editado.iterrows()])
                             
-                            # 2. Cria o registro principal na tabela 'compras' e pega o ID gerado
+                            # 2. Cria a entrada mestre em 'compras'
                             cur.execute("""
                                 INSERT INTO compras (numero_pedido, data_entrada, valor_total, empresa_id) 
                                 VALUES (%s, CURRENT_DATE, %s, %s) RETURNING id
@@ -1962,28 +1992,31 @@ Feliz aniversário! 🥳✨"""
                             
                             itens_salvos = 0
                             
-                            # 3. Processa cada item da planilha
+                            # 3. Processa e itera as linhas do grid editável
                             for _, row in df_editado.iterrows():
-                                v_cod = str(row['Código'])
-                                v_nome = str(row['Produto'])
+                                v_cod = str(row['Código']).strip()
+                                v_nome = str(row['Produto']).strip()
                                 v_qtd = int(row['Quantidade'])
                                 v_valor = float(row['Preço Un. (R$)'])
                                 
-                                # Grava o histórico detalhado na tabela 'itens_compra'
+                                if not v_cod or not v_nome:
+                                    continue
+                                    
+                                # Registra no histórico analítico (itens_compra)
                                 cur.execute("""
                                     INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
                                     VALUES (%s, %s, %s, %s, %s)
                                 """, (compra_id, v_cod, v_nome, v_qtd, v_valor))
                                 
-                                # Verifica se o produto já existe no estoque geral
+                                # Sincronização automática com a tabela geral de estoque (produtos)
                                 cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
                                 prod_existe = cur.fetchone()
                                 
                                 if prod_existe:
-                                    # Soma a quantidade ao estoque existente
+                                    # Incrementa saldo físico se o produto já existir
                                     cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
                                 else:
-                                    # Cadastra produto novo automaticamente
+                                    # Auto-cadastro de novas referências mercadológicas
                                     cur.execute("""
                                         INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
                                         VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -1991,23 +2024,22 @@ Feliz aniversário! 🥳✨"""
                                 
                                 itens_salvos += 1
                             
-                            # 4. (Opcional) Lançar no Financeiro - Contas a Pagar
-                            # cur.execute("INSERT INTO contas_pagar (descricao, valor, data_vencimento, status, empresa_id) VALUES (%s, %s, CURRENT_DATE, 'Pago', %s)", (f"Pedido/NF: {numero_nota}", valor_total_nota, emp_id))
-                            
                             conn.commit()
                             conn.close()
                             
-                            st.success(f"✅ Sucesso! Entrada {numero_nota} processada. {itens_salvos} itens atualizados no estoque.")
-                            del st.session_state['produtos_pedido']
+                            st.success(f"✅ Sucesso! Entrada {numero_nota} processada. {itens_salvos} itens alimentados no estoque do Apprimory.")
+                            if 'produtos_pedido' in st.session_state:
+                                del st.session_state['produtos_pedido']
                             st.rerun()
                             
                         except Exception as e:
                             st.error(f"Erro ao salvar dados no banco: {e}")
                             if 'conn' in locals(): conn.rollback(); conn.close()
 
-                if st.button("❌ Cancelar Importação", use_container_width=True):
-                    del st.session_state['produtos_pedido']
-                    st.rerun() 
+                if c_cancelar.button("❌ Limpar / Cancelar", use_container_width=True):
+                    if 'produtos_pedido' in st.session_state:
+                        del st.session_state['produtos_pedido']
+                    st.rerun()                    
                     
         with tab_historico_compras:
             st.subheader("📋 Consulta de Notas e Pedidos de Entrada")
