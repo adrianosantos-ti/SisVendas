@@ -664,7 +664,7 @@ Feliz aniversário! 🥳✨"""
                                     conn.commit(); conn.close(); st.success("Cancelado!"); st.rerun()
                                 else: conn.close(); st.error("Erro.")
                 
-                st.markdown("---")
+                #st.markdown("---")
 
                 # ==========================================================
                 # EXPANDER DO RECIBO DO WHATSAPP
