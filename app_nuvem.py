@@ -3180,10 +3180,10 @@ Feliz aniversário! 🥳✨"""
         # 3. --- CARDS DE MÉTRICAS DINÂMICAS ---
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
-        c1.metric("🟢 2 Days (Satisfação)", f"{len(df_2_dias)} clientes")
+        c1.metric("🟢 2 Dias (Satisfação)", f"{len(df_2_dias)} clientes")
         c2.metric("🟡 2 Semanas (Acompanhamento)", f"{len(df_2_semanas)} clientes")
         c3.metric("🔴 2 Meses (Reposição)", f"{len(df_2_meses)} clientes")
-        st.markdown("---")
+        #st.markdown("---")
         
         # 4. --- ABAS DE INTERAÇÃO ---
         tab_2d, tab_2s, tab_2m = st.tabs(["🟢 Contatos de 2 Dias", "🟡 Contatos de 2 Semanas", "🔴 Contatos de 2 Meses"])
