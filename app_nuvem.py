@@ -582,7 +582,7 @@ Feliz aniversário! 🥳✨"""
                 st.warning("Nenhuma venda para gerar o ranking neste período.")
 
         with aba_hist:
-            st.header("📜 Histórico Geral e Faturamento")
+            st.subheader("📜 Histórico Geral e Faturamento")
             
             query_todas_vendas = """
                 SELECT v.id AS "ID Item", v.codigo_venda AS "Nº Venda", COALESCE(c.nome, 'Cliente Excluído') AS "Cliente", 
