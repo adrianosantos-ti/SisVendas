@@ -1930,13 +1930,13 @@ Feliz aniversário! 🥳✨"""
                         except Exception as erro_leitura:
                             st.error(f"Erro ao processar o arquivo PDF: {erro_leitura}")
             
-            # --- FLUXO 2: LANÇAMENTO MANUAL (CRUD PROFISSIONAL) ---
+            # --- FLUXO 2: LANÇAMENTO MANUAL (CRUD PROFISSIONAL INTEGRADO) ---
             else:
-                # Inicia o carrinho da compra na sessão
+                # Inicia o carrinho da compra na sessão se não existir
                 if 'carrinho_compra' not in st.session_state:
                     st.session_state['carrinho_compra'] = []
                     
-                # Busca todos os produtos e fornecedores cadastrados
+                # Busca todos os produtos e fornecedores cadastrados para os seletores
                 query_prods = "SELECT id, referencia, nome FROM produtos WHERE empresa_id = %s ORDER BY nome"
                 df_produtos = carregar_dados(query_prods, (emp_id,))
                 
@@ -1967,13 +1967,13 @@ Feliz aniversário! 🥳✨"""
                                     st.session_state['carrinho_compra'].append({
                                         "Código": ref_oficial,
                                         "Produto": prod_selecionado,
-                                        "Quantidade": qtd_input,
-                                        "Preço Un. (R$)": custo_input
+                                        "Quantidade": int(qtd_input),
+                                        "Preço Un. (R$)": float(custo_input)
                                     })
                                     st.success(f"✅ {prod_selecionado} adicionado ao lote!")
                                     
                         else:
-                            st.caption("Preencha para cadastrar este item no Apprimory automaticamente ao salvar.")
+                            st.caption("Preencha para cadastrar este item no estoque automaticamente ao salvar.")
                             c_cod, c_nome = st.columns([1, 2])
                             novo_cod = c_cod.text_input("Código / Referência")
                             novo_nome = c_nome.text_input("Nome do Produto")
@@ -1989,8 +1989,8 @@ Feliz aniversário! 🥳✨"""
                                     st.session_state['carrinho_compra'].append({
                                         "Código": novo_cod,
                                         "Produto": novo_nome,
-                                        "Quantidade": qtd_input,
-                                        "Preço Un. (R$)": custo_input
+                                        "Quantidade": int(qtd_input),
+                                        "Preço Un. (R$)": float(custo_input)
                                     })
                                     st.success(f"✅ {novo_nome} adicionado ao lote!")
 
@@ -1998,9 +1998,18 @@ Feliz aniversário! 🥳✨"""
                     st.markdown("### 📦 Resumo da Nota")
                     numero_nota = st.text_input("Nº do Pedido/NF (Obrigatório):", key="nf_manual_crud")
                     
-                    # Seletor de Fornecedores dinâmico
                     lista_forn = [""] + df_fornecedores['nome'].tolist() if not df_fornecedores.empty else [""]
                     sel_fornecedor = st.selectbox("🏭 Fornecedor (Obrigatório):", lista_forn)
+                    
+                    # --- DADOS FINANCEIROS DA NOTA ---
+                    st.markdown("#### 💳 Condições de Pagamento")
+                    c_forma, c_parcelas = st.columns([2, 1])
+                    forma_pagamento = c_forma.selectbox("Forma:", ["À Vista", "Boleto Parcelado", "Cartão de Crédito Parcelado", "Pix"])
+                    
+                    if "Parcelado" in forma_pagamento:
+                        qtd_parcelas = c_parcelas.number_input("Parcelas", min_value=2, max_value=24, step=1)
+                    else:
+                        qtd_parcelas = 1
                     
                     if st.session_state['carrinho_compra']:
                         df_carrinho = pd.DataFrame(st.session_state['carrinho_compra'])
@@ -2011,8 +2020,8 @@ Feliz aniversário! 🥳✨"""
                             hide_index=True, 
                             use_container_width=True
                         )
-
-                        # Converte a soma do Pandas para um decimal nativo do Python
+                        
+                        # Conversão estrita para float nativo do Python para evitar erros de tipo no banco
                         total_nota = float(df_carrinho['Total (R$)'].sum())
                         st.metric("Total da Entrada", f"R$ {total_nota:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
                         
@@ -2023,27 +2032,26 @@ Feliz aniversário! 🥳✨"""
                                 st.error("⚠️ Selecione o fornecedor que está emitindo esta nota.")
                             else:
                                 try:
-                                    # Pega o ID do fornecedor selecionado
                                     id_forn_salvar = int(df_fornecedores[df_fornecedores['nome'] == sel_fornecedor].iloc[0]['id'])
                                     
                                     conn = conectar_banco()
                                     cur = conn.cursor()
                                     
-                                    # 1. Salva a Capa da Compra com o Fornecedor ID
+                                    # 1. Salva a Capa da Compra com as colunas de controle financeiro
                                     cur.execute("""
-                                        INSERT INTO compras (numero_pedido, data_entrada, valor_total, empresa_id, fornecedor_id) 
-                                        VALUES (%s, CURRENT_DATE, %s, %s, %s) RETURNING id
-                                    """, (numero_nota, total_nota, emp_id, id_forn_salvar))
+                                        INSERT INTO compras (numero_pedido, data_entrada, valor_total, empresa_id, fornecedor_id, forma_pagamento, qtd_parcelas) 
+                                        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s) RETURNING id
+                                    """, (numero_nota, total_nota, emp_id, id_forn_salvar, forma_pagamento, qtd_parcelas))
                                     compra_id = cur.fetchone()[0]
                                     
                                     itens_salvos = 0
                                     
-                                    # 2. Salva os Itens e Alimenta o Estoque
+                                    # 2. Salva os Itens e Atualiza as Quantidades do Estoque
                                     for item in st.session_state['carrinho_compra']:
-                                        v_cod = item['Código']
-                                        v_nome = item['Produto']
+                                        v_cod = str(item['Código']).strip()
+                                        v_nome = str(item['Produto']).strip()
                                         v_qtd = int(item['Quantidade'])
-                                        v_valor = float(item['Preço Un. (R$)']) # Conversão de segurança aqui também
+                                        v_valor = float(item['Preço Un. (R$)'])
                                         
                                         cur.execute("""
                                             INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
@@ -2059,14 +2067,35 @@ Feliz aniversário! 🥳✨"""
                                             cur.execute("""
                                                 INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
                                                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                            """, (v_nome, v_qtd, v_valor, "Apprimory", "Geral", emp_id, v_cod))
+                                            """, (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
                                             
                                         itens_salvos += 1
+                                        
+                                    # 3. Integração Automática com a Tabela contas_pagar (Campos e Tipos Estritos)
+                                    valor_parcela = float(total_nota / qtd_parcelas)
+                                    hoje_texto = date.today().strftime('%Y-%m-%d')
+                                    
+                                    for i in range(1, qtd_parcelas + 1):
+                                        if qtd_parcelas == 1:
+                                            # Lançamento à Vista: Status 'Pago' e datas preenchidas como texto
+                                            cur.execute("""
+                                                INSERT INTO contas_pagar (compra_id, fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, data_pagamento, status, empresa_id)
+                                                VALUES (%s, %s, %s, %s, %s, %s, %s, 'Pago', %s)
+                                            """, (compra_id, id_forn_salvar, i, qtd_parcelas, valor_parcela, hoje_texto, hoje_texto, emp_id))
+                                        else:
+                                            # Lançamento Parcelado: Projeção de vencimentos futuros (texto) e status 'Pendente'
+                                            data_venc = date.today() + timedelta(days=30 * i)
+                                            venc_texto = data_venc.strftime('%Y-%m-%d')
+                                            
+                                            cur.execute("""
+                                                INSERT INTO contas_pagar (compra_id, fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
+                                                VALUES (%s, %s, %s, %s, %s, %s, 'Pendente', %s)
+                                            """, (compra_id, id_forn_salvar, i, qtd_parcelas, valor_parcela, venc_texto, emp_id))
                                     
                                     conn.commit()
                                     conn.close()
                                     
-                                    st.success(f"🎉 Sucesso! A NF {numero_nota} do fornecedor {sel_fornecedor} foi registrada e {itens_salvos} itens entraram no estoque.")
+                                    st.success(f"🎉 Sucesso! A NF {numero_nota} foi registrada. {itens_salvos} itens entraram no estoque e o financeiro foi atualizado.")
                                     st.session_state['carrinho_compra'] = []
                                     st.rerun()
                                     
@@ -2079,7 +2108,7 @@ Feliz aniversário! 🥳✨"""
                             st.rerun()
                     else:
                         st.info("Nenhum item adicionado à nota ainda. Use o formulário ao lado para começar.")
-                             
+                        
         with tab_historico_compras:
             st.subheader("📋 Consulta e Estorno de Notas de Entrada")
             
