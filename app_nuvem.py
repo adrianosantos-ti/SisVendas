@@ -1956,8 +1956,8 @@ Feliz aniversário! 🥳✨"""
                     use_container_width=True,
                     key="editor_pedido_estoque",
                     column_config={
-                        "Código": st.column_config.TextColumn("Código/Referência", placeholder="Ex: 10002345", required=True),
-                        "Produto": st.column_config.TextColumn("Nome do Produto", placeholder="Ex: Vestido Midi Preto", required=True),
+                        "Código": st.column_config.TextColumn("Código/Referência", required=True),
+                        "Produto": st.column_config.TextColumn("Nome do Produto", required=True),
                         "Preço Un. (R$)": st.column_config.NumberColumn("Preço de Custo (R$)", min_value=0.0, format="%.2f", required=True),
                         "Quantidade": st.column_config.NumberColumn("Qtd.", min_value=1, step=1, required=True),
                     }
