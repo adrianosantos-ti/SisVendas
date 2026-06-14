@@ -1930,112 +1930,155 @@ Feliz aniversário! 🥳✨"""
                         except Exception as erro_leitura:
                             st.error(f"Erro ao processar o arquivo PDF: {erro_leitura}")
             
-            # --- FLUXO 2: LANÇAMENTO MANUAL (CRUD AUTOMÁTICO) ---
+            # --- FLUXO 2: LANÇAMENTO MANUAL (CRUD PROFISSIONAL) ---
             else:
-                st.info("✍️ Monte a sua nota manualmente. Clique em '➕ Add item' no final da tabela para incluir novas linhas.")
-                # Se não houver dados de PDF ativos, inicializa uma tabela vazia estruturada para o usuário preencher
-                if 'produtos_pedido' not in st.session_state or not st.session_state['produtos_pedido']:
-                    st.session_state['produtos_pedido'] = [{
-                        "Código": "",
-                        "Produto": "",
-                        "Preço Un. (R$)": 0.00,
-                        "Quantidade": 1
-                    }]
-
-            # --- CORPO UNIFICADO: PLANILHA INTERATIVA E SALVAMENTO ---
-            if 'produtos_pedido' in st.session_state and st.session_state['produtos_pedido']:
-                st.markdown("### ✏️ Itens da Entrada de Estoque")
-                st.caption("Dê um duplo clique na célula para editar. Para remover uma linha inteira, selecione-a clicando na caixa à esquerda e pressione 'Delete' no teclado.")
+                # Inicia o carrinho da compra na sessão
+                if 'carrinho_compra' not in st.session_state:
+                    st.session_state['carrinho_compra'] = []
+                    
+                # Busca todos os produtos e fornecedores cadastrados
+                query_prods = "SELECT id, referencia, nome FROM produtos WHERE empresa_id = %s ORDER BY nome"
+                df_produtos = carregar_dados(query_prods, (emp_id,))
                 
-                df_original = pd.DataFrame(st.session_state['produtos_pedido'])
+                query_forn = "SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome"
+                df_fornecedores = carregar_dados(query_forn, (emp_id,))
                 
-                # O data_editor funciona como o CRUD completo na tela do usuário
-                df_editado = st.data_editor(
-                    df_original,
-                    num_rows="dynamic",
-                    use_container_width=True,
-                    key="editor_pedido_estoque",
-                    column_config={
-                        "Código": st.column_config.TextColumn("Código/Referência", required=True),
-                        "Produto": st.column_config.TextColumn("Nome do Produto", required=True),
-                        "Preço Un. (R$)": st.column_config.NumberColumn("Preço de Custo (R$)", min_value=0.0, format="%.2f", required=True),
-                        "Quantidade": st.column_config.NumberColumn("Qtd.", min_value=1, step=1, required=True),
-                    }
-                )
+                col_form, col_resumo = st.columns([2, 1.5], gap="large")
                 
-                numero_nota = st.text_input("Número do Pedido ou NF (Obrigatório para o Histórico):", placeholder="Ex: 134655", key="nf_entrada_mercadoria")
-                
-                c_salvar, c_cancelar = st.columns([3, 1])
-                
-                if c_salvar.button("💾 Confirmar e Dar Entrada no Estoque", type="primary", use_container_width=True):
-                    # Validações de segurança antes de abrir transação com o banco
-                    if not numero_nota:
-                        st.warning("⚠️ Por favor, informe o número do pedido ou nota fiscal antes de salvar.")
-                    elif df_editado.empty:
-                        st.warning("⚠️ A tabela de produtos não pode estar vazia.")
-                    elif df_editado['Código'].isnull().any() or (df_editado['Código'] == '').any():
-                        st.warning("⚠️ Todos os produtos inseridos precisam de um código de referência.")
-                    else:
-                        try:
-                            conn = conectar_banco()
-                            cur = conn.cursor()
+                with col_form:
+                    st.markdown("### 🛒 Adicionar Item à Nota")
+                    tipo_item = st.radio("O que você está dando entrada?", ["Produto já cadastrado", "Produto novo (Primeira vez)"], horizontal=True)
+                    
+                    with st.form("form_add_compra", clear_on_submit=True):
+                        if tipo_item == "Produto já cadastrado" and not df_produtos.empty:
+                            lista_nomes = df_produtos['nome'].tolist()
+                            prod_selecionado = st.selectbox("🔍 Busque o Produto", [""] + lista_nomes)
                             
-                            # 1. Calcula o valor total total da transação de forma dinâmica
-                            valor_total_nota = sum([float(row['Preço Un. (R$)']) * int(row['Quantidade']) for _, row in df_editado.iterrows()])
+                            c_qtd, c_preco = st.columns(2)
+                            qtd_input = c_qtd.number_input("Quantidade Recebida", min_value=1, step=1)
+                            custo_input = c_preco.number_input("Preço de Custo Un. (R$)", min_value=0.0, step=0.10, format="%.2f")
                             
-                            # 2. Cria a entrada mestre em 'compras'
-                            cur.execute("""
-                                INSERT INTO compras (numero_pedido, data_entrada, valor_total, empresa_id) 
-                                VALUES (%s, CURRENT_DATE, %s, %s) RETURNING id
-                            """, (numero_nota, valor_total_nota, emp_id))
-                            compra_id = cur.fetchone()[0]
-                            
-                            itens_salvos = 0
-                            
-                            # 3. Processa e itera as linhas do grid editável
-                            for _, row in df_editado.iterrows():
-                                v_cod = str(row['Código']).strip()
-                                v_nome = str(row['Produto']).strip()
-                                v_qtd = int(row['Quantidade'])
-                                v_valor = float(row['Preço Un. (R$)'])
-                                
-                                if not v_cod or not v_nome:
-                                    continue
-                                    
-                                # Registra no histórico analítico (itens_compra)
-                                cur.execute("""
-                                    INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
-                                    VALUES (%s, %s, %s, %s, %s)
-                                """, (compra_id, v_cod, v_nome, v_qtd, v_valor))
-                                
-                                # Sincronização automática com a tabela geral de estoque (produtos)
-                                cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
-                                prod_existe = cur.fetchone()
-                                
-                                if prod_existe:
-                                    # Incrementa saldo físico se o produto já existir
-                                    cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
+                            if st.form_submit_button("➕ Adicionar à Nota", type="primary", use_container_width=True):
+                                if not prod_selecionado:
+                                    st.warning("⚠️ Selecione um produto na lista.")
                                 else:
-                                    # Auto-cadastro de novas referências mercadológicas
-                                    cur.execute("""
-                                        INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                    """, (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
-                                
-                                itens_salvos += 1
+                                    ref_oficial = df_produtos[df_produtos['nome'] == prod_selecionado].iloc[0]['referencia']
+                                    
+                                    st.session_state['carrinho_compra'].append({
+                                        "Código": ref_oficial,
+                                        "Produto": prod_selecionado,
+                                        "Quantidade": qtd_input,
+                                        "Preço Un. (R$)": custo_input
+                                    })
+                                    st.success(f"✅ {prod_selecionado} adicionado ao lote!")
+                                    
+                        else:
+                            st.caption("Preencha para cadastrar este item no Apprimory automaticamente ao salvar.")
+                            c_cod, c_nome = st.columns([1, 2])
+                            novo_cod = c_cod.text_input("Código / Referência")
+                            novo_nome = c_nome.text_input("Nome do Produto")
                             
-                            conn.commit()
-                            conn.close()
+                            c_qtd, c_preco = st.columns(2)
+                            qtd_input = c_qtd.number_input("Quantidade Recebida", min_value=1, step=1)
+                            custo_input = c_preco.number_input("Preço de Custo Un. (R$)", min_value=0.0, step=0.10, format="%.2f")
                             
-                            st.success(f"✅ Sucesso! Entrada {numero_nota} processada. {itens_salvos} itens alimentados no estoque do Apprimory.")
-                            if 'produtos_pedido' in st.session_state:
-                                del st.session_state['produtos_pedido']
-                            st.rerun()
-                            
-                        except Exception as e:
-                            st.error(f"Erro ao salvar dados no banco: {e}")
-                            if 'conn' in locals(): conn.rollback(); conn.close()
+                            if st.form_submit_button("➕ Adicionar Novo Produto à Nota", type="primary", use_container_width=True):
+                                if not novo_cod or not novo_nome:
+                                    st.warning("⚠️ Código e Nome são obrigatórios para produtos novos.")
+                                else:
+                                    st.session_state['carrinho_compra'].append({
+                                        "Código": novo_cod,
+                                        "Produto": novo_nome,
+                                        "Quantidade": qtd_input,
+                                        "Preço Un. (R$)": custo_input
+                                    })
+                                    st.success(f"✅ {novo_nome} adicionado ao lote!")
 
+                with col_resumo:
+                    st.markdown("### 📦 Resumo da Nota")
+                    numero_nota = st.text_input("Nº do Pedido/NF (Obrigatório):", key="nf_manual_crud")
+                    
+                    # Seletor de Fornecedores dinâmico
+                    lista_forn = [""] + df_fornecedores['nome'].tolist() if not df_fornecedores.empty else [""]
+                    sel_fornecedor = st.selectbox("🏭 Fornecedor (Obrigatório):", lista_forn)
+                    
+                    if st.session_state['carrinho_compra']:
+                        df_carrinho = pd.DataFrame(st.session_state['carrinho_compra'])
+                        df_carrinho['Total (R$)'] = df_carrinho['Quantidade'] * df_carrinho['Preço Un. (R$)']
+                        
+                        st.dataframe(
+                            df_carrinho[['Produto', 'Quantidade', 'Total (R$)']], 
+                            hide_index=True, 
+                            use_container_width=True
+                        )
+                        
+                        total_nota = df_carrinho['Total (R$)'].sum()
+                        st.metric("Total da Entrada", f"R$ {total_nota:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
+                        
+                        if st.button("💾 Finalizar Entrada no Estoque", type="primary", use_container_width=True):
+                            if not numero_nota:
+                                st.error("⚠️ Digite o número do Pedido ou NF para gravar no histórico.")
+                            elif not sel_fornecedor:
+                                st.error("⚠️ Selecione o fornecedor que está emitindo esta nota.")
+                            else:
+                                try:
+                                    # Pega o ID do fornecedor selecionado
+                                    id_forn_salvar = int(df_fornecedores[df_fornecedores['nome'] == sel_fornecedor].iloc[0]['id'])
+                                    
+                                    conn = conectar_banco()
+                                    cur = conn.cursor()
+                                    
+                                    # 1. Salva a Capa da Compra com o Fornecedor ID
+                                    cur.execute("""
+                                        INSERT INTO compras (numero_pedido, data_entrada, valor_total, empresa_id, fornecedor_id) 
+                                        VALUES (%s, CURRENT_DATE, %s, %s, %s) RETURNING id
+                                    """, (numero_nota, total_nota, emp_id, id_forn_salvar))
+                                    compra_id = cur.fetchone()[0]
+                                    
+                                    itens_salvos = 0
+                                    
+                                    # 2. Salva os Itens e Alimenta o Estoque
+                                    for item in st.session_state['carrinho_compra']:
+                                        v_cod = item['Código']
+                                        v_nome = item['Produto']
+                                        v_qtd = item['Quantidade']
+                                        v_valor = item['Preço Un. (R$)']
+                                        
+                                        cur.execute("""
+                                            INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
+                                            VALUES (%s, %s, %s, %s, %s)
+                                        """, (compra_id, v_cod, v_nome, v_qtd, v_valor))
+                                        
+                                        cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
+                                        prod_existe = cur.fetchone()
+                                        
+                                        if prod_existe:
+                                            cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
+                                        else:
+                                            cur.execute("""
+                                                INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
+                                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                            """, (v_nome, v_qtd, v_valor, "Apprimory", "Geral", emp_id, v_cod))
+                                            
+                                        itens_salvos += 1
+                                    
+                                    conn.commit()
+                                    conn.close()
+                                    
+                                    st.success(f"🎉 Sucesso! A NF {numero_nota} do fornecedor {sel_fornecedor} foi registrada e {itens_salvos} itens entraram no estoque.")
+                                    st.session_state['carrinho_compra'] = []
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"Erro ao salvar no banco: {e}")
+                                    if 'conn' in locals(): conn.rollback(); conn.close()
+                        
+                        if st.button("🗑️ Limpar Carrinho", use_container_width=True):
+                            st.session_state['carrinho_compra'] = []
+                            st.rerun()
+                    else:
+                        st.info("Nenhum item adicionado à nota ainda. Use o formulário ao lado para começar.")
+                        
                 if c_cancelar.button("❌ Limpar / Cancelar", use_container_width=True):
                     if 'produtos_pedido' in st.session_state:
                         del st.session_state['produtos_pedido']
