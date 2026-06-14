@@ -2081,27 +2081,29 @@ Feliz aniversário! 🥳✨"""
                         st.info("Nenhum item adicionado à nota ainda. Use o formulário ao lado para começar.")
                              
         with tab_historico_compras:
-            st.subheader("📋 Consulta de Notas e Pedidos de Entrada")
+            st.subheader("📋 Consulta e Estorno de Notas de Entrada")
             
             # Filtros na parte superior
             c_ini, c_fim = st.columns(2)
             data_ini = c_ini.date_input("De:", value=date.today() - timedelta(days=30), format="DD/MM/YYYY", key="filtro_compra_ini")
             data_fim = c_fim.date_input("Até:", value=date.today(), format="DD/MM/YYYY", key="filtro_compra_fim")
             
-            # Busca as compras realizadas no período
+            # Busca as compras realizadas no período trazendo o Fornecedor mapeado junto
             query_compras = """
-                SELECT id, numero_pedido, to_char(data_entrada, 'DD/MM/YYYY') as data, valor_total 
-                FROM compras 
-                WHERE empresa_id = %s AND data_entrada BETWEEN %s AND %s
-                ORDER BY data_entrada DESC
+                SELECT c.id, c.numero_pedido, to_char(c.data_entrada, 'DD/MM/YYYY') as data, f.nome as fornecedor, c.valor_total 
+                FROM compras c
+                LEFT JOIN fornecedores f ON c.fornecedor_id = f.id
+                WHERE c.empresa_id = %s AND c.data_entrada BETWEEN %s AND %s
+                ORDER BY c.data_entrada DESC
             """
             df_historico = carregar_dados(query_compras, (emp_id, data_ini, data_fim))
             
             if not df_historico.empty:
                 st.markdown("### 🔍 Selecione uma Entrada para Ver os Itens")
                 
+                # Monta o dicionário incluindo o nome do fornecedor na visualização
                 opcoes_compra = {
-                    row['id']: f"📦 Pedido: {row['numero_pedido']} | Data: {row['data']} | Total: R$ {row['valor_total']:.2f}"
+                    row['id']: f"📦 Pedido: {row['numero_pedido']} | Fornecedor: {row['fornecedor'] if row['fornecedor'] else 'Não Informado'} | Data: {row['data']} | Total: R$ {row['valor_total']:.2f}"
                     for _, row in df_historico.iterrows()
                 }
                 
@@ -2126,6 +2128,43 @@ Feliz aniversário! 🥳✨"""
                     
                     dados_compra = df_historico[df_historico['id'] == compra_selecionada_id].iloc[0]
                     st.metric(label="Valor Total da Nota", value=f"R$ {dados_compra['valor_total']:.2f}")
+                    
+                    # --- NOVO BLOCO: ENGENHARIA REVERSA E EXCLUSÃO DA NOTA ---
+                    st.markdown("---")
+                    st.warning("⚠️ **Zona de Perigo:** Ao estornar esta entrada, o sistema irá recalcular o estoque físico, subtraindo as quantidades compradas automaticamente.")
+                    
+                    if st.button("🚨 Estornar e Excluir esta Entrada", type="primary", use_container_width=True):
+                        try:
+                            conn = conectar_banco()
+                            cur = conn.cursor()
+                            
+                            # 1. Puxa os itens da nota selecionada para fazer o estorno físico
+                            cur.execute("SELECT produto_referencia, quantidade FROM itens_compra WHERE compra_id = %s", (int(compra_selecionada_id),))
+                            itens_estorno = cur.fetchall()
+                            
+                            # 2. Retira as quantidades exatas do estoque atual
+                            for ref, qtd in itens_estorno:
+                                cur.execute("""
+                                    UPDATE produtos 
+                                    SET quantidade = quantidade - %s 
+                                    WHERE referencia = %s AND empresa_id = %s
+                                """, (int(qtd), str(ref), emp_id))
+                            
+                            # 3. Deleta o histórico analítico de itens da nota
+                            cur.execute("DELETE FROM itens_compra WHERE compra_id = %s", (int(compra_selecionada_id),))
+                            
+                            # 4. Deleta a capa do pedido da tabela compras
+                            cur.execute("DELETE FROM compras WHERE id = %s", (int(compra_selecionada_id),))
+                            
+                            conn.commit()
+                            conn.close()
+                            
+                            st.success(f"✅ Sucesso! A Entrada {dados_compra['numero_pedido']} foi completamente estornada do estoque e removida do histórico.")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Erro ao processar estorno no banco de dados: {e}")
+                            if 'conn' in locals(): conn.rollback(); conn.close()
             else:
                 st.warning("Nenhuma nota de entrada processada neste período.")
                 
