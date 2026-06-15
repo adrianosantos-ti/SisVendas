@@ -464,58 +464,70 @@ else:
             
             if not df_cli.empty and d_ini and d_fim:
                 
-                # --- CORREÇÃO DA LEITURA DE DATA AQUI ---
-                # O Pandas infere sozinho o formato YYYY-MM-DD vindo do banco.
-                df_cli['Data_Nasc_Obj'] = pd.to_datetime(df_cli['data_nascimento'], errors='coerce').dt.date
-                
-                # FUNÇÃO: Regra global no topo para não esconder ninguém sem data
-                def checar_niver(nasc_date):
-                    # SE FOR TODO O PERÍODO, LIBERA GERAL (Mesmo os que estão sem data preenchida)
-                    if per_sel == "Todo o Período": 
-                        return True
+                # --- A MÁGICA DA NOVA LÓGICA: Tratamento como Texto Flexível ---
+                def checar_niver_flexivel(data_banco):
+                    if per_sel == "Todo o Período": return True
+                    if pd.isnull(data_banco) or str(data_banco).strip() == "": return False
                     
-                    # Para outros filtros específicos (Ex: Mês Atual), se não tem data, não entra
-                    if pd.isnull(nasc_date): 
-                        return False
+                    data_str = str(data_banco).strip()
+                    dia_mes = ""
                     
-                    nasc_md = nasc_date.strftime("%m-%d")
+                    # Se tiver barra (ex: 14/08 ou 14/08/1979)
+                    if "/" in data_str:
+                        partes = data_str.split("/")
+                        if len(partes) >= 2:
+                            dia_mes = f"{partes[0].zfill(2)}/{partes[1].zfill(2)}"
+                    # Se tiver traço (ex: 1979-08-14)
+                    elif "-" in data_str:
+                        partes = data_str.split("-")
+                        if len(partes) == 3: 
+                            dia_mes = f"{partes[2].zfill(2)}/{partes[1].zfill(2)}"
+                        elif len(partes) >= 2:
+                            dia_mes = f"{partes[0].zfill(2)}/{partes[1].zfill(2)}"
                     
-                    if (d_fim - d_ini).days >= 365:
-                        return True
+                    if not dia_mes: return False
+
+                    if (d_fim - d_ini).days >= 365: return True
                         
+                    # Monta os dias do filtro no formato DD/MM para comparar banana com banana
                     dias_do_periodo = []
                     total_dias = (d_fim - d_ini).days + 1
                     for i in range(total_dias):
                         dia_corrente = d_ini + timedelta(days=i)
-                        dias_do_periodo.append(dia_corrente.strftime("%m-%d"))
+                        dias_do_periodo.append(dia_corrente.strftime("%d/%m"))
                     
-                    return nasc_md in dias_do_periodo
+                    return dia_mes in dias_do_periodo
 
-                # Aplica a nova lógica
-                df_cli['Faz_Niver'] = df_cli['Data_Nasc_Obj'].apply(checar_niver)
+                # Aplica a lógica sem usar o to_datetime
+                df_cli['Faz_Niver'] = df_cli['data_nascimento'].apply(checar_niver_flexivel)
                 df_nivers = df_cli[df_cli['Faz_Niver']].copy()
                 
                 if not df_nivers.empty:
-                    # Ordenação inteligente
-                    df_nivers['Ordem_Cronologica'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%m-%d') if pd.notnull(x) else '99-99')
-                    df_nivers = df_nivers.sort_values('Ordem_Cronologica')
                     
-                    # Formata a exibição do Aniversário para o padrão Brasileiro
-                    df_nivers['Aniversário'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%d/%m/%Y') if pd.notnull(x) else "⚠️ Não informado")
+                    # Formata bonitinho para aparecer só DD/MM na tela
+                    def formatar_exibicao(data_banco):
+                        if pd.isnull(data_banco) or str(data_banco).strip() == "": return "⚠️ Não informado"
+                        data_str = str(data_banco).strip()
+                        if "/" in data_str:
+                            p = data_str.split("/")
+                            return f"{p[0].zfill(2)}/{p[1].zfill(2)}"
+                        if "-" in data_str:
+                            p = data_str.split("-")
+                            if len(p) == 3: return f"{p[2].zfill(2)}/{p[1].zfill(2)}"
+                        return data_str
+
+                    df_nivers['Aniversário'] = df_nivers['data_nascimento'].apply(formatar_exibicao)
+                    
+                    # Ordenação Cronológica (transformando DD/MM em MM-DD temporariamente só para a máquina organizar)
+                    df_nivers['Ordem_Cronologica'] = df_nivers['Aniversário'].apply(lambda x: f"{x[-2:]}-{x[:2]}" if "/" in x else "99-99")
+                    df_nivers = df_nivers.sort_values('Ordem_Cronologica')
                     
                     # 🟢 MÁGICA DO WHATSAPP: Cria o link de mensagem direto
                     def gerar_link_wpp(telefone, nome_cliente):
-                        if pd.isnull(telefone) or str(telefone).strip() == "":
-                            return None
-                        
-                        # Limpa deixando apenas números
+                        if pd.isnull(telefone) or str(telefone).strip() == "": return None
                         num = ''.join(filter(str.isdigit, str(telefone)))
                         if len(num) >= 10:
-                            # Adiciona o DDI do Brasil se não estiver presente
-                            if len(num) <= 11:
-                                num = "55" + num
-                            
-                            # A sua mensagem de aniversário personalizada
+                            if len(num) <= 11: num = "55" + num
                             msg = f"""Olá, {nome_cliente}!
                             
 Hoje é um dia especial, o seu aniversário! 🥳
@@ -528,24 +540,17 @@ Mais do que celebrar uma data, queremos celebrar você e agradecer por fazer par
 Aproveite cada momento do seu dia, receba todo o carinho que merece e celebre muito!
 
 Feliz aniversário! 🥳✨"""
-                            
                             from urllib.parse import quote
                             return f"https://api.whatsapp.com/send?phone={num}&text={quote(msg)}"
                         return None
                     
                     df_nivers['Ação'] = df_nivers.apply(lambda row: gerar_link_wpp(row['telefone'], row['nome']), axis=1)
-                    
-                    # Removemos a renomeação da categoria aqui
                     df_nivers = df_nivers.rename(columns={'nome': 'Cliente', 'telefone': 'Contato'})
                     
-                    # Exibe a listagem sem a coluna 'Categoria'
                     st.dataframe(
                         df_nivers[['Cliente', 'Aniversário', 'Contato', 'Ação']],
                         column_config={
-                            "Ação": st.column_config.LinkColumn(
-                                "📱 Enviar", 
-                                display_text="Mensagem" 
-                            )
+                            "Ação": st.column_config.LinkColumn("📱 Enviar", display_text="Mensagem")
                         },
                         hide_index=True, 
                         use_container_width=True
@@ -579,7 +584,7 @@ Feliz aniversário! 🥳✨"""
                 st.dataframe(df_ranking_crm, hide_index=True, use_container_width=True)
             else:
                 st.warning("Nenhuma venda para gerar o ranking neste período.")
-
+                
         with aba_hist:
             st.subheader("📜 Histórico Geral e Faturamento")
             
