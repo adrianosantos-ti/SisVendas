@@ -463,15 +463,12 @@ else:
             df_cli = carregar_dados(query_cli, (emp_id,))
             
             if not df_cli.empty and d_ini and d_fim:
-                # Conversão flexível: tenta o padrão brasileiro, se falhar mantém o formato nativo do banco
-                df_cli['Data_Nasc_Obj'] = pd.to_datetime(df_cli['data_nascimento'], format='%d/%m/%Y', errors='coerce').dt.date
                 
-                # Tratamento secundário para garantir que nenhuma variação de formato (como YYYY-MM-DD) seja perdida
-                linhas_nulas = df_cli['Data_Nasc_Obj'].isnull() & df_cli['data_nascimento'].notnull() & (df_cli['data_nascimento'] != '')
-                if linhas_nulas.any():
-                    df_cli.loc[linhas_nulas, 'Data_Nasc_Obj'] = pd.to_datetime(df_cli.loc[linhas_nulas, 'data_nascimento'], errors='coerce').dt.date
+                # --- CORREÇÃO DA LEITURA DE DATA AQUI ---
+                # O Pandas infere sozinho o formato YYYY-MM-DD vindo do banco.
+                df_cli['Data_Nasc_Obj'] = pd.to_datetime(df_cli['data_nascimento'], errors='coerce').dt.date
                 
-                # FUNÇÃO CORRIGIDA: Regra global no topo para não esconder ninguém sem data
+                # FUNÇÃO: Regra global no topo para não esconder ninguém sem data
                 def checar_niver(nasc_date):
                     # SE FOR TODO O PERÍODO, LIBERA GERAL (Mesmo os que estão sem data preenchida)
                     if per_sel == "Todo o Período": 
@@ -503,8 +500,8 @@ else:
                     df_nivers['Ordem_Cronologica'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%m-%d') if pd.notnull(x) else '99-99')
                     df_nivers = df_nivers.sort_values('Ordem_Cronologica')
                     
-                    # Formata a exibição do Aniversário
-                    df_nivers['Aniversário'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%d/%m') if pd.notnull(x) else "⚠️ Não informado")
+                    # Formata a exibição do Aniversário para o padrão Brasileiro
+                    df_nivers['Aniversário'] = df_nivers['Data_Nasc_Obj'].apply(lambda x: x.strftime('%d/%m/%Y') if pd.notnull(x) else "⚠️ Não informado")
                     
                     # 🟢 MÁGICA DO WHATSAPP: Cria o link de mensagem direto
                     def gerar_link_wpp(telefone, nome_cliente):
@@ -553,6 +550,8 @@ Feliz aniversário! 🥳✨"""
                         hide_index=True, 
                         use_container_width=True
                     )
+                else:
+                    st.info("Nenhuma cliente faz aniversário neste período.")
                 
             st.markdown("---")
             
