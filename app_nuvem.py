@@ -3001,7 +3001,7 @@ Feliz aniversário! 🥳✨"""
         with tab_pag:
             st.markdown("### 🔴 Controle de Compromissos e Despesas")
             
-            # 1. Carrega todas as contas a pagar para alimentar os cálculos e a tabela
+            # 1. Carrega todas as contas a pagar ordenando nativamente pelo texto YYYY-MM-DD
             df_pagar_geral = carregar_dados("""
                 SELECT cp.id AS "ID", f.nome AS "Fornecedor", cp.num_parcela AS "Parcela", 
                        cp.total_parcelas AS "De", cp.valor_parcela AS "Valor (R$)", 
@@ -3009,7 +3009,7 @@ Feliz aniversário! 🥳✨"""
                 FROM contas_pagar cp 
                 JOIN fornecedores f ON cp.fornecedor_id = f.id 
                 WHERE cp.empresa_id = %s 
-                ORDER BY TO_DATE(cp.data_vencimento, 'DD/MM/YYYY') ASC
+                ORDER BY cp.data_vencimento ASC
             """, (emp_id,))
             
             # 2. Carrega a lista de fornecedores para os formulários de cadastro/edição
@@ -3019,7 +3019,8 @@ Feliz aniversário! 🥳✨"""
             
             # --- CARDS DE MÉTRICAS DO CONTAS A PAGAR ---
             if not df_pagar_geral.empty:
-                df_pagar_geral['Data_Venc_Obj'] = pd.to_datetime(df_pagar_geral['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
+                # O Pandas infere a data automaticamente, independente de como veio do banco
+                df_pagar_geral['Data_Venc_Obj'] = pd.to_datetime(df_pagar_geral['Vencimento'], errors='coerce').dt.date
                 
                 v_pago = df_pagar_geral[df_pagar_geral['Status'] == 'Pago']['Valor (R$)'].sum()
                 v_pend_pag = df_pagar_geral[df_pagar_geral['Status'] == 'Pendente']['Valor (R$)'].sum()
@@ -3044,7 +3045,11 @@ Feliz aniversário! 🥳✨"""
                     df_p_pendentes = df_pagar_geral[df_pagar_geral['Status'] == 'Pendente']
                     if not df_p_pendentes.empty:
                         with st.form("form_baixa_pagar"):
-                            op_baixa_p = df_p_pendentes.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
+                            # Ajuste de exibição da data para o Dropdown
+                            df_p_pendentes_view = df_p_pendentes.copy()
+                            df_p_pendentes_view['Venc_BR'] = pd.to_datetime(df_p_pendentes_view['Vencimento']).dt.strftime('%d/%m/%Y')
+                            
+                            op_baixa_p = df_p_pendentes_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Venc_BR']}", axis=1).tolist()
                             despesa_sel = st.selectbox("Selecione a despesa que foi paga:", options=op_baixa_p)
                             
                             c_b1, c_b2 = st.columns([1, 2])
@@ -3053,7 +3058,8 @@ Feliz aniversário! 🥳✨"""
                             if st.form_submit_button("🔴 Confirmar Pagamento", type="primary"):
                                 id_desp_baixa = int(despesa_sel.split("ID ")[1].split(" |")[0])
                                 conn = conectar_banco()
-                                conn.cursor().execute("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%d/%m/%Y"), id_desp_baixa, emp_id))
+                                # Salva como YYYY-MM-DD
+                                conn.cursor().execute("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%Y-%m-%d"), id_desp_baixa, emp_id))
                                 conn.commit()
                                 conn.close()
                                 st.success("Despesa baixada com sucesso no fluxo financeiro!")
@@ -3079,13 +3085,12 @@ Feliz aniversário! 🥳✨"""
                             conn = conectar_banco()
                             cur = conn.cursor()
                             
-                            # Gera automaticamente o desdobramento das parcelas de 30 em 30 dias
                             for i in range(1, int(tot_parc_manual) + 1):
                                 venc_parc_manual = data_1_venc_manual + timedelta(days=30 * (i - 1))
                                 cur.execute("""
                                     INSERT INTO contas_pagar (fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
                                     VALUES (%s, %s, %s, %s, %s, 'Pendente', %s)
-                                """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%d/%m/%Y"), emp_id))
+                                """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%Y-%m-%d"), emp_id))
                             
                             conn.commit()
                             conn.close()
@@ -3097,7 +3102,11 @@ Feliz aniversário! 🥳✨"""
             # --- OPERAÇÃO 3: ✏️ EDITAR OU 🗑️ EXCLUIR LANÇAMENTO (U & D DO CRUD) ---
             with st.expander("✏️ Editar ou 🗑️ Cancelar Lançamento", expanded=False):
                 if not df_pagar_geral.empty:
-                    op_edicao_p = df_pagar_geral.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} [{x['Status']}]", axis=1).tolist()
+                    # Ajuste visual para edição
+                    df_edicao_view = df_pagar_geral.copy()
+                    df_edicao_view['Venc_BR'] = pd.to_datetime(df_edicao_view['Vencimento']).dt.strftime('%d/%m/%Y')
+                    op_edicao_p = df_edicao_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} [{x['Status']}]", axis=1).tolist()
+                    
                     desp_edicao_sel = st.selectbox("Selecione a despesa para alterar ou remover:", options=op_edicao_p, key="sel_crud_desp")
                     id_desp_crud = int(desp_edicao_sel.split("ID ")[1].split(" |")[0])
                     
@@ -3108,7 +3117,7 @@ Feliz aniversário! 🥳✨"""
                     # Sub-Formulário de Edição (Update)
                     with col_cr1:
                         st.markdown("**✏️ Formulário de Edição**")
-                        try: date_v_form = datetime.strptime(linha_atual_desp['Vencimento'], "%d/%m/%Y").date()
+                        try: date_v_form = datetime.strptime(str(linha_atual_desp['Vencimento']), "%Y-%m-%d").date()
                         except: date_v_form = hoje
                         
                         with st.form("form_update_despesa_individual"):
@@ -3117,10 +3126,10 @@ Feliz aniversário! 🥳✨"""
                             
                             novo_pagto_desp_val = linha_atual_desp['Data Pagto']
                             if linha_atual_desp['Status'] == 'Pago':
-                                try: date_p_form = datetime.strptime(linha_atual_desp['Data Pagto'], "%d/%m/%Y").date()
+                                try: date_p_form = datetime.strptime(str(linha_atual_desp['Data Pagto']), "%Y-%m-%d").date()
                                 except: date_p_form = hoje
                                 dt_p_input = st.date_input("Data do Pagamento", value=date_p_form, format="DD/MM/YYYY")
-                                novo_pagto_desp_val = dt_p_input.strftime("%d/%m/%Y")
+                                novo_pagto_desp_val = dt_p_input.strftime("%Y-%m-%d")
                             
                             if st.form_submit_button("💾 Atualizar Dados"):
                                 conn = conectar_banco()
@@ -3128,7 +3137,7 @@ Feliz aniversário! 🥳✨"""
                                     UPDATE contas_pagar 
                                     SET valor_parcela = %s, data_vencimento = %s, data_pagamento = %s 
                                     WHERE id = %s AND empresa_id = %s
-                                """, (float(novo_v_desp), novo_venc_desp.strftime("%d/%m/%Y"), novo_pagto_desp_val, id_desp_crud, emp_id))
+                                """, (float(novo_v_desp), novo_venc_desp.strftime("%Y-%m-%d"), novo_pagto_desp_val, id_desp_crud, emp_id))
                                 conn.commit()
                                 conn.close()
                                 st.success("Lançamento atualizado com sucesso!")
@@ -3165,7 +3174,13 @@ Feliz aniversário! 🥳✨"""
                 elif filtro_status_pagar == "Atrasados":
                     df_view_pagar = df_view_pagar[(df_view_pagar['Status'] == 'Pendente') & (df_view_pagar['Data_Venc_Obj'] < hoje)]
                 
+                # Oculta a coluna de objeto e formata as datas para DD/MM/YYYY para o usuário final
                 df_exibicao_pagar = df_view_pagar.drop(columns=['Data_Venc_Obj'], errors='ignore')
+                df_exibicao_pagar['Vencimento'] = pd.to_datetime(df_exibicao_pagar['Vencimento']).dt.strftime('%d/%m/%Y')
+                
+                # Mascara o Data Pagto se for nulo
+                df_exibicao_pagar['Data Pagto'] = pd.to_datetime(df_exibicao_pagar['Data Pagto']).dt.strftime('%d/%m/%Y').fillna('-')
+
                 st.dataframe(df_exibicao_pagar, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhuma conta a pagar registrada.")
