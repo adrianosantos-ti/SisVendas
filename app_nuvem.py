@@ -2158,16 +2158,16 @@ Feliz aniversário! 🥳✨"""
                     dados_compra = df_historico[df_historico['id'] == compra_selecionada_id].iloc[0]
                     st.metric(label="Valor Total da Nota", value=f"R$ {dados_compra['valor_total']:.2f}")
                     
-                    # --- NOVO BLOCO: ENGENHARIA REVERSA E EXCLUSÃO DA NOTA ---
+                    # --- ZONA DE ESTORNO DE ESTOQUE E FINANCEIRO ---
                     st.markdown("---")
-                    st.warning("⚠️ **Zona de Perigo:** Ao estornar esta entrada, o sistema irá recalcular o estoque físico, subtraindo as quantidades compradas automaticamente.")
+                    st.warning("⚠️ **Zona de Perigo:** Ao estornar esta entrada, o sistema irá recalcular o estoque físico (subtraindo os itens) e removerá todas as parcelas em aberto ou pagas do Contas a Pagar.")
                     
                     if st.button("🚨 Estornar e Excluir esta Entrada", type="primary", use_container_width=True):
                         try:
                             conn = conectar_banco()
                             cur = conn.cursor()
                             
-                            # 1. Puxa os itens da nota selecionada para fazer o estorno físico
+                            # 1. Puxa os itens da nota selecionada para fazer o estorno físico no estoque
                             cur.execute("SELECT produto_referencia, quantidade FROM itens_compra WHERE compra_id = %s", (int(compra_selecionada_id),))
                             itens_estorno = cur.fetchall()
                             
@@ -2182,20 +2182,23 @@ Feliz aniversário! 🥳✨"""
                             # 3. Deleta o histórico analítico de itens da nota
                             cur.execute("DELETE FROM itens_compra WHERE compra_id = %s", (int(compra_selecionada_id),))
                             
-                            # 4. Deleta a capa do pedido da tabela compras
+                            # 4. LIMPEZA FINANCEIRA: Remove todas as parcelas geradas por esta compra no contas a pagar
+                            cur.execute("DELETE FROM contas_pagar WHERE compra_id = %s", (int(compra_selecionada_id),))
+                            
+                            # 5. Deleta a capa do pedido da tabela compras
                             cur.execute("DELETE FROM compras WHERE id = %s", (int(compra_selecionada_id),))
                             
                             conn.commit()
                             conn.close()
                             
-                            st.success(f"✅ Sucesso! A Entrada {dados_compra['numero_pedido']} foi completamente estornada do estoque e removida do histórico.")
+                            st.success(f"✅ Sucesso! A Entrada {dados_compra['numero_pedido']} e suas respectivas parcelas financeiras foram completamente removidas do sistema.")
                             st.rerun()
                             
                         except Exception as e:
                             st.error(f"Erro ao processar estorno no banco de dados: {e}")
                             if 'conn' in locals(): conn.rollback(); conn.close()
             else:
-                st.warning("Nenhuma nota de entrada processada neste período.")
+                st.warning("Nenhuma nota de entrada processada neste período.")   
                 
         # ==========================================
         # ABA: MOVIMENTAÇÕES (TROCAS E EMPRÉSTIMOS)
