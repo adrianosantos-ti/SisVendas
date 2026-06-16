@@ -117,7 +117,6 @@ if not st.session_state['logado']:
                 cursor = conn.cursor()
                 cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
                 usuario = cursor.fetchone()
-                conn.close()
                 
                 if usuario:
                     st.session_state['logado'] = True
@@ -125,8 +124,32 @@ if not st.session_state['logado']:
                     st.session_state['usuario_nome'] = usuario[1]
                     st.session_state['perfil'] = usuario[2]
                     st.session_state['empresa_id'] = usuario[3]
+                    
+                    # --- NOVA LÓGICA DE CARREGAMENTO DE PERMISSÕES ---
+                    perfil_usuario = usuario[2]
+                    id_usuario_logado = usuario[0]
+
+                    if perfil_usuario in ['admin', 'master']:
+                        # Se for admin/master, puxa todas as chaves existentes no sistema
+                        cursor.execute("SELECT chave FROM modulos")
+                        resultado = cursor.fetchall()
+                        st.session_state['modulos_permitidos'] = [linha[0] for linha in resultado] if resultado else []
+                    else:
+                        # Se for usuário comum, cruza com a tabela de permissões
+                        cursor.execute("""
+                            SELECT m.chave 
+                            FROM permissoes_acesso p
+                            JOIN modulos m ON p.modulo_id = m.id
+                            WHERE p.usuario_id = %s
+                        """, (id_usuario_logado,))
+                        resultado = cursor.fetchall()
+                        st.session_state['modulos_permitidos'] = [linha[0] for linha in resultado] if resultado else []
+
+                    # Agora sim, com tudo salvo na memória, fechamos o banco e recarregamos a tela
+                    conn.close()
                     st.rerun()
                 else:
+                    conn.close()
                     st.error("❌ Usuário ou senha incorretos.")
 
 # --- PAINEL DO ADMINISTRADOR MASTER ---
