@@ -389,14 +389,33 @@ else:
         st.session_state['menu_principal'] = st.session_state['forcar_menu']
         del st.session_state['forcar_menu'] # Apaga o bilhete para não ficar travado
     
-    # ADICIONADO O PARÂMETRO key="menu_principal" NO FINAL DO RADIO
-    modulo = st.sidebar.radio("Navegação Principal:", [
-        "📊 Análises", 
-        "🗂️ Cadastros", 
-        "🔄 Movimentações", 
-        "💰 Financeiro",
-        "📣 CRM & Pós-Venda"
-    ], key="menu_principal")
+    # --- FILTRO DINÂMICO DE PERMISSÕES ---
+    meus_acessos = st.session_state.get('modulos_permitidos', [])
+
+    # Mapeamento exato entre as chaves do banco e os textos do seu Radio
+    mapeamento_modulos = {
+        'mod_dash': "📊 Análises", 
+        'mod_produtos': "🗂️ Cadastros", 
+        'mod_vendas': "🔄 Movimentações", 
+        'mod_financeiro': "💰 Financeiro",
+        'mod_crm': "📣 CRM & Pós-Venda"
+    }
+
+    # Cria a lista de opções contendo apenas o que o usuário tem permissão para ver
+    opcoes_permitidas = [texto for chave, texto in mapeamento_modulos.items() if chave in meus_acessos]
+
+    # Validação crucial: Se o usuário logou e a opção padrão do state não está no pacote dele
+    # (ex: o usuário anterior era admin e estava em Financeiro, mas o atual só vê PDV),
+    # nós forçamos o state para a primeira opção disponível para evitar quebra no Streamlit.
+    if opcoes_permitidas:
+        if 'menu_principal' in st.session_state and st.session_state['menu_principal'] not in opcoes_permitidas:
+            st.session_state['menu_principal'] = opcoes_permitidas[0]
+
+        # Desenha o Radio contendo APENAS os módulos liberados
+        modulo = st.sidebar.radio("Navegação Principal:", options=opcoes_permitidas, key="menu_principal")
+    else:
+        st.sidebar.warning("⚠️ Nenhum módulo liberado para seu usuário.")
+        modulo = None
     
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"👤 **{st.session_state['usuario_nome']}**")
@@ -419,7 +438,6 @@ else:
     if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
         st.session_state.clear()
         st.rerun()
-
     # ==========================================
     # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
     # ==========================================
