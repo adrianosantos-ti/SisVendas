@@ -194,106 +194,139 @@ elif st.session_state['perfil'] == 'master':
         st.dataframe(df_empresas, use_container_width=True, hide_index=True)
 
     with aba_cad_usuario:
-        st.subheader("Novo Login")
+        st.subheader("Novo Login e Acessos")
         
-        # Carrega lista de empresas para usar nos selects (tanto no cadastro quanto na edição)
+        # Carrega lista de empresas para usar nos selects
         df_emp_list = carregar_dados("SELECT id, nome FROM empresas ORDER BY id")
         dict_empresas = dict(zip(df_emp_list['nome'], df_emp_list['id']))
         lista_nomes_empresas = list(dict_empresas.keys())
 
-        # --- 1. BLOCO DE NOVO CADASTRO (Seu código original) ---
+        # --- 1. BLOCO DE NOVO CADASTRO ---
         with st.form("form_novo_usuario", clear_on_submit=True):
             nome_usu = st.text_input("Nome")
             emp_usu = st.selectbox("Empresa", options=lista_nomes_empresas)
             login_usu = st.text_input("Login")
             senha_usu = st.text_input("Senha", type="password")
+            
+            # Campo para já definir se é admin ou comum na criação
+            perfil_usu = st.selectbox("Perfil de Acesso", ["comum", "admin"], help="Admins têm acesso a todas as telas automaticamente. Comuns precisam de permissões específicas.")
+            
             if st.form_submit_button("Criar"):
                 conn = conectar_banco()
                 conn.cursor().execute(
-                    "INSERT INTO usuarios (nome, login, senha, empresa_id, perfil) VALUES (%s,%s,%s,%s,'comum')", 
-                    (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu])
+                    "INSERT INTO usuarios (nome, login, senha, empresa_id, perfil) VALUES (%s,%s,%s,%s,%s)", 
+                    (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu], perfil_usu)
                 )
                 conn.commit()
                 conn.close()
-                st.success(f"Usuário '{nome_usu}' criado com sucesso!")
+                st.success(f"Usuário '{nome_usu}' criado com sucesso! Agora configure as permissões dele na aba abaixo.")
                 st.rerun()
 
-        # Carrega os usuários para edição, exclusão e exibição na tabela
-        # Adicionei o u.empresa_id na query para usarmos na lógica de edição
-        df_usuarios = carregar_dados("SELECT u.id, u.nome, u.login, u.empresa_id, e.nome as empresa FROM usuarios u JOIN empresas e ON u.empresa_id = e.id ORDER BY u.id")
+        # Carrega os dados atualizados
+        df_usuarios = carregar_dados("SELECT u.id, u.nome, u.login, u.perfil, u.empresa_id, e.nome as empresa FROM usuarios u JOIN empresas e ON u.empresa_id = e.id ORDER BY u.id")
+        opcoes_usuarios = df_usuarios['id'].tolist() if not df_usuarios.empty else []
+        
+        def formatar_usuario(u_id):
+            linha = df_usuarios[df_usuarios['id'] == u_id].iloc[0]
+            return f"ID {linha['id']} - {linha['nome']} ({linha['perfil'].upper()}) | Emp: {linha['empresa']}"
 
-        # --- 2. BLOCO DE EDIÇÃO ---
-        with st.expander("✏️ Editar Login"):
+        # --- 2. NOVO BLOCO: GERENCIAR PERMISSÕES ---
+        with st.expander("🔐 Gerenciar Permissões de Acesso (Menu)"):
             if not df_usuarios.empty:
-                opcoes_usuarios = df_usuarios['id'].tolist()
+                # Puxa quais telas existem no sistema
+                df_modulos = carregar_dados("SELECT id, nome, chave FROM modulos ORDER BY id")
                 
-                def formatar_usuario(u_id):
-                    linha = df_usuarios[df_usuarios['id'] == u_id].iloc[0]
-                    return f"ID {linha['id']} - {linha['nome']} ({linha['login']}) | Emp: {linha['empresa']}"
+                if df_modulos.empty:
+                    st.error("Nenhum módulo cadastrado no banco. Rode o INSERT na tabela 'modulos' primeiro.")
+                else:
+                    usu_perm_sel = st.selectbox("Selecione o usuário para configurar os acessos:", opcoes_usuarios, format_func=formatar_usuario, key="sel_perm")
                     
-                usu_ed_sel = st.selectbox("Selecione o usuário para atualizar:", opcoes_usuarios, format_func=formatar_usuario, key="edit_usu")
-                
-                if usu_ed_sel:
-                    usu_atual = df_usuarios[df_usuarios['id'] == usu_ed_sel].iloc[0]
+                    linha_usu = df_usuarios[df_usuarios['id'] == usu_perm_sel].iloc[0]
                     
-                    with st.form("f_edita_usuario"):
-                        c1, c2 = st.columns(2)
-                        e_nome = c1.text_input("Nome", value=usu_atual['nome'])
-                        e_login = c2.text_input("Login", value=usu_atual['login'])
+                    if linha_usu['perfil'] == 'admin' or linha_usu['perfil'] == 'master':
+                        st.info(f"O usuário **{linha_usu['nome']}** tem o perfil '{linha_usu['perfil'].upper()}'. Ele já possui acesso liberado a todas as telas do sistema por padrão.")
+                    else:
+                        st.write(f"Configure quais telas o usuário **{linha_usu['nome']}** pode acessar:")
                         
-                        # Acha o índice da empresa atual para deixar o Selectbox já posicionado nela
-                        try:
-                            idx_emp = lista_nomes_empresas.index(usu_atual['empresa'])
-                        except ValueError:
-                            idx_emp = 0
+                        # Puxa do banco quais permissões esse usuário JÁ TEM hoje
+                        query_perm_atuais = "SELECT modulo_id FROM permissoes_acesso WHERE usuario_id = %s"
+                        df_perm_atuais = carregar_dados(query_perm_atuais, (int(usu_perm_sel),))
+                        modulos_ja_permitidos = df_perm_atuais['modulo_id'].tolist() if not df_perm_atuais.empty else []
+
+                        # Formulário de Checkboxes dinâmicos
+                        with st.form("f_permissoes"):
+                            selecoes = {}
+                            for _, mod in df_modulos.iterrows():
+                                # Se o ID do módulo estiver na lista do que ele já tem, a caixinha nasce marcada (value=True)
+                                tem_acesso = mod['id'] in modulos_ja_permitidos
+                                selecoes[mod['id']] = st.checkbox(f"TELA: {mod['nome']}", value=tem_acesso)
                             
-                        e_emp = st.selectbox("Empresa", options=lista_nomes_empresas, index=idx_emp)
-                        
-                        # Campo de senha opcional para não obrigar a redigitar sempre que for alterar só o nome
-                        e_senha = st.text_input("Nova Senha (deixe em branco para manter a atual)", type="password")
-                        
-                        if st.form_submit_button("💾 Salvar Alterações"):
+                            if st.form_submit_button("💾 Salvar Permissões"):
+                                conn = conectar_banco()
+                                cursor = conn.cursor()
+                                
+                                # Limpa as permissões antigas do usuário para regravar do zero (Evita duplicidade)
+                                cursor.execute("DELETE FROM permissoes_acesso WHERE usuario_id = %s", (int(usu_perm_sel),))
+                                
+                                # Grava apenas os checkboxes que ficaram marcados (True)
+                                for mod_id, esta_marcado in selecoes.items():
+                                    if esta_marcado:
+                                        cursor.execute(
+                                            "INSERT INTO permissoes_acesso (usuario_id, modulo_id) VALUES (%s, %s)", 
+                                            (int(usu_perm_sel), int(mod_id))
+                                        )
+                                
+                                conn.commit()
+                                conn.close()
+                                st.success(f"Permissões de {linha_usu['nome']} atualizadas com sucesso!")
+            else:
+                st.info("Cadastre um usuário primeiro.")
+
+        # --- 3. BLOCO DE EDIÇÃO E EXCLUSÃO ---
+        c_edit, c_del = st.columns(2)
+        
+        with c_edit:
+            with st.expander("✏️ Editar Cadastro (Nome/Empresa/Perfil)"):
+                if not df_usuarios.empty:
+                    usu_ed_sel = st.selectbox("Selecione o usuário:", opcoes_usuarios, format_func=formatar_usuario, key="edit_usu")
+                    if usu_ed_sel:
+                        usu_atual = df_usuarios[df_usuarios['id'] == usu_ed_sel].iloc[0]
+                        with st.form("f_edita_usuario"):
+                            e_nome = st.text_input("Nome", value=usu_atual['nome'])
+                            e_login = st.text_input("Login", value=usu_atual['login'])
+                            e_perfil = st.selectbox("Perfil", ["comum", "admin"], index=0 if usu_atual['perfil'] == 'comum' else 1)
+                            
+                            try: idx_emp = lista_nomes_empresas.index(usu_atual['empresa'])
+                            except ValueError: idx_emp = 0
+                            e_emp = st.selectbox("Empresa", options=lista_nomes_empresas, index=idx_emp)
+                            
+                            if st.form_submit_button("💾 Salvar Alterações"):
+                                conn = conectar_banco()
+                                conn.cursor().execute(
+                                    "UPDATE usuarios SET nome=%s, login=%s, empresa_id=%s, perfil=%s WHERE id=%s", 
+                                    (e_nome, e_login, dict_empresas[e_emp], e_perfil, int(usu_ed_sel))
+                                )
+                                conn.commit()
+                                conn.close()
+                                st.success("✅ Usuário atualizado com sucesso!")
+                                st.rerun()
+
+        with c_del:
+            with st.expander("🗑️ Excluir Login"):
+                if not df_usuarios.empty:
+                    usu_del_sel = st.selectbox("Selecione o usuário para EXCLUIR:", opcoes_usuarios, format_func=formatar_usuario, key="del_usu")
+                    with st.form("f_exclui_usuario"):
+                        st.warning("⚠️ O acesso será apagado permanentemente.")
+                        if st.form_submit_button("🚨 Confirmar Exclusão"):
                             conn = conectar_banco()
-                            if e_senha.strip() == "":
-                                # Atualiza sem mexer na coluna senha
-                                conn.cursor().execute(
-                                    "UPDATE usuarios SET nome=%s, login=%s, empresa_id=%s WHERE id=%s", 
-                                    (e_nome, e_login, dict_empresas[e_emp], int(usu_ed_sel))
-                                )
-                            else:
-                                # Atualiza tudo, incluindo a nova senha
-                                conn.cursor().execute(
-                                    "UPDATE usuarios SET nome=%s, login=%s, empresa_id=%s, senha=%s WHERE id=%s", 
-                                    (e_nome, e_login, dict_empresas[e_emp], e_senha, int(usu_ed_sel))
-                                )
+                            conn.cursor().execute("DELETE FROM usuarios WHERE id=%s", (int(usu_del_sel),))
                             conn.commit()
                             conn.close()
-                            
-                            st.success("✅ Usuário atualizado com sucesso!")
+                            st.success("🗑️ Usuário excluído!")
                             st.rerun()
-            else:
-                st.info("Não há usuários cadastrados.")
-
-        # --- 3. BLOCO DE EXCLUSÃO ---
-        with st.expander("🗑️ Excluir Login"):
-            if not df_usuarios.empty:
-                st.warning("⚠️ Atenção: A exclusão apagará o acesso permanentemente.")
-                usu_del_sel = st.selectbox("Selecione o usuário para EXCLUIR:", opcoes_usuarios, format_func=formatar_usuario, key="del_usu")
-                
-                with st.form("f_exclui_usuario"):
-                    st.write("Tem certeza que deseja remover o acesso deste usuário?")
-                    if st.form_submit_button("🚨 Confirmar Exclusão"):
-                        conn = conectar_banco()
-                        conn.cursor().execute("DELETE FROM usuarios WHERE id=%s", (int(usu_del_sel),))
-                        conn.commit()
-                        conn.close()
-                        
-                        st.success("🗑️ Usuário excluído com sucesso!")
-                        st.rerun()
 
         # --- 4. TABELA FINAL DE EXIBIÇÃO ---
-        # Filtramos as colunas no display para não mostrar o ID interno da empresa na tabela visual
-        st.dataframe(df_usuarios[['id', 'nome', 'login', 'empresa']], use_container_width=True, hide_index=True)
+        st.dataframe(df_usuarios[['id', 'nome', 'login', 'perfil', 'empresa']], use_container_width=True, hide_index=True)
     
     with aba_senhas:
         st.subheader("Reset de Senhas")
