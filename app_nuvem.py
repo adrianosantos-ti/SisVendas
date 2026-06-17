@@ -2465,90 +2465,90 @@ Feliz aniversário! 🥳✨"""
                                 st.error(f"Erro ao processar transação: {e}")
                                 if 'conn' in locals(): conn.close()
 
-                # ==========================================
-                # VISÃO APP: ACOMPANHAMENTO DE TROCAS EM STANDBY
-                # ==========================================
-                st.markdown("---")
-                st.subheader("📱 Visão App: Trocas em Standby (Abertas)")
-                
-                df_trocas_abertas = carregar_dados("""
-                    SELECT t.id, t.data_movimentacao, c.nome AS consultora, t.total_saida, t.total_entrada, t.cliente_id
-                    FROM trocas t 
-                    JOIN clientes c ON t.cliente_id = c.id 
-                    WHERE t.empresa_id = %s AND t.status_financeiro = 'Em Aberto'
-                    ORDER BY t.data_movimentacao DESC
-                """, (emp_id,))
-                
-                if not df_trocas_abertas.empty:
-                    for idx, troca_aberta in df_trocas_abertas.iterrows():
-                        id_t = troca_aberta['id']
-                        nome_con = troca_aberta['consultora']
-                        data_t = troca_aberta['data_movimentacao']
-                        
-                        with st.container(border=True):
-                            st.markdown(f"🔄 **Troca Nº {id_t} - {nome_con}**")
-                            st.caption(f"📅 Aberta em: {data_t}")
-                            
-                            with st.expander("🔍 Ver Detalhes e Finalizar Acerto", expanded=False):
-                                df_itens_t = carregar_dados("""
-                                    SELECT ti.quantidade, ti.valor_unitario, ti.sentido, p.nome 
-                                    FROM trocas_itens ti 
-                                    JOIN produtos p ON ti.produto_id = p.id 
-                                    WHERE ti.troca_id = %s
-                                """, (id_t,))
-                                
-                                if not df_itens_t.empty:
-                                    df_s = df_itens_t[df_itens_t['sentido'] == 'S']
-                                    if not df_s.empty:
-                                        st.markdown("**📤 Saíram para a Consultora:**")
-                                        for _, it in df_s.iterrows():
-                                            st.caption(f"▪️ {it['quantidade']}x {it['nome']} (R$ {it['valor_unitario']:.2f})")
-                                            
-                                    df_e = df_itens_t[df_itens_t['sentido'] == 'E']
-                                    if not df_e.empty:
-                                        st.markdown("**📥 Retornaram dela:**")
-                                        for _, it in df_e.iterrows():
-                                            st.caption(f"▪️ {it['quantidade']}x {it['nome']} (R$ {it['valor_unitario']:.2f})")
-                                
-                                t_saida = float(troca_aberta['total_saida'])
-                                t_entrada = float(troca_aberta['total_entrada'])
-                                dif = t_saida - t_entrada
-                                
-                                st.markdown("---")
-                                st.markdown(f"**Balanço:** Saída R$ {t_saida:.2f} | Entrada R$ {t_entrada:.2f}".replace('.', ','))
-                                
-                                if dif == 0:
-                                    st.success("⚖️ Valores equivalentes (Permuta Perfeita)")
-                                elif dif > 0:
-                                    st.warning(f"⚠️ Consultora pendente em: **R$ {dif:.2f}**".replace('.', ','))
-                                else:
-                                    st.info(f"ℹ️ Empresa pendente em: **R$ {abs(dif):.2f}**".replace('.', ','))
-                                    
-                                if st.button("🏁 Finalizar e Fechar Troca", key=f"btn_fechar_{id_t}", use_container_width=True, type="primary"):
-                                    try:
-                                        conn = conectar_banco()
-                                        cur = conn.cursor()
-                                        
-                                        if dif > 0:
-                                            status_fin = 'Pendente Consultora'
-                                            cur.execute("""
-                                                INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
-                                                VALUES (%s, %s, 1, 1, %s, %s, 'Pendente', %s)
-                                            """, (int(id_t + 90000), int(troca_aberta['cliente_id']), float(dif), date.today().strftime("%d/%m/%Y"), emp_id))
-                                        else:
-                                            status_fin = 'Compensado'
-                                            
-                                        cur.execute("UPDATE trocas SET status_financeiro = %s, diferenca = %s WHERE id = %s", (status_fin, dif, id_t))
-                                        conn.commit()
-                                        conn.close()
-                                        st.success(f"Troca Nº {id_t} finalizada e resolvida financeiramente!")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Erro ao finalizar: {e}")
-                                        if 'conn' in locals(): conn.close()
-                else:
-                    st.info("Não há nenhuma movimentação de troca em standby no momento.")
+                    # ==========================================
+                    # VISÃO APP: ACOMPANHAMENTO DE TROCAS EM STANDBY
+                    # ==========================================
+                    st.markdown("---")
+                    st.subheader("📱 Visão App: Trocas em Standby (Abertas)")
                     
+                    df_trocas_abertas = carregar_dados("""
+                        SELECT t.id, t.data_movimentacao, c.nome AS consultora, t.total_saida, t.total_entrada, t.cliente_id
+                        FROM trocas t 
+                        JOIN clientes c ON t.cliente_id = c.id 
+                        WHERE t.empresa_id = %s AND t.status_financeiro = 'Em Aberto'
+                        ORDER BY t.data_movimentacao DESC
+                    """, (emp_id,))
+                    
+                    if not df_trocas_abertas.empty:
+                        for idx, troca_aberta in df_trocas_abertas.iterrows():
+                            id_t = troca_aberta['id']
+                            nome_con = troca_aberta['consultora']
+                            data_t = troca_aberta['data_movimentacao']
+                            
+                            with st.container(border=True):
+                                st.markdown(f"🔄 **Troca Nº {id_t} - {nome_con}**")
+                                st.caption(f"📅 Aberta em: {data_t}")
+                                
+                                with st.expander("🔍 Ver Detalhes e Finalizar Acerto", expanded=False):
+                                    df_itens_t = carregar_dados("""
+                                        SELECT ti.quantidade, ti.valor_unitario, ti.sentido, p.nome 
+                                        FROM trocas_itens ti 
+                                        JOIN produtos p ON ti.produto_id = p.id 
+                                        WHERE ti.troca_id = %s
+                                    """, (id_t,))
+                                    
+                                    if not df_itens_t.empty:
+                                        df_s = df_itens_t[df_itens_t['sentido'] == 'S']
+                                        if not df_s.empty:
+                                            st.markdown("**📤 Saíram para a Consultora:**")
+                                            for _, it in df_s.iterrows():
+                                                st.caption(f"▪️ {it['quantidade']}x {it['nome']} (R$ {it['valor_unitario']:.2f})")
+                                                
+                                        df_e = df_itens_t[df_itens_t['sentido'] == 'E']
+                                        if not df_e.empty:
+                                            st.markdown("**📥 Retornaram dela:**")
+                                            for _, it in df_e.iterrows():
+                                                st.caption(f"▪️ {it['quantidade']}x {it['nome']} (R$ {it['valor_unitario']:.2f})")
+                                    
+                                    t_saida = float(troca_aberta['total_saida'])
+                                    t_entrada = float(troca_aberta['total_entrada'])
+                                    dif = t_saida - t_entrada
+                                    
+                                    st.markdown("---")
+                                    st.markdown(f"**Balanço:** Saída R$ {t_saida:.2f} | Entrada R$ {t_entrada:.2f}".replace('.', ','))
+                                    
+                                    if dif == 0:
+                                        st.success("⚖️ Valores equivalentes (Permuta Perfeita)")
+                                    elif dif > 0:
+                                        st.warning(f"⚠️ Consultora pendente em: **R$ {dif:.2f}**".replace('.', ','))
+                                    else:
+                                        st.info(f"ℹ️ Empresa pendente em: **R$ {abs(dif):.2f}**".replace('.', ','))
+                                        
+                                    if st.button("🏁 Finalizar e Fechar Troca", key=f"btn_fechar_{id_t}", use_container_width=True, type="primary"):
+                                        try:
+                                            conn = conectar_banco()
+                                            cur = conn.cursor()
+                                            
+                                            if dif > 0:
+                                                status_fin = 'Pendente Consultora'
+                                                cur.execute("""
+                                                    INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
+                                                    VALUES (%s, %s, 1, 1, %s, %s, 'Pendente', %s)
+                                                """, (int(id_t + 90000), int(troca_aberta['cliente_id']), float(dif), date.today().strftime("%d/%m/%Y"), emp_id))
+                                            else:
+                                                status_fin = 'Compensado'
+                                                
+                                            cur.execute("UPDATE trocas SET status_financeiro = %s, diferenca = %s WHERE id = %s", (status_fin, dif, id_t))
+                                            conn.commit()
+                                            conn.close()
+                                            st.success(f"Troca Nº {id_t} finalizada e resolvida financeiramente!")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Erro ao finalizar: {e}")
+                                            if 'conn' in locals(): conn.close()
+                    else:
+                        st.info("Não há nenhuma movimentação de troca em standby no momento.")
+                        
                 else:
                     st.warning("Nenhuma Consultora cadastrada no sistema. Vá em Cadastros e altere o tipo de um registro para 'Consultora'.")
 
