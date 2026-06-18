@@ -440,28 +440,44 @@ else:
         st.rerun()
 
     # ==========================================
-    # CABEÇALHO GLOBAL COMPACTO (Força Lado a Lado no Celular)
+    # CABEÇALHO GLOBAL 100% DINÂMICO E PERSONALIZADO
     # ==========================================
     nome_empresa = "Minha Empresa" 
+    logo_customizada = None
+    
     try:
-        df_emp = carregar_dados("SELECT nome FROM empresas WHERE id = %s", (emp_id,))
+        # Puxa o nome e a URL da logo da empresa logada
+        df_emp = carregar_dados("SELECT nome, logo_url FROM empresas WHERE id = %s", (emp_id,))
         if not df_emp.empty:
             nome_empresa = df_emp.iloc[0]['nome']
+            logo_customizada = df_emp.iloc[0]['logo_url']
     except Exception:
         pass
 
-    # Converte a logo em Base64 para garantir a exibição inline no HTML
+    # Lógica inteligente para renderizar a logo
     import base64
     import os
     
-    logo_html = "<span style='font-size: 34px;'>🏢</span>" # Aumentamos o emoji de fallback também
-    if os.path.exists("logo.png"):
+    logo_html = "<span style='font-size: 34px;'>🏢</span>" # Fallback definitivo (emoji)
+    
+    # Cenário A: A empresa possui uma logo cadastrada no banco (URL ou Caminho)
+    if logo_customizada:
+        if logo_customizada.startswith("http"):
+            # Se for um link da internet (Ex: Supabase Storage), renderiza direto a URL
+            logo_html = f"<img src='{logo_customizada}' width='55' height='55' style='object-fit: contain; border-radius: 4px;'>"
+        elif os.path.exists(logo_customizada):
+            # Se for um caminho de arquivo local no servidor, converte para Base64
+            with open(logo_customizada, "rb") as img_file:
+                img_base64 = base64.b64encode(img_file.read()).decode()
+                logo_html = f"<img src='data:image/png;base64,{img_base64}' width='55' style='object-fit: contain;'>"
+                
+    # Cenário B: Não tem logo cadastrada, tenta usar a logo padrão do sistema ('logo.png')
+    elif os.path.exists("logo.png"):
         with open("logo.png", "rb") as img_file:
             img_base64 = base64.b64encode(img_file.read()).decode()
-            # Aumentamos a largura da logo para 55px para acompanhar o texto maior
             logo_html = f"<img src='data:image/png;base64,{img_base64}' width='55' style='object-fit: contain;'>"
 
-    # Renderiza o cabeçalho usando Flexbox com fontes maiores e mais peso (font-weight)
+    # Renderiza o painel com Flexbox (Impecável no computador e no celular)
     st.markdown(
         f"""
         <div style="display: flex; align-items: center; gap: 15px; margin-top: -25px; margin-bottom: 5px;">
@@ -475,7 +491,6 @@ else:
     )
 
     st.markdown('<hr style="margin: 0px 0px 15px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
-
     # ==========================================
     # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
     # ==========================================
