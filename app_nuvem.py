@@ -467,31 +467,31 @@ else:
     import base64
     import os
     
-    logo_html = "<span style='font-size: 34px;'>🏢</span>" # Fallback definitivo (emoji)
+    logo_html = "<span style='font-size: 28px;'>🏢</span>" # Fallback ajustado
     
     # Cenário A: A empresa possui uma logo cadastrada no banco (URL ou Caminho)
     if logo_customizada:
         if logo_customizada.startswith("http"):
-            # Se for um link da internet (Ex: Supabase Storage), renderiza direto a URL
-            logo_html = f"<img src='{logo_customizada}' width='55' height='55' style='object-fit: contain; border-radius: 4px;'>"
+            # Aumentamos o width para 85 (e removemos o height fixo para não distorcer imagens retangulares)
+            logo_html = f"<img src='{logo_customizada}' width='85' style='object-fit: contain; border-radius: 4px;'>"
         elif os.path.exists(logo_customizada):
-            # Se for um caminho de arquivo local no servidor, converte para Base64
+            # Se for um caminho de ficheiro local no servidor, converte para Base64
             with open(logo_customizada, "rb") as img_file:
                 img_base64 = base64.b64encode(img_file.read()).decode()
-                logo_html = f"<img src='data:image/png;base64,{img_base64}' width='55' style='object-fit: contain;'>"
+                logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
                 
     # Cenário B: Não tem logo cadastrada, tenta usar a logo padrão do sistema ('logo.png')
     elif os.path.exists("logo.png"):
         with open("logo.png", "rb") as img_file:
             img_base64 = base64.b64encode(img_file.read()).decode()
-            logo_html = f"<img src='data:image/png;base64,{img_base64}' width='55' style='object-fit: contain;'>"
+            logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
 
-    # Renderiza o painel com Flexbox (Impecável no computador e no celular)
+    # Renderiza o painel com Flexbox (fonte reduzida para 28px e gap aumentado para 20px)
     st.markdown(
         f"""
-        <div style="display: flex; align-items: center; gap: 15px; margin-top: -25px; margin-bottom: 5px;">
+        <div style="display: flex; align-items: center; gap: 20px; margin-top: -25px; margin-bottom: 5px;">
             {logo_html}
-            <h1 style="margin: 0; padding: 0; font-size: 34px; font-weight: 800; line-height: 1.1; color: #1f2937;">
+            <h1 style="margin: 0; padding: 0; font-size: 28px; font-weight: 800; line-height: 1.1; color: #1f2937;">
                 {nome_empresa}
             </h1>
         </div>
