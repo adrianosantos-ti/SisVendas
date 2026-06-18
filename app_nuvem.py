@@ -440,7 +440,7 @@ else:
         st.rerun()
 
     # ==========================================
-    # CABEÇALHO GLOBAL MUTÁVEL (Aparece no topo de todas as telas)
+    # CABEÇALHO GLOBAL COMPACTO (Força Lado a Lado no Celular)
     # ==========================================
     nome_empresa = "Minha Empresa" 
     try:
@@ -450,18 +450,30 @@ else:
     except Exception:
         pass
 
-    # Montagem visual da Logomarca lado a lado com o Nome da Empresa
-    c_logo, c_texto = st.columns([1, 8]) 
-    with c_logo:
-        try:
-            st.image("logo.png", width=70)
-        except:
-            st.markdown("🏢")
-            
-    with c_texto:
-        st.markdown(f"<h1 style='margin-top: -15px;'>{nome_empresa}</h1>", unsafe_allow_html=True)
+    # Converte a logo em Base64 para garantir a exibição inline no HTML
+    import base64
+    import os
+    
+    logo_html = "<span style='font-size: 28px;'>🏢</span>" # Fallback caso não ache o arquivo
+    if os.path.exists("logo.png"):
+        with open("logo.png", "rb") as img_file:
+            img_base64 = base64.b64encode(img_file.read()).decode()
+            logo_html = f"<img src='data:image/png;base64,{img_base64}' width='45' style='object-fit: contain;'>"
 
-    st.markdown("---") # Linha elegante que separa o topo fixo do conteúdo da página
+    # Renderiza o cabeçalho usando Flexbox (trava lado a lado e elimina espaços extras)
+    st.markdown(
+        f"""
+        <div style="display: flex; align-items: center; gap: 12px; margin-top: -25px; margin-bottom: 5px;">
+            {logo_html}
+            <h2 style="margin: 0; padding: 0; font-size: 22px; font-weight: 700; line-height: 1.2;">
+                {nome_empresa}
+            </h2>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown('<hr style="margin: 0px 0px 15px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
 
     # ==========================================
     # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
