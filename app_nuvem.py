@@ -438,6 +438,31 @@ else:
     if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
         st.session_state.clear()
         st.rerun()
+
+    # ==========================================
+    # CABEÇALHO GLOBAL MUTÁVEL (Aparece no topo de todas as telas)
+    # ==========================================
+    nome_empresa = "Minha Empresa" 
+    try:
+        df_emp = carregar_dados("SELECT nome FROM empresas WHERE id = %s", (emp_id,))
+        if not df_emp.empty:
+            nome_empresa = df_emp.iloc[0]['nome']
+    except Exception:
+        pass
+
+    # Montagem visual da Logomarca lado a lado com o Nome da Empresa
+    c_logo, c_texto = st.columns([1, 8]) 
+    with c_logo:
+        try:
+            st.image("logo.png", width=70)
+        except:
+            st.markdown("🏢")
+            
+    with c_texto:
+        st.markdown(f"<h1 style='margin-top: -15px;'>{nome_empresa}</h1>", unsafe_allow_html=True)
+
+    st.markdown("---") # Linha elegante que separa o topo fixo do conteúdo da página
+
     # ==========================================
     # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
     # ==========================================
