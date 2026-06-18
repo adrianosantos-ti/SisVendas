@@ -1189,7 +1189,7 @@ Feliz aniversário! 🥳✨"""
                         q_p = 0
                         c3.number_input("Qtd Inicial", min_value=0, value=0, disabled=True, help="Serviços não possuem controle de estoque físico.")
                         
-                    m_p = c4.text_input("Marca / Linha", value="D'Grava" if tipo_letra == 'P' else "Serviço Próprio")
+                    m_p = c4.text_input("Marca / Linha", value=" " if tipo_letra == 'P' else "Serviço Próprio")
                     
                     st.markdown("**Finanças e Precificação:**")
                     c5, c6, c7 = st.columns(3)
