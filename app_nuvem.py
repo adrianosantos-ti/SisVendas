@@ -442,7 +442,7 @@ else:
     # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
     # ==========================================
     if modulo == "📊 Análises":
-        st.markdown("### 📊 Gestão e Performance do Apprimory")
+        st.markdown("### 📊 Gestão e Performance")
         
         # ==========================================
         # 1. FILTRO GLOBAL (Controla todas as abas)
