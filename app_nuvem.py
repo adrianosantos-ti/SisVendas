@@ -454,20 +454,21 @@ else:
     import base64
     import os
     
-    logo_html = "<span style='font-size: 28px;'>🏢</span>" # Fallback caso não ache o arquivo
+    logo_html = "<span style='font-size: 34px;'>🏢</span>" # Aumentamos o emoji de fallback também
     if os.path.exists("logo.png"):
         with open("logo.png", "rb") as img_file:
             img_base64 = base64.b64encode(img_file.read()).decode()
-            logo_html = f"<img src='data:image/png;base64,{img_base64}' width='45' style='object-fit: contain;'>"
+            # Aumentamos a largura da logo para 55px para acompanhar o texto maior
+            logo_html = f"<img src='data:image/png;base64,{img_base64}' width='55' style='object-fit: contain;'>"
 
-    # Renderiza o cabeçalho usando Flexbox (trava lado a lado e elimina espaços extras)
+    # Renderiza o cabeçalho usando Flexbox com fontes maiores e mais peso (font-weight)
     st.markdown(
         f"""
-        <div style="display: flex; align-items: center; gap: 12px; margin-top: -25px; margin-bottom: 5px;">
+        <div style="display: flex; align-items: center; gap: 15px; margin-top: -25px; margin-bottom: 5px;">
             {logo_html}
-            <h2 style="margin: 0; padding: 0; font-size: 22px; font-weight: 700; line-height: 1.2;">
+            <h1 style="margin: 0; padding: 0; font-size: 34px; font-weight: 800; line-height: 1.1; color: #1f2937;">
                 {nome_empresa}
-            </h2>
+            </h1>
         </div>
         """,
         unsafe_allow_html=True
