@@ -1099,7 +1099,7 @@ Feliz aniversário! 🥳✨"""
         # ABA: GERENCIAR PRODUTOS E SERVIÇOS
         # ==========================================
         with tab_prod:
-            # --- ADAPTAÇÃO 1: Buscando a coluna 'tipo' ---
+            # --- ADAPTAÇÃO 1: Buscando todas as colunas ---
             df_p = carregar_dados("SELECT * FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             df_c = carregar_dados("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
@@ -1118,7 +1118,7 @@ Feliz aniversário! 🥳✨"""
                     n_p = c1.text_input("Nome do Item")
                     ref_p = c2.text_input("Referência / Código Interno", placeholder="Opcional")
                     
-                    c3, c4, c5 = st.columns(3)
+                    c3, c4 = st.columns(2)
                     
                     # Se for serviço, desabilita a inserção de quantidade inicial
                     if tipo_letra == 'P':
@@ -1127,8 +1127,13 @@ Feliz aniversário! 🥳✨"""
                         q_p = 0
                         c3.number_input("Qtd Inicial", min_value=0, value=0, disabled=True, help="Serviços não possuem controle de estoque físico.")
                         
-                    v_p = c4.number_input("Valor Padrão (R$)", min_value=0.0, format="%.2f")
-                    m_p = c5.text_input("Marca / Linha", value="Mary Kay" if tipo_letra == 'P' else "Serviço Próprio")
+                    m_p = c4.text_input("Marca / Linha", value="D'Grava" if tipo_letra == 'P' else "Serviço Próprio")
+                    
+                    st.markdown("**Finanças e Precificação:**")
+                    c5, c6, c7 = st.columns(3)
+                    custo_p = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f", help="Para Empresa B: Digite o custo para calcular o markup depois.")
+                    markup_p = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", help="Margem de lucro sobre o custo.")
+                    v_p = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", help="Para Empresa A: Digite diretamente o preço final aqui.")
                     
                     cat_p = st.selectbox("Categoria", lista_cat)
                     
@@ -1137,10 +1142,12 @@ Feliz aniversário! 🥳✨"""
                             st.warning("O nome do item é obrigatório.")
                         else:
                             conn = conectar_banco()
-                            # --- ADAPTAÇÃO 3: Inserindo a coluna tipo no banco ---
+                            # --- ADAPTAÇÃO 3: Inserindo as colunas tipo, custo e markup no banco ---
                             conn.cursor().execute(
-                                "INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia, tipo) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", 
-                                (n_p, q_p, v_p, m_p, cat_p, emp_id, ref_p, tipo_letra)
+                                """INSERT INTO produtos 
+                                (nome, quantidade, valor, preco_custo, markup, marca, categoria, empresa_id, referencia, tipo) 
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", 
+                                (n_p, q_p, v_p, custo_p, markup_p, m_p, cat_p, emp_id, ref_p, tipo_letra)
                             )
                             conn.commit()
                             conn.close()
@@ -1171,7 +1178,7 @@ Feliz aniversário! 🥳✨"""
                             e_nome = c1.text_input("Nome", value=p_atual['nome'])
                             e_ref = c2.text_input("Referência", value=p_atual['referencia'] if p_atual['referencia'] else "")
                             
-                            c3, c4, c5 = st.columns(3)
+                            c3, c4 = st.columns(2)
                             
                             # Mantém a mesma lógica de desabilitar estoque para serviços
                             if tipo_atual == 'P':
@@ -1180,8 +1187,18 @@ Feliz aniversário! 🥳✨"""
                                 e_qtd = 0
                                 c3.number_input("Estoque", value=0, disabled=True)
                                 
-                            e_valor = c4.number_input("Novo Valor (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']))
-                            e_marca = c5.text_input("Marca / Linha", value=p_atual['marca'])
+                            e_marca = c4.text_input("Marca / Linha", value=p_atual['marca'])
+                            
+                            st.markdown("**Finanças e Precificação:**")
+                            c5, c6, c7 = st.columns(3)
+                            
+                            # Prevenção de erro caso os valores venham nulos (NULL do banco)
+                            val_custo = float(p_atual['preco_custo']) if 'preco_custo' in p_atual and pd.notnull(p_atual['preco_custo']) else 0.0
+                            val_markup = float(p_atual['markup']) if 'markup' in p_atual and pd.notnull(p_atual['markup']) else 0.0
+                            
+                            e_custo = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f", value=val_custo)
+                            e_markup = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", value=val_markup)
+                            e_valor = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']))
                             
                             try:
                                 cat_index = lista_cat.index(p_atual['categoria'])
@@ -1194,9 +1211,9 @@ Feliz aniversário! 🥳✨"""
                                 conn = conectar_banco()
                                 conn.cursor().execute("""
                                     UPDATE produtos 
-                                    SET nome=%s, quantidade=%s, valor=%s, marca=%s, categoria=%s, referencia=%s 
+                                    SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s 
                                     WHERE id=%s AND empresa_id=%s
-                                """, (e_nome, e_qtd, e_valor, e_marca, e_cat, e_ref, int(prod_id_selecionado), emp_id))
+                                """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, e_ref, int(prod_id_selecionado), emp_id))
                                 conn.commit()
                                 conn.close()
                                 
@@ -1292,6 +1309,67 @@ Feliz aniversário! 🥳✨"""
                                     conn.close()
                 else:
                     st.info("Não há produtos físicos com estoque disponível para criar um kit.")
+
+            # --- EXPANDER 4: PRECIFICAÇÃO INTELIGENTE (NOVO) ---
+            with st.expander("🏷️ Precificação Inteligente (Formação de Preço)"):
+                st.caption("Calcule o preço de venda de forma automática com base no Custo e no Markup.")
+                
+                # Puxa apenas produtos físicos para a formação de preço
+                if 'tipo' in df_p.columns:
+                    df_precificacao = df_p[df_p['tipo'] == 'P'] if not df_p.empty else pd.DataFrame()
+                else:
+                    df_precificacao = df_p.copy()
+                    
+                if not df_precificacao.empty:
+                    # Formata a lista para o seletor
+                    opcoes_precificacao = df_precificacao.apply(lambda x: f"{x['nome']} (Preço Atual: R$ {x['valor']:.2f})", axis=1).tolist()
+                    produto_selecionado = st.selectbox("🔍 Selecione o Produto para ajustar a margem:", options=[""] + opcoes_precificacao)
+                    
+                    if produto_selecionado:
+                        idx_prod = opcoes_precificacao.index(produto_selecionado) - 1
+                        dados_prod = df_precificacao.iloc[idx_prod]
+                        
+                        with st.form("form_precificacao", clear_on_submit=False):
+                            st.markdown(f"**Projetando margem para:** {dados_prod['nome']}")
+                            
+                            c1, c2 = st.columns(2)
+                            
+                            custo_atual_p = float(dados_prod['preco_custo']) if pd.notnull(dados_prod.get('preco_custo')) else 0.0
+                            markup_atual_p = float(dados_prod['markup']) if pd.notnull(dados_prod.get('markup')) else 0.0
+                            
+                            input_custo = c1.number_input("Preço de Custo (R$)", min_value=0.0, value=custo_atual_p, step=0.50, format="%.2f", key="p_custo")
+                            input_markup = c2.number_input("Margem Markup (%)", min_value=0.0, value=markup_atual_p, step=1.0, format="%.2f", key="p_markup")
+                            
+                            # O Cálculo Matemático
+                            preco_sugerido = input_custo * (1 + (input_markup / 100.0))
+                            
+                            st.markdown("---")
+                            c_res1, c_res2 = st.columns(2)
+                            c_res1.metric("Preço de Venda Calculado", f"R$ {preco_sugerido:.2f}".replace('.', ','))
+                            
+                            # Permite o arredondamento final
+                            preco_final_venda = c_res2.number_input("Preço Final a Salvar (R$)", min_value=0.0, value=float(preco_sugerido), step=1.0, format="%.2f", key="p_final")
+                            
+                            if st.form_submit_button("💾 Salvar Novos Preços", type="primary", use_container_width=True):
+                                try:
+                                    conn = conectar_banco()
+                                    cur = conn.cursor()
+                                    
+                                    cur.execute("""
+                                        UPDATE produtos 
+                                        SET preco_custo = %s, markup = %s, valor = %s 
+                                        WHERE id = %s AND empresa_id = %s
+                                    """, (input_custo, input_markup, preco_final_venda, int(dados_prod['id']), emp_id))
+                                    
+                                    conn.commit()
+                                    conn.close()
+                                    
+                                    st.success(f"✅ Preços de '{dados_prod['nome']}' atualizados com sucesso!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro ao salvar precificação: {e}")
+                else:
+                    st.info("Nenhum produto físico cadastrado para precificar.")
                     
             # --- PAINEL DE FILTROS E EXIBIÇÃO DA TABELA ---
             if not df_p.empty:
@@ -1323,16 +1401,26 @@ Feliz aniversário! 🥳✨"""
                     
                 if not df_final.empty:
                     df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa'], errors='ignore')
+                    
+                    # Formata as colunas financeiras na tabela para melhor visualização
+                    colunas_exibicao = df_exibicao.columns.tolist()
+                    if 'preco_custo' in colunas_exibicao:
+                        df_exibicao['preco_custo'] = df_exibicao['preco_custo'].apply(lambda x: f"R$ {x:.2f}" if pd.notnull(x) else "R$ 0.00")
+                    if 'markup' in colunas_exibicao:
+                        df_exibicao['markup'] = df_exibicao['markup'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "0.00%")
+                    if 'valor' in colunas_exibicao:
+                        df_exibicao['valor'] = df_exibicao['valor'].apply(lambda x: f"R$ {x:.2f}" if pd.notnull(x) else "R$ 0.00")
+                        
                     st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
                     
-                    # O Capital Total ignora serviços na hora da soma (quantidade é sempre zero ou irrelevante)
-                    val_est = (df_final['quantidade'] * df_final['valor']).sum()
+                    # O Capital Total ignora serviços na hora da soma
+                    df_para_soma = df_final[df_final.get('tipo', 'P') == 'P']
+                    val_est = (df_para_soma['quantidade'] * df_para_soma['valor']).sum()
                     titulo_metrica = "Capital Total em Estoque Físico (Venda)" if cat_selecionada == "📦 Todas as Categorias" and prod_busca.startswith("🔍 Todos") else f"Capital Projetado (Filtro Atual)"
                     
                     st.metric(titulo_metrica, f"R$ {val_est:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
                 else:
-                    st.info("Nenhum item encontrado com os filtros atuais.")         
-                    
+                    st.info("Nenhum item encontrado com os filtros atuais.")                    
         with tab_cat:
             c1, c2 = st.columns(2)
             with c1:
