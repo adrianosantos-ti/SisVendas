@@ -164,20 +164,26 @@ elif st.session_state['perfil'] == 'master':
     with aba_cad_empresa:
         st.subheader("Nova Empresa")
         
-        # --- BLOCO DE CADASTRO (Seu código original) ---
+        # --- BLOCO DE CADASTRO ---
         with st.form("form_nova_empresa", clear_on_submit=True):
             nome_emp = st.text_input("Nome Comercial")
             cnpj_emp = st.text_input("CNPJ")
+            logo_emp = st.text_input("URL da Logomarca (Opcional)", placeholder="Ex: https://github.com/.../logo.png?raw=true")
+            
             if st.form_submit_button("Salvar"):
                 conn = conectar_banco()
-                conn.cursor().execute("INSERT INTO empresas (nome, cnpj) VALUES (%s, %s)", (nome_emp, cnpj_emp))
+                conn.cursor().execute(
+                    "INSERT INTO empresas (nome, cnpj, logo_url) VALUES (%s, %s, %s)", 
+                    (nome_emp, cnpj_emp, logo_emp)
+                )
                 conn.commit()
                 conn.close()
                 st.success(f"Empresa '{nome_emp}' cadastrada!")
                 st.rerun()
                 
         # Carrega os dados uma vez para usar na edição e na tabela
-        df_empresas = carregar_dados("SELECT id, nome, cnpj FROM empresas ORDER BY id")
+        # Importante: A coluna logo_url foi adicionada ao SELECT
+        df_empresas = carregar_dados("SELECT id, nome, cnpj, logo_url FROM empresas ORDER BY id")
         
         # --- NOVO BLOCO DE EDIÇÃO ---
         with st.expander("✏️ Editar Empresa"):
@@ -199,11 +205,15 @@ elif st.session_state['perfil'] == 'master':
                         e_nome = c1.text_input("Nome Comercial", value=emp_atual['nome'])
                         e_cnpj = c2.text_input("CNPJ", value=emp_atual['cnpj'] if emp_atual['cnpj'] else "")
                         
+                        # Previne erros caso a coluna no banco esteja como nula (NULL)
+                        val_logo = emp_atual['logo_url'] if 'logo_url' in emp_atual and pd.notna(emp_atual['logo_url']) else ""
+                        e_logo = st.text_input("URL da Logomarca", value=val_logo, placeholder="Ex: https://github.com/.../logo.png?raw=true")
+                        
                         if st.form_submit_button("💾 Salvar Alterações"):
                             conn = conectar_banco()
                             conn.cursor().execute(
-                                "UPDATE empresas SET nome=%s, cnpj=%s WHERE id=%s", 
-                                (e_nome, e_cnpj, int(emp_selecionada))
+                                "UPDATE empresas SET nome=%s, cnpj=%s, logo_url=%s WHERE id=%s", 
+                                (e_nome, e_cnpj, e_logo, int(emp_selecionada))
                             )
                             conn.commit()
                             conn.close()
@@ -215,7 +225,6 @@ elif st.session_state['perfil'] == 'master':
 
         # --- TABELA FINAL DE EXIBIÇÃO ---
         st.dataframe(df_empresas, use_container_width=True, hide_index=True)
-
     with aba_cad_usuario:
         st.subheader("Novo Login e Acessos")
         
