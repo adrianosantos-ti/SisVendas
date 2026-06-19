@@ -1446,7 +1446,7 @@ Feliz aniversário! 🥳✨"""
         # ABA: GERENCIAR SERVIÇOS (APENAS SERVIÇOS)
         # ==========================================
         with tab_serv:
-            st.markdown("### 🛠️ Gestão de Serviços Prestados")
+            #st.markdown("### 🛠️ Gestão de Serviços Prestados")
             
             # --- Buscando apenas SERVIÇOS ('S') com todas as colunas ---
             df_s = carregar_dados("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
