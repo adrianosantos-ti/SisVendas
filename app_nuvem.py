@@ -1156,7 +1156,7 @@ Feliz aniversário! 🥳✨"""
     # ==========================================
     elif modulo == "🗂️ Cadastros":
         st.markdown("### 🗂️ Central de Cadastros")
-        tab_prod, tab_cat, tab_cli, tab_for, tab_colab = st.tabs(["📦 Produtos", "🏷️ Categorias", "👥 Clientes", "🤝 Fornecedores", "👤 Equipe"])
+        tab_prod, tab_serv, tab_cat, tab_cli, tab_for, tab_colab = st.tabs(["📦 Produtos", "💇‍♀️ Serviços", "🏷️ Categorias", "👥 Clientes", "🤝 Fornecedores", "👤 Equipe"])
         # ==========================================
         # ABA: GERENCIAR PRODUTOS (APENAS FÍSICOS)
         # ==========================================
@@ -1442,6 +1442,127 @@ Feliz aniversário! 🥳✨"""
                 else:
                     st.info("Nenhum produto encontrado com os filtros atuais.")    
                     
+        # ==========================================
+        # ABA: GERENCIAR SERVIÇOS (APENAS SERVIÇOS)
+        # ==========================================
+        with tab_serv:
+            st.markdown("### 🛠️ Gestão de Serviços Prestados")
+            
+            # --- Buscando apenas SERVIÇOS ('S') com todas as colunas ---
+            df_s = carregar_dados("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+            
+            # Carregando categorias
+            df_c_serv = carregar_dados("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+            lista_cat_serv = df_c_serv['nome'].tolist() if not df_c_serv.empty else ["Geral"]
+
+            # --- EXPANDER 1: NOVO SERVIÇO ---
+            with st.expander("➕ Novo Serviço"):
+                with st.form("f_novo_s", clear_on_submit=True):
+                    
+                    st.markdown("**Informações Básicas**")
+                    c1, c2 = st.columns(2)
+                    n_s = c1.text_input("Nome do Serviço")
+                    ref_s = c2.text_input("Referência / Código Interno", placeholder="Ex: SRV-001")
+                    
+                    c3, c4 = st.columns(2)
+                    v_s = c3.number_input("Valor Padrão do Serviço (R$)", min_value=0.0, format="%.2f")
+                    cat_s = c4.selectbox("Categoria", lista_cat_serv)
+                    
+                    st.markdown("**Regras de Atendimento e Repasse**")
+                    c5, c6 = st.columns(2)
+                    t_s = c5.number_input("Tempo de Execução (Minutos)", min_value=0, step=15, help="Tempo bloqueado na agenda do profissional.")
+                    com_s = c6.number_input("Comissão do Colaborador (%)", min_value=0.0, format="%.2f", help="Percentual repassado a quem executa o serviço.")
+                    
+                    if st.form_submit_button("💾 Salvar Serviço"):
+                        if not n_s:
+                            st.warning("O nome do serviço é obrigatório.")
+                        else:
+                            conn = conectar_banco()
+                            conn.cursor().execute(
+                                """INSERT INTO produtos 
+                                (nome, valor, categoria, empresa_id, referencia, tipo, quantidade, preco_custo, markup, marca, tempo_minutos, comissao_percentual) 
+                                VALUES (%s,%s,%s,%s,%s,'S', 0, 0.0, 0.0, 'Serviço Próprio', %s, %s)""", 
+                                (n_s, v_s, cat_s, emp_id, ref_s, t_s, com_s)
+                            )
+                            conn.commit()
+                            conn.close()
+                            st.success("Serviço cadastrado com sucesso!")
+                            st.rerun()
+
+            # --- EXPANDER 2: EDITAR SERVIÇO ---
+            with st.expander("✏️ Editar Serviço"):
+                if not df_s.empty:
+                    opcoes_edicao_s = df_s['id'].tolist()
+                    
+                    def formatar_servico(serv_id):
+                        linha = df_s[df_s['id'] == serv_id].iloc[0]
+                        return f"{linha['nome']}"
+                        
+                    serv_id_selecionado = st.selectbox("Selecione o serviço que deseja atualizar:", opcoes_edicao_s, format_func=formatar_servico)
+                    
+                    if serv_id_selecionado:
+                        s_atual = df_s[df_s['id'] == serv_id_selecionado].iloc[0]
+                        
+                        with st.form("f_edita_s", clear_on_submit=False):
+                            st.markdown("**Informações Básicas**")
+                            c1, c2 = st.columns(2)
+                            e_nome_s = c1.text_input("Nome do Serviço", value=s_atual['nome'])
+                            e_ref_s = c2.text_input("Referência", value=s_atual['referencia'] if s_atual['referencia'] else "")
+                            
+                            c3, c4 = st.columns(2)
+                            e_valor_s = c3.number_input("Valor do Serviço (R$)", min_value=0.0, format="%.2f", value=float(s_atual['valor']))
+                            
+                            try:
+                                cat_index_s = lista_cat_serv.index(s_atual['categoria'])
+                            except ValueError:
+                                cat_index_s = 0
+                                
+                            e_cat_s = c4.selectbox("Categoria", lista_cat_serv, index=cat_index_s)
+                            
+                            st.markdown("**Regras de Atendimento e Repasse**")
+                            c5, c6 = st.columns(2)
+                            
+                            val_tempo = int(s_atual['tempo_minutos']) if 'tempo_minutos' in s_atual and pd.notnull(s_atual['tempo_minutos']) else 0
+                            val_comissao = float(s_atual['comissao_percentual']) if 'comissao_percentual' in s_atual and pd.notnull(s_atual['comissao_percentual']) else 0.0
+                            
+                            e_tempo_s = c5.number_input("Tempo de Execução (Minutos)", min_value=0, step=15, value=val_tempo)
+                            e_com_s = c6.number_input("Comissão do Colaborador (%)", min_value=0.0, format="%.2f", value=val_comissao)
+                            
+                            if st.form_submit_button("💾 Salvar Alterações"):
+                                conn = conectar_banco()
+                                conn.cursor().execute("""
+                                    UPDATE produtos 
+                                    SET nome=%s, valor=%s, categoria=%s, referencia=%s, tempo_minutos=%s, comissao_percentual=%s
+                                    WHERE id=%s AND empresa_id=%s
+                                """, (e_nome_s, e_valor_s, e_cat_s, e_ref_s, e_tempo_s, e_com_s, int(serv_id_selecionado), emp_id))
+                                conn.commit()
+                                conn.close()
+                                
+                                st.success("Serviço atualizado com sucesso!")
+                                st.rerun()
+                else:
+                    st.info("Não há serviços cadastrados para editar.")
+
+            # --- PAINEL DE EXIBIÇÃO DA TABELA ---
+            if not df_s.empty:
+                st.markdown("---")
+                st.markdown("📋 **Lista de Serviços Prestados**")
+                
+                # Prepara o dataframe para exibição, ocultando as colunas inúteis para serviços
+                df_exibicao_s = df_s.drop(columns=['empresa_id', 'tipo', 'quantidade', 'preco_custo', 'markup', 'marca'], errors='ignore')
+                
+                # Formatação de exibição rica
+                if 'valor' in df_exibicao_s.columns:
+                    df_exibicao_s['valor'] = df_exibicao_s['valor'].apply(lambda x: f"R$ {x:.2f}" if pd.notnull(x) else "R$ 0.00")
+                if 'tempo_minutos' in df_exibicao_s.columns:
+                    df_exibicao_s['tempo_minutos'] = df_exibicao_s['tempo_minutos'].apply(lambda x: f"{int(x)} min" if pd.notnull(x) else "0 min")
+                if 'comissao_percentual' in df_exibicao_s.columns:
+                    df_exibicao_s['comissao_percentual'] = df_exibicao_s['comissao_percentual'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "0.00%")
+                    
+                st.dataframe(df_exibicao_s, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhum serviço cadastrado ainda.")
+                
         with tab_cat:
             c1, c2 = st.columns(2)
             with c1:
