@@ -1805,12 +1805,16 @@ Feliz aniversário! 🥳✨"""
     elif modulo == "🔄 Movimentações":
         st.markdown("### 🔄 Operações Diárias")
         
-        # 1. Puxa as permissões do usuário logado (A Mochila de Chaves)
+# 1. Puxa as permissões do usuário logado (A Mochila de Chaves)
         meus_acessos = st.session_state.get('modulos_permitidos', [])
+
+        # --- LINHA TEMPORÁRIA PARA TESTE ---
+        if 'mod_mov_servicos' not in meus_acessos: meus_acessos.append('mod_mov_servicos')
 
         # 2. Dicionário vinculando as chaves do banco aos nomes das abas na tela
         abas_disponiveis = {
             'mod_mov_vendas': "🛒 Vendas",
+            'mod_mov_servicos': "✨ Lançar Serviço",
             'mod_mov_orcamentos': "📋 Orçamentos Salvos",
             'mod_mov_compras': "📥 Entrada de Mercadorias",
             'mod_mov_historico': "📋 Histórico de Entradas",
@@ -1830,17 +1834,18 @@ Feliz aniversário! 🥳✨"""
         objetos_abas = st.tabs(nomes_abas_liberadas)
         
         # 6. Mapeamento dos objetos visuais (Inicializa tudo como 'None')
-        tab_venda = tab_orcamentos = tab_compra = tab_historico_compras = tab_trocas = tab_agenda = None
+        tab_venda = tab_lanca_serv = tab_orcamentos = tab_compra = tab_historico_compras = tab_trocas = tab_agenda = None
         
         # Conecta o objeto renderizado com a variável correta
         for i, nome_aba in enumerate(nomes_abas_liberadas):
             if nome_aba == "🛒 Vendas": tab_venda = objetos_abas[i]
+            elif nome_aba == "✨ Lançar Serviço": tab_lanca_serv = objetos_abas[i]
             elif nome_aba == "📋 Orçamentos Salvos": tab_orcamentos = objetos_abas[i]
             elif nome_aba == "📥 Entrada de Mercadorias": tab_compra = objetos_abas[i]
             elif nome_aba == "📋 Histórico de Entradas": tab_historico_compras = objetos_abas[i]
             elif nome_aba == "🔄 Trocas e Empréstimos": tab_trocas = objetos_abas[i]
             elif nome_aba == "📅 Agenda de Atendimentos": tab_agenda = objetos_abas[i]
-
+                
         if tab_venda:
             with tab_venda:
                 st.subheader("🛒 Vendas")
@@ -2177,7 +2182,241 @@ Feliz aniversário! 🥳✨"""
                             if 'zap_msg' in st.session_state: del st.session_state['zap_msg']
                             if 'zap_codigo' in st.session_state: del st.session_state['zap_codigo']
                             if 'zap_total' in st.session_state: del st.session_state['zap_total']
-                            st.rerun()                        
+                            st.rerun()        
+
+        # Inicializa o carrinho de serviços se não existir
+        if 'carrinho_servicos' not in st.session_state:
+            st.session_state['carrinho_servicos'] = []
+
+        if tab_lanca_serv:
+            with tab_lanca_serv:
+                st.subheader("✨ Lançamento de Serviços e Ficha Técnica")
+                
+                # Carrega dados
+                df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                df_serv = carregar_dados("SELECT id, nome, valor FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+                df_prod_insumo = carregar_dados("SELECT id, nome FROM produtos WHERE empresa_id=%s AND tipo='P' ORDER BY nome", (emp_id,))
+                df_colab = carregar_dados("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
+            
+                if not df_cli.empty and not df_serv.empty and not df_colab.empty:
+                    # 1. Configurações do Atendimento
+                    c_cli, c_data = st.columns(2)
+                    cliente_pdv = c_cli.selectbox("Cliente (Ficha Técnica):", options=df_cli['nome'].tolist(), key="cli_serv")
+                    data_venda_input = c_data.date_input("Data do Serviço", format="DD/MM/YYYY", value=date.today(), key="dt_serv")
+                
+                    c_pag, c_parc = st.columns(2)
+                    f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], key="fpag_serv")
+                    qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1, key="parc_serv")
+                
+                    sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
+                    data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY", key="venc1_serv")
+                
+                    st.markdown("---")
+                
+                    # 2. Seleção do Serviço, Profissional e Insumos
+                    st.markdown("**Detalhes do Procedimento**")
+                    col_s1, col_s2 = st.columns(2)
+                    
+                    serv_display = col_s1.selectbox("✨ Selecione o Serviço:", options=df_serv['nome'].tolist())
+                    nome_colab = col_s2.selectbox("👤 Quem executou?", options=df_colab['nome'].tolist())
+                    
+                    # Resgate de IDs e Valores
+                    s_info = df_serv[df_serv['nome'] == serv_display].iloc[0]
+                    preco_tabela = float(s_info['valor'])
+                    
+                    idx_colab = df_colab['nome'].tolist().index(nome_colab)
+                    profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
+                    
+                    # O Grande Diferencial: Insumos Utilizados
+                    opcoes_insumos = df_prod_insumo['nome'].tolist() if not df_prod_insumo.empty else []
+                    insumos_selecionados = st.multiselect("🧴 Produtos/Insumos Utilizados na Sessão (Histórico do Cliente):", options=opcoes_insumos, help="Estes itens ficarão salvos na ficha da cliente para consultas futuras, sem alterar o valor final do serviço.")
+                
+                    # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
+                    with st.form("form_add_servico", clear_on_submit=True):
+                        c1, c2, c3, c4 = st.columns(4)
+                    
+                        q_pdv = c1.number_input("Quantidade de Sessões:", min_value=1, step=1, value=1)
+                        preco_custom = c2.number_input("Preço do Serviço (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
+                        desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f", key="d_rs_s")
+                        desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f", key="d_perc_s")
+                    
+                        if st.form_submit_button("➕ Adicionar Serviço"):
+                            if desc_perc > 0:
+                                desconto_final = preco_custom * (desc_perc / 100.0)
+                            else:
+                                desconto_final = desc_rs
+                            
+                            # Traduz insumos para IDs para salvar no banco
+                            insumos_ids = []
+                            for ins in insumos_selecionados:
+                                ins_id = df_prod_insumo[df_prod_insumo['nome'] == ins].iloc[0]['id']
+                                insumos_ids.append(int(ins_id))
+                            
+                            nome_carrinho = f"{serv_display} (Profissional: {nome_colab})"
+                            if insumos_selecionados:
+                                nome_carrinho += f" | Insumos: {', '.join(insumos_selecionados)}"
+                            
+                            st.session_state['carrinho_servicos'].append({
+                                'id': int(s_info['id']), 
+                                'nome': nome_carrinho, 
+                                'qtd': int(q_pdv), 
+                                'unit': float(preco_custom), 
+                                'desc': float(desconto_final), 
+                                'total': float((preco_custom - desconto_final) * q_pdv),
+                                'colab_id': profissional_selecionado,
+                                'insumos_ids': insumos_ids
+                            })
+                            st.rerun()
+
+                    # 3. Carrinho e Configurações Financeiras
+                    if st.session_state['carrinho_servicos']:
+                        df_car = pd.DataFrame(st.session_state['carrinho_servicos'])
+                        st.table(df_car[['nome', 'qtd', 'unit', 'desc', 'total']])
+                    
+                        total_pdv = float(df_car['total'].sum())
+                        st.header(f"Total a Pagar: R$ {total_pdv:.2f}".replace('.', ','))
+                    
+                        st.markdown("---")
+                    
+                        # --- CONFIGURAÇÃO DE ENTRADA E PARCELAS (Lógica Mantida) ---
+                        valor_entrada = 0.0
+                        if f_pag == "Crediário":
+                            valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0, key="ent_s")
+                    
+                        valor_restante = float(total_pdv - valor_entrada)
+                    
+                        datas_parcelas = []
+                        if qtd_parcelas > 1 or f_pag == "Crediário":
+                            st.markdown("📅 **Cronograma de Vencimentos:**")
+                            if f_pag == "Crediário" and valor_entrada > 0:
+                                datas_parcelas.append(data_venda_input)
+                                if qtd_parcelas > 1:
+                                    cols_p = st.columns(min(int(qtd_parcelas) - 1, 4))
+                                    for i in range(2, int(qtd_parcelas) + 1):
+                                        sugestao_p = data_1_venc + timedelta(days=30 * (i - 2))
+                                        with cols_p[(i-2) % min(int(qtd_parcelas) - 1, 4)]:
+                                            dt_p = st.date_input(f"{i}ª Parc.", value=sugestao_p, format="DD/MM/YYYY", key=f"v_p_s_{i}")
+                                            datas_parcelas.append(dt_p)
+                            else:
+                                cols_p = st.columns(min(int(qtd_parcelas), 4))
+                                for i in range(1, int(qtd_parcelas) + 1):
+                                    sugerido = data_1_venc + timedelta(days=30 * (i - 1))
+                                    with cols_p[(i-1) % min(int(qtd_parcelas), 4)]:
+                                        dt_p = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"v_p_s_{i}")
+                                        datas_parcelas.append(dt_p)
+                        else:
+                            datas_parcelas.append(data_1_venc)
+
+                        st.markdown("---")             
+                    
+                        c1_finalizar, c3_limpar = st.columns([2, 1])
+                    
+                        # --- AÇÃO: FINALIZAR SERVIÇO (PERSISTE NO BANCO) ---
+                        if c1_finalizar.button("✅ Lançar Atendimento e Gerar Financeiro", type="primary", use_container_width=True):
+                            try:
+                                conn = conectar_banco()
+                                cur = conn.cursor()
+                            
+                                cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
+                                resultado = cur.fetchone()[0]
+                                novo_cod = int(resultado + 1) if resultado else 1
+                            
+                                data_v = data_venda_input.strftime("%d/%m/%Y")
+                                cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
+                            
+                                for it in st.session_state['carrinho_servicos']:
+                                    # 1. Grava a Venda do Serviço
+                                    cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
+                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                               (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), int(it['colab_id'])))
+                                    
+                                    # 2. Grava a Ficha Técnica (Insumos)
+                                    if it['insumos_ids']:
+                                        for insumo_id in it['insumos_ids']:
+                                            cur.execute("""INSERT INTO historico_insumos (venda_codigo, cliente_id, produto_id, data_uso, empresa_id) 
+                                                           VALUES (%s,%s,%s,%s,%s)""",
+                                                        (int(novo_cod), int(cli_id_v), int(insumo_id), data_venda_input, int(emp_id)))
+                            
+                                # Inserção no Contas a Receber (Igual à sua lógica original)
+                                if f_pag == "Crediário" and valor_entrada > 0:
+                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                               (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', data_v, int(emp_id)))
+                                    
+                                    if qtd_parcelas > 1:
+                                        val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
+                                        for i in range(2, int(qtd_parcelas) + 1):
+                                            dt_venc = datas_parcelas[i-1]
+                                            cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
+                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                       (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc_rest), dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
+                                else:
+                                    val_parc = float(total_pdv / qtd_parcelas)
+                                    for i in range(1, int(qtd_parcelas) + 1):
+                                        dt_venc = datas_parcelas[i-1]
+                                        status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
+                                        data_pag_val = data_v if status_venda == 'Pago' else None
+                                        
+                                        cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                   (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))                        
+                            
+                                # WhatsApp - Recibo do Serviço
+                                cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
+                                resultado_tel = cur.fetchone()
+                                tel_cli = resultado_tel[0] if resultado_tel else None
+                            
+                                lista_produtos_msg = ""
+                                for it in st.session_state['carrinho_servicos']:
+                                    lista_produtos_msg += f"▫️ {it['nome'].split(' |')[0]} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                            
+                                msg = f"Olá, {cliente_pdv}! ✨\n\n"
+                                msg += f"Obrigada por escolher nossos serviços hoje ({data_v}). Aqui está o seu recibo:\n\n"
+                                msg += f"🧾 *Atendimento Nº {novo_cod}*\n\n"
+                                msg += f"*Procedimentos Realizados:*\n{lista_produtos_msg}\n"
+                                msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
+                                msg += f"💳 *Forma de Pagto:* {f_pag}\n\n"
+                                msg += "Foi um prazer atender você. Até a próxima! 🌸"
+                            
+                                if tel_cli:
+                                    tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
+                                    if len(tel_limpo) >= 10:
+                                        if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
+                                        st.session_state['zap_link_serv'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                        st.session_state['zap_msg_serv'] = msg
+                                        st.session_state['zap_codigo_serv'] = f"ATENDIMENTO Nº {novo_cod}"
+                                        st.session_state['zap_total_serv'] = total_pdv
+                            
+                                conn.commit()
+                                conn.close()
+                                st.session_state['carrinho_servicos'] = []
+                                st.success(f"Ficha técnica e Atendimento {novo_cod} salvos com sucesso!")
+                                st.rerun()
+                            
+                            except Exception as e:
+                                st.error(f"Erro no banco: {e}")
+                                if 'conn' in locals(): conn.close()
+
+                        if c3_limpar.button("🗑️ Limpar Painel", use_container_width=True): 
+                            st.session_state['carrinho_servicos'] = []
+                            st.rerun()
+                else: 
+                    st.warning("Cadastre clientes, colaboradores e serviços para habilitar esta tela.")
+                
+                # --- TELA DO RECIBO DO WHATSAPP ---
+                if 'zap_link_serv' in st.session_state and st.session_state['zap_link_serv']:
+                    st.markdown("---")
+                    with st.container(border=True):
+                        st.success(f"🎉 {st.session_state['zap_codigo_serv']} finalizado! Total: R$ {st.session_state['zap_total_serv']:.2f}".replace('.', ','))
+                        st.subheader("📲 Enviar Recibo via WhatsApp")
+                        st.text_area("Visualização da mensagem:", value=st.session_state['zap_msg_serv'], height=180, disabled=True)
+                        st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link_serv'], type="primary", use_container_width=True)
+                        if st.button("❌ Fechar Painel", use_container_width=True, key="fechar_zap_s"):
+                            del st.session_state['zap_link_serv']
+                            if 'zap_msg_serv' in st.session_state: del st.session_state['zap_msg_serv']
+                            if 'zap_codigo_serv' in st.session_state: del st.session_state['zap_codigo_serv']
+                            if 'zap_total_serv' in st.session_state: del st.session_state['zap_total_serv']
+                            st.rerun()
                             
         if tab_orcamentos:
             with tab_orcamentos:
