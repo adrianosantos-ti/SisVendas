@@ -117,15 +117,16 @@ if not st.session_state['logado']:
                 cursor = conn.cursor()
                 cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
                 usuario = cursor.fetchone()
-                
+                # ==========================================
+                # CORREÇÃO NO BLOCO DE LOGIN
+                # ==========================================
                 if usuario:
                     st.session_state['logado'] = True
                     st.session_state['usuario_id'] = usuario[0]
                     st.session_state['usuario_nome'] = usuario[1]
                     st.session_state['perfil'] = usuario[2]
                     st.session_state['empresa_id'] = usuario[3]
-                    
-                    # --- NOVA LÓGICA DE CARREGAMENTO DE PERMISSÕES ---
+    
                     perfil_usuario = usuario[2]
                     id_usuario_logado = usuario[0]
 
@@ -133,7 +134,8 @@ if not st.session_state['logado']:
                         # Se for admin/master, puxa todas as chaves existentes no sistema
                         cursor.execute("SELECT chave FROM modulos")
                         resultado = cursor.fetchall()
-                        st.session_state['modulos_permitidos'] = [linha[0] for linha in resultado] if resultado else []
+                        # 🌟 ADICIONADO .strip() AQUI PARA LIMPAR ESPAÇOS OCULTOS
+                        st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
                     else:
                         # Se for usuário comum, cruza com a tabela de permissões
                         cursor.execute("""
@@ -143,7 +145,8 @@ if not st.session_state['logado']:
                             WHERE p.usuario_id = %s
                         """, (id_usuario_logado,))
                         resultado = cursor.fetchall()
-                        st.session_state['modulos_permitidos'] = [linha[0] for linha in resultado] if resultado else []
+                        # 🌟 ADICIONADO .strip() AQUI TAMBÉM
+                        st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
 
                     # Agora sim, com tudo salvo na memória, fechamos o banco e recarregamos a tela
                     conn.close()
@@ -1805,11 +1808,11 @@ Feliz aniversário! 🥳✨"""
     elif modulo == "🔄 Movimentações":
         st.markdown("### 🔄 Operações Diárias")
         
-# 1. Puxa as permissões do usuário logado (A Mochila de Chaves)
+        # 1. Puxa as permissões do usuário logado (A Mochila de Chaves)
         meus_acessos = st.session_state.get('modulos_permitidos', [])
 
         # --- LINHA TEMPORÁRIA PARA TESTE ---
-        if 'mod_mov_servicos' not in meus_acessos: meus_acessos.append('mod_mov_servicos')
+        # if 'mod_mov_servicos' not in meus_acessos: meus_acessos.append('mod_mov_servicos')
 
         # 2. Dicionário vinculando as chaves do banco aos nomes das abas na tela
         abas_disponiveis = {
