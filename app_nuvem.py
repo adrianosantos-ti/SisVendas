@@ -229,7 +229,7 @@ elif st.session_state['perfil'] == 'master':
         # --- TABELA FINAL DE EXIBIÇÃO ---
         st.dataframe(df_empresas, use_container_width=True, hide_index=True)
     with aba_cad_usuario:
-        st.subheader("Novo Login e Acessos")
+            st.subheader("Novo Login e Acessos")
         
         # Carrega lista de empresas para usar nos selects
         df_emp_list = carregar_dados("SELECT id, nome FROM empresas ORDER BY id")
@@ -1745,107 +1745,112 @@ Feliz aniversário! 🥳✨"""
                 # Carrega dados atualizados para o PDV
                 df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                 
-                # --- ADAPTAÇÃO 1: Trazendo a coluna 'tipo' do banco ---
+                # Traz apenas produtos comerciais de Venda ou Serviços
                 df_pro = carregar_dados("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s AND (tipo='S' OR (tipo='P' AND classe='Venda')) ORDER BY nome", (emp_id,))
             
                 if not df_cli.empty and not df_pro.empty:
                     # 1. Configurações da Venda
                     c_cli, c_data = st.columns(2)
-                    cliente_pdv = c_cli.selectbox("Cliente:", options=df_cli['nome'].tolist())
+                    cliente_pdv = c_cli.selectbox("Cliente:", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione o cliente...")
                     data_venda_input = c_data.date_input("Data da Venda", format="DD/MM/YYYY", value=date.today())
                 
                     c_pag, c_parc = st.columns(2)
-                    f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"])
-                    qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1)
-                
-                    sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
-                    data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY")
+                    f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...")
+                    
+                    # Inicialização padrão para evitar erros de renderização financeira se f_pag estiver vazio
+                    qtd_parcelas = 1
+                    data_1_venc = date.today()
+                    
+                    if f_pag:
+                        qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1)
+                        sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
+                        data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY")
                 
                     st.markdown("---")
                 
                     # 2. Seleção de Produto com Visão Dinâmica (Produto vs Serviço)
                     tradutor_tipo = {'P': 'Produto', 'S': 'Serviço'}
                     
-                    # --- ADAPTAÇÃO 2: Formatação visual inteligente no menu de busca ---
                     df_pro['display_pesquisa'] = df_pro.apply(
                         lambda x: f"{x['nome']} ({tradutor_tipo.get(x['tipo'], 'Produto')}) - Estoque: {int(x['quantidade'])}" if x['tipo'] == 'P' else f"{x['nome']} (Serviço)", axis=1
                     )
                 
-                    prod_display = st.selectbox("🔍 Pesquise o Item (Digite o nome):", options=df_pro['display_pesquisa'].tolist())
+                    prod_display = st.selectbox("🔍 Pesquise o Item (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto/serviço...")
                 
-                    # Resgate das informações baseadas na escolha
-                    p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
-                    estoque_atual = int(p_info['quantidade'])
-                    preco_tabela = float(p_info['valor'])
-                    item_tipo = p_info['tipo']
-                    
-                    profissional_selecionado = None
-                    nome_profissional = None
-                
-                    # --- ADAPTAÇÃO 3: PAINEL VISUAL CONDICIONAL ---
-                    if item_tipo == 'P':
-                        if estoque_atual <= 0:
-                            st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                        elif estoque_atual == 1:
-                            st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                        elif estoque_atual <= 3:
-                            st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                        else:
-                            st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                    
-                    elif item_tipo == 'S':
-                        st.info(f"🛠️ Serviço Prestado | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                    # --- INTERRUPTOR DE SEGURANÇA: Só abre o painel se os dados iniciais fundamentais existirem ---
+                    if cliente_pdv and f_pag and prod_display:
+                        # Resgate das informações baseadas na escolha
+                        p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
+                        estoque_atual = int(p_info['quantidade'])
+                        preco_tabela = float(p_info['valor'])
+                        item_tipo = p_info['tipo']
                         
-                        df_colab = carregar_dados("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
-                        if not df_colab.empty:
-                            lista_nomes = df_colab['nome'].tolist()
-                            nome_colab = st.selectbox("👤 Quem executou o serviço?", options=lista_nomes)
-                            idx_colab = lista_nomes.index(nome_colab)
-                            profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
-                            nome_profissional = nome_colab
-                        else:
-                            st.warning("⚠️ Cadastre um colaborador na aba de Cadastros para registrar o serviço.")
-                
-                    # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
-                    with st.form("form_add_carrinho", clear_on_submit=True):
-                        c1, c2, c3, c4 = st.columns(4)
+                        profissional_selecionado = None
+                        nome_profissional = None
                     
-                        # Se for serviço, libera a quantidade. Se for produto, trava no estoque atual.
-                        limite_qtd = estoque_atual if (item_tipo == 'P' and estoque_atual > 0) else 999
-                        q_pdv = c1.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
-                    
-                        preco_custom = c2.number_input("Preço Unitário (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
-                        desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f")
-                        desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
-                    
-                        # O botão desabilita se for produto sem estoque OU se for serviço sem colaborador cadastrado
-                        travar_botao = (item_tipo == 'P' and estoque_atual <= 0) or (item_tipo == 'S' and profissional_selecionado is None)
+                        # --- PAINEL VISUAL CONDICIONAL ---
+                        if item_tipo == 'P':
+                            if estoque_atual <= 0:
+                                st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                            elif estoque_atual == 1:
+                                st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                            elif estoque_atual <= 3:
+                                st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                            else:
+                                st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
                         
-                        if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=travar_botao):
-                            if item_tipo == 'S' or estoque_atual >= q_pdv:
-                                if desc_perc > 0:
-                                    desconto_final = preco_custom * (desc_perc / 100.0)
-                                else:
-                                    desconto_final = desc_rs
+                        elif item_tipo == 'S':
+                            st.info(f"🛠️ Serviço Prestado | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                            
+                            df_colab = carregar_dados("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
+                            if not df_colab.empty:
+                                lista_nomes = df_colab['nome'].tolist()
+                                nome_colab = st.selectbox("👤 Quem executou o serviço?", options=lista_nomes, index=None, placeholder="Selecione o profissional executor...")
                                 
-                                # Se for serviço, embeleza o nome no carrinho para sair no recibo do WhatsApp
-                                nome_carrinho = str(p_info['nome'])
-                                if item_tipo == 'S' and nome_profissional:
-                                    nome_carrinho += f" (Executado por: {nome_profissional})"
-                                
-                                st.session_state['carrinho'].append({
-                                    'id': int(p_info['id']), 
-                                    'nome': nome_carrinho, 
-                                    'qtd': int(q_pdv), 
-                                    'unit': float(preco_custom), 
-                                    'desc': float(desconto_final), 
-                                    'total': float((preco_custom - desconto_final) * q_pdv),
-                                    'tipo': item_tipo,                            # Salva o tipo na memória
-                                    'colab_id': profissional_selecionado          # Salva o ID do profissional
-                                })
-                                st.rerun()
-                            else: 
-                                st.error("Estoque insuficiente!")
+                                if nome_colab:
+                                    idx_colab = lista_nomes.index(nome_colab)
+                                    profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
+                                    nome_profissional = nome_colab
+                            else:
+                                st.warning("⚠️ Cadastre um colaborador na aba de Cadastros para registrar o serviço.")
+                    
+                        # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
+                        with st.form("form_add_carrinho", clear_on_submit=True):
+                            c1, c2, c3, c4 = st.columns(4)
+                        
+                            limite_qtd = estoque_atual if (item_tipo == 'P' and estoque_atual > 0) else 999
+                            q_pdv = c1.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
+                        
+                            preco_custom = c2.number_input("Preço Unitário (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
+                            desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f")
+                            desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
+                        
+                            # O botão desabilita se for produto sem estoque OU se for serviço sem colaborador selecionado
+                            travar_botao = (item_tipo == 'P' and estoque_atual <= 0) or (item_tipo == 'S' and profissional_selecionado is None)
+                            
+                            if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=travar_botao):
+                                if item_tipo == 'S' or estoque_atual >= q_pdv:
+                                    desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
+                                    
+                                    nome_carrinho = str(p_info['nome'])
+                                    if item_tipo == 'S' and nome_profissional:
+                                        nome_carrinho += f" (Executado por: {nome_profissional})"
+                                    
+                                    st.session_state['carrinho'].append({
+                                        'id': int(p_info['id']), 
+                                        'nome': nome_carrinho, 
+                                        'qtd': int(q_pdv), 
+                                        'unit': float(preco_custom), 
+                                        'desc': float(desconto_final), 
+                                        'total': float((preco_custom - desconto_final) * q_pdv),
+                                        'tipo': item_tipo, 
+                                        'colab_id': profissional_selecionado
+                                    })
+                                    st.rerun()
+                                else: 
+                                    st.error("Estoque insuficiente!")
+                    else:
+                        st.info("👆 preencha o cliente, a forma de pagamento e selecione um item para configurar a venda.")
 
                     # 3. Carrinho e Configurações Financeiras
                     if st.session_state['carrinho']:
@@ -1912,16 +1917,16 @@ Feliz aniversário! 🥳✨"""
                                 cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
                             
                                 for it in st.session_state['carrinho']:
-                                    # --- ADAPTAÇÃO 4: Inserindo o colaborador_id na tabela de vendas ---
+                                    # Inserindo o colaborador_id na tabela de vendas
                                     cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                                (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), it['colab_id']))
                                 
-                                    # --- ADAPTAÇÃO 5: Baixa de estoque APENAS para produtos ---
+                                    # Baixa de estoque APENAS para produtos comerciais
                                     if it['tipo'] == 'P':
                                         cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
                             
-                                # Inserção no Financeiro (Mantida intacta, funciona perfeitamente)
+                                # Inserção no Financeiro / Contas a Receber
                                 if f_pag == "Crediário" and valor_entrada > 0:
                                     cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -1939,13 +1944,12 @@ Feliz aniversário! 🥳✨"""
                                     for i in range(1, int(qtd_parcelas) + 1):
                                         dt_venc = datas_parcelas[i-1]
                                         status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
-                                        
                                         data_pag_val = data_v if status_venda == 'Pago' else None
                                         
                                         cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
                                                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                                    (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))                        
-                                
+                            
                                 # Mensagem do WhatsApp
                                 cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
                                 resultado_tel = cur.fetchone()
@@ -2009,9 +2013,7 @@ Feliz aniversário! 🥳✨"""
                                             (int(emp_id), cliente_pdv, data_hoje_str, float(total_pdv), carrinho_texto))
                                 conn.commit()
                                 conn.close()
-                                
                                 st.success("Orçamento gravado no sistema com sucesso!")
-                                
                             except Exception as e:
                                 st.error(f"Erro ao salvar orçamento: {e}")
                                 
@@ -2040,7 +2042,7 @@ Feliz aniversário! 🥳✨"""
                                         msg += f"▪️ {i}ª Parcela: R$ {v_parc_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
                             else:
                                 msg += f"💳 *Meio de pagamento simulado:* {f_pag}\n"
-                            
+                        
                             msg += "\n*Este orçamento é válido por 5 dias.* Tem interesse em fechar o pedido? ✨"
                         
                             if tel_cli:
@@ -2093,15 +2095,20 @@ Feliz aniversário! 🥳✨"""
                 if not df_cli.empty and not df_serv.empty and not df_colab.empty:
                     # 1. Configurações do Atendimento
                     c_cli, c_data = st.columns(2)
-                    cliente_pdv = c_cli.selectbox("Cliente (Ficha Técnica):", options=df_cli['nome'].tolist(), key="cli_serv")
+                    cliente_pdv = c_cli.selectbox("Cliente (Ficha Técnica):", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione a cliente...", key="cli_serv")
                     data_venda_input = c_data.date_input("Data do Serviço", format="DD/MM/YYYY", value=date.today(), key="dt_serv")
                 
                     c_pag, c_parc = st.columns(2)
-                    f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], key="fpag_serv")
-                    qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1, key="parc_serv")
-                
-                    sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
-                    data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY", key="venc1_serv")
+                    f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...", key="fpag_serv")
+                    
+                    # Inicialização padrão para evitar falhas se f_pag não estiver selecionado
+                    qtd_parcelas = 1
+                    data_1_venc = date.today()
+                    
+                    if f_pag:
+                        qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1, key="parc_serv")
+                        sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
+                        data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY", key="venc1_serv")
                 
                     st.markdown("---")
                 
@@ -2109,56 +2116,56 @@ Feliz aniversário! 🥳✨"""
                     st.markdown("**Detalhes do Procedimento**")
                     col_s1, col_s2 = st.columns(2)
                     
-                    serv_display = col_s1.selectbox("✨ Selecione o Serviço:", options=df_serv['nome'].tolist())
-                    nome_colab = col_s2.selectbox("👤 Quem executou?", options=df_colab['nome'].tolist())
+                    serv_display = col_s1.selectbox("✨ Selecione o Serviço:", options=df_serv['nome'].tolist(), index=None, placeholder="Escolha o procedimento...")
+                    nome_colab = col_s2.selectbox("👤 Quem executou?", options=df_colab['nome'].tolist(), index=None, placeholder="Selecione o profissional executor...")
                     
-                    # Resgate de IDs e Valores
-                    s_info = df_serv[df_serv['nome'] == serv_display].iloc[0]
-                    preco_tabela = float(s_info['valor'])
-                    
-                    idx_colab = df_colab['nome'].tolist().index(nome_colab)
-                    profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
-                    
-                    # O Grande Diferencial: Insumos Utilizados
                     opcoes_insumos = df_prod_insumo['nome'].tolist() if not df_prod_insumo.empty else []
-                    insumos_selecionados = st.multiselect("🧴 Produtos/Insumos Utilizados na Sessão (Histórico do Cliente):", options=opcoes_insumos, help="Estes itens ficarão salvos na ficha da cliente para consultas futuras, sem alterar o valor final do serviço.")
+                    insumos_selecionados = st.multiselect("🧴 Produtos/Insumos Utilizados na Sessão (Histórico do Cliente):", options=opcoes_insumos, placeholder="Selecione os produtos utilizados (opcional)...", help="Estes itens ficarão salvos na ficha da cliente para consultas futuras, sem alterar o valor final do serviço.")
                 
-                    # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
-                    with st.form("form_add_servico", clear_on_submit=True):
-                        c1, c2, c3, c4 = st.columns(4)
-                    
-                        q_pdv = c1.number_input("Quantidade de Sessões:", min_value=1, step=1, value=1)
-                        preco_custom = c2.number_input("Preço do Serviço (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
-                        desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f", key="d_rs_s")
-                        desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f", key="d_perc_s")
-                    
-                        if st.form_submit_button("➕ Adicionar Serviço"):
-                            if desc_perc > 0:
-                                desconto_final = preco_custom * (desc_perc / 100.0)
-                            else:
-                                desconto_final = desc_rs
-                            
-                            # Traduz insumos para IDs para salvar no banco
-                            insumos_ids = []
-                            for ins in insumos_selecionados:
-                                ins_id = df_prod_insumo[df_prod_insumo['nome'] == ins].iloc[0]['id']
-                                insumos_ids.append(int(ins_id))
-                            
-                            nome_carrinho = f"{serv_display} (Profissional: {nome_colab})"
-                            if insumos_selecionados:
-                                nome_carrinho += f" | Insumos: {', '.join(insumos_selecionados)}"
-                            
-                            st.session_state['carrinho_servicos'].append({
-                                'id': int(s_info['id']), 
-                                'nome': nome_carrinho, 
-                                'qtd': int(q_pdv), 
-                                'unit': float(preco_custom), 
-                                'desc': float(desconto_final), 
-                                'total': float((preco_custom - desconto_final) * q_pdv),
-                                'colab_id': profissional_selecionado,
-                                'insumos_ids': insumos_ids
-                            })
-                            st.rerun()
+                    # --- INTERRUPTOR DE SEGURANÇA: Só libera o formulário se o preenchimento essencial foi feito ---
+                    if cliente_pdv and f_pag and serv_display and nome_colab:
+                        # Resgate de IDs e Valores seguro
+                        s_info = df_serv[df_serv['nome'] == serv_display].iloc[0]
+                        preco_tabela = float(s_info['valor'])
+                        
+                        idx_colab = df_colab['nome'].tolist().index(nome_colab)
+                        profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
+                        
+                        # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
+                        with st.form("form_add_servico", clear_on_submit=True):
+                            c1, c2, c3, c4 = st.columns(4)
+                        
+                            q_pdv = c1.number_input("Quantidade de Sessões:", min_value=1, step=1, value=1)
+                            preco_custom = c2.number_input("Preço do Serviço (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
+                            desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f", key="d_rs_s")
+                            desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f", key="d_perc_s")
+                        
+                            if st.form_submit_button("➕ Adicionar Serviço"):
+                                desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
+                                
+                                # Traduz insumos para IDs para salvar no banco
+                                insumos_ids = []
+                                for ins in insumos_selecionados:
+                                    ins_id = df_prod_insumo[df_prod_insumo['nome'] == ins].iloc[0]['id']
+                                    insumos_ids.append(int(ins_id))
+                                
+                                nome_carrinho = f"{serv_display} (Profissional: {nome_colab})"
+                                if insumos_selecionados:
+                                    nome_carrinho += f" | Insumos: {', '.join(insumos_selecionados)}"
+                                
+                                st.session_state['carrinho_servicos'].append({
+                                    'id': int(s_info['id']), 
+                                    'nome': nome_carrinho, 
+                                    'qtd': int(q_pdv), 
+                                    'unit': float(preco_custom), 
+                                    'desc': float(desconto_final), 
+                                    'total': float((preco_custom - desconto_final) * q_pdv),
+                                    'colab_id': profissional_selecionado,
+                                    'insumos_ids': insumos_ids
+                                })
+                                st.rerun()
+                    else:
+                        st.info("👆 Selecione o cliente, a forma de pagamento, o serviço e o profissional executor para iniciar o atendimento.")
 
                     # 3. Carrinho e Configurações Financeiras
                     if st.session_state['carrinho_servicos']:
@@ -2170,7 +2177,7 @@ Feliz aniversário! 🥳✨"""
                     
                         st.markdown("---")
                     
-                        # --- CONFIGURAÇÃO DE ENTRADA E PARCELAS (Lógica Mantida) ---
+                        # --- CONFIGURAÇÃO DE ENTRADA E PARCELAS ---
                         valor_entrada = 0.0
                         if f_pag == "Crediário":
                             valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0, key="ent_s")
@@ -2229,7 +2236,7 @@ Feliz aniversário! 🥳✨"""
                                                            VALUES (%s,%s,%s,%s,%s)""",
                                                         (int(novo_cod), int(cli_id_v), int(insumo_id), data_venda_input, int(emp_id)))
                             
-                                # Inserção no Contas a Receber (Igual à sua lógica original)
+                                # Inserção no Contas a Receber
                                 if f_pag == "Crediário" and valor_entrada > 0:
                                     cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -2308,7 +2315,7 @@ Feliz aniversário! 🥳✨"""
                             if 'zap_msg_serv' in st.session_state: del st.session_state['zap_msg_serv']
                             if 'zap_codigo_serv' in st.session_state: del st.session_state['zap_codigo_serv']
                             if 'zap_total_serv' in st.session_state: del st.session_state['zap_total_serv']
-                            st.rerun()
+                            st.rerun()         
                             
         if tab_orcamentos:
             with tab_orcamentos:
