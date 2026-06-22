@@ -228,7 +228,7 @@ elif st.session_state['perfil'] == 'master':
 
         # --- TABELA FINAL DE EXIBIÇÃO ---
         st.dataframe(df_empresas, use_container_width=True, hide_index=True)
-    with aba_cad_usuario:
+        with aba_cad_usuario:
             st.subheader("Novo Login e Acessos")
         
         # Carrega lista de empresas para usar nos selects
