@@ -1746,7 +1746,7 @@ Feliz aniversário! 🥳✨"""
                 df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                 
                 # --- ADAPTAÇÃO 1: Trazendo a coluna 'tipo' do banco ---
-                df_pro = carregar_dados("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                df_pro = carregar_dados("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s AND (tipo='S' OR (tipo='P' AND classe='Venda')) ORDER BY nome", (emp_id,))
             
                 if not df_cli.empty and not df_pro.empty:
                     # 1. Configurações da Venda
@@ -2087,7 +2087,7 @@ Feliz aniversário! 🥳✨"""
                 # Carrega dados
                 df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                 df_serv = carregar_dados("SELECT id, nome, valor FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
-                df_prod_insumo = carregar_dados("SELECT id, nome FROM produtos WHERE empresa_id=%s AND tipo='P' ORDER BY nome", (emp_id,))
+                df_prod_insumo = carregar_dados("SELECT id, nome FROM produtos WHERE empresa_id=%s AND tipo='P' AND classe='Insumo' ORDER BY nome", (emp_id,))
                 df_colab = carregar_dados("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
             
                 if not df_cli.empty and not df_serv.empty and not df_colab.empty:
