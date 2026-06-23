@@ -3316,7 +3316,7 @@ Feliz aniversário! 🥳✨"""
                     # Carrega as listas necessárias. Adicionado COALESCE para garantir que tempo nulo vire 30 min.
                     df_cli_ag = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                     df_col_ag = carregar_dados("SELECT id, nome FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
-                    df_ser_ag = carregar_dados("SELECT id, nome, valor, COALESCE(tempo_estimado, 30) AS tempo_estimado FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+                    df_ser_ag = carregar_dados("SELECT id, nome, valor, COALESCE(tempo_minutos, 30) AS tempo_estimado FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
                     
                     if not df_cli_ag.empty and not df_col_ag.empty and not df_ser_ag.empty:
                         with st.form("form_novo_agendamento", clear_on_submit=True):
