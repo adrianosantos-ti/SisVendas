@@ -2321,30 +2321,148 @@ Feliz aniversário! 🥳✨"""
             with tab_orcamentos:
                 st.subheader("📋 Orçamentos Salvos")
                 
+                # Carrega todos os orçamentos ativos da empresa
                 df_orcs = carregar_dados("SELECT id, cliente_nome, data_orcamento, valor_total, carrinho_json FROM orcamentos WHERE empresa_id=%s ORDER BY id DESC", (emp_id,))
                 
                 if not df_orcs.empty:
                     for index, row in df_orcs.iterrows():
-                        with st.expander(f"Orçamento #{row['id']} - {row['cliente_nome']} | Data: {row['data_orcamento']} | R$ {row['valor_total']:.2f}".replace('.', ',')):
+                        orc_id = row['id']
+                        
+                        # Chaves exclusivas na memória para controlar o estado deste orçamento específico
+                        key_modo_edicao = f"modo_edicao_{orc_id}"
+                        key_carrinho_edicao = f"carrinho_edicao_{orc_id}"
+                        
+                        with st.expander(f"Orçamento #{orc_id} - {row['cliente_nome']} | Data: {row['data_orcamento']} | R$ {row['valor_total']:.2f}".replace('.', ',')):
                             
-                            # Converte o texto salvo de volta para a lista de produtos
-                            itens_orcamento = json.loads(row['carrinho_json'])
-                            
-                            # Mostra um resumo do que tem dentro
-                            for item in itens_orcamento:
-                                st.write(f"- {item['qtd']}x {item['nome']} (R$ {item['unit']:.2f})")
+                            # -------------------------------------------------
+                            # CENÁRIO A: MODO DE EDIÇÃO ATIVADO
+                            # -------------------------------------------------
+                            if st.session_state.get(key_modo_edicao, False):
+                                st.caption("✏️ **Modo de Edição de Itens**")
                                 
-                            if st.button("🛒 Transformar em Venda (Jogar no PDV)", key=f"resgatar_{row['id']}", type="primary"):
-                                # Carrega os itens de volta para o carrinho ativo
-                                st.session_state['carrinho'] = itens_orcamento
+                                # Se o carrinho de edição temporário não existir, desempacota o JSON do banco para a memória
+                                if key_carrinho_edicao not in st.session_state:
+                                    st.session_state[key_carrinho_edicao] = json.loads(row['carrinho_json'])
                                 
-                                # Opcional: Você pode deletar o orçamento do banco aqui para não duplicar depois
-                                # conn = conectar_banco(); cur = conn.cursor()
-                                # cur.execute("DELETE FROM orcamentos WHERE id=%s", (row['id'],))
-                                # conn.commit(); conn.close()
+                                carrinho_atual = st.session_state[key_carrinho_edicao]
                                 
-                                st.success("Itens carregados! Vá para a aba 'Frente de Caixa' para escolher a forma de pagamento e finalizar.")
-                                st.rerun()
+                                if carrinho_atual:
+                                    novo_total = 0.0
+                                    
+                                    # Cabeçalho da tabela de edição
+                                    col_h1, col_h2, col_h3, col_h4 = st.columns([4, 1.5, 2, 1])
+                                    col_h1.markdown("**Item**")
+                                    col_h2.markdown("**Qtd**")
+                                    col_h3.markdown("**Subtotal**")
+                                    st.markdown("---")
+                                    
+                                    # Lista as linhas com opção de alteração e exclusão pontual
+                                    for i, item in enumerate(carrinho_atual):
+                                        col_item, col_qtd, col_total, col_del = st.columns([4, 1.5, 2, 1])
+                                        
+                                        col_item.write(f"▫️ {item['nome']}")
+                                        
+                                        # Campo dinâmico para alterar a quantidade do item no próprio orçamento
+                                        nova_qtd = col_qtd.number_input(
+                                            "Qtd", min_value=1, value=int(item['qtd']), step=1, 
+                                            key=f"ed_qtd_{orc_id}_{i}", label_visibility="collapsed"
+                                        )
+                                        
+                                        # Recalcula os valores da linha baseado na nova quantidade e descontos prévios
+                                        item['qtd'] = nova_qtd
+                                        item['total'] = (float(item['unit']) - float(item['desc'])) * nova_qtd
+                                        novo_total += item['total']
+                                        
+                                        col_total.write(f"R$ {item['total']:.2f}".replace('.', ','))
+                                        
+                                        # O Botão de Lixeira remove apenas o item deste índice da lista na memória
+                                        if col_del.button("🗑️", key=f"del_item_{orc_id}_{i}", help="Remover este item do orçamento"):
+                                            st.session_state[key_carrinho_edicao].pop(i)
+                                            st.rerun()
+                                    
+                                    st.markdown("---")
+                                    st.markdown(f"#### 💰 **Novo Total Calculado: R$ {novo_total:.2f}**".replace('.', ','))
+                                    
+                                    # Botões de salvamento e cancelamento da edição
+                                    c1_ed, c2_ed = st.columns(2)
+                                    
+                                    if c1_ed.button("💾 Salvar Alterações", key=f"salvar_ed_{orc_id}", type="primary", use_container_width=True):
+                                        try:
+                                            carrinho_texto = json.dumps(st.session_state[key_carrinho_edicao])
+                                            conn = conectar_banco()
+                                            cur = conn.cursor()
+                                            cur.execute("""
+                                                UPDATE orcamentos 
+                                                SET valor_total = %s, carrinho_json = %s 
+                                                WHERE id = %s AND empresa_id = %s
+                                            """, (float(novo_total), carrinho_texto, int(orc_id), int(emp_id)))
+                                            conn.commit()
+                                            conn.close()
+                                            
+                                            # Limpa as variáveis de controle de edição da memória
+                                            del st.session_state[key_modo_edicao]
+                                            del st.session_state[key_carrinho_edicao]
+                                            
+                                            st.success("✅ Orçamento atualizado com sucesso!")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Erro ao salvar alterações: {e}")
+                                            
+                                    if c2_ed.button("🔄 Cancelar Edição", key=f"cancelar_ed_{orc_id}", use_container_width=True):
+                                        del st.session_state[key_modo_edicao]
+                                        if key_carrinho_edicao in st.session_state: 
+                                            del st.session_state[key_carrinho_edicao]
+                                        st.rerun()
+                                else:
+                                    st.warning("⚠️ Todos os itens foram removidos. Deseja excluir o orçamento completo?")
+                                    if st.button("🗑️ Excluir Orçamento Vazio", key=f"del_vazio_{orc_id}", type="primary", use_container_width=True):
+                                        conn = conectar_banco()
+                                        cur = conn.cursor()
+                                        cur.execute("DELETE FROM orcamentos WHERE id=%s AND empresa_id=%s", (int(orc_id), int(emp_id)))
+                                        conn.commit()
+                                        conn.close()
+                                        del st.session_state[key_modo_edicao]
+                                        if key_carrinho_edicao in st.session_state: del st.session_state[key_carrinho_edicao]
+                                        st.rerun()
+
+                            # -------------------------------------------------
+                            # CENÁRIO B: MODO DE VISUALIZAÇÃO PADRÃO
+                            # -------------------------------------------------
+                            else:
+                                itens_orcamento = json.loads(row['carrinho_json'])
+                                
+                                # Exibe a listagem estática simples dos itens salvos
+                                for item in itens_orcamento:
+                                    st.write(f"- {item['qtd']}x {item['nome']} (R$ {item['unit']:.2f})")
+                                
+                                st.markdown("---")
+                                
+                                # Grade de 3 colunas para as ações principais do gerenciamento
+                                c1, c2, c3 = st.columns(3)
+                                
+                                # Ação 1: Puxa os itens de volta para a Frente de Caixa ativa
+                                if c1.button("🛒 Jogar no PDV", key=f"resgatar_{orc_id}", type="primary", use_container_width=True):
+                                    st.session_state['carrinho'] = itens_orcamento
+                                    st.success("Itens carregados! Mude para a aba '🛒 Vendas' para definir as parcelas e finalizar o pedido.")
+                                    st.rerun()
+                                    
+                                # Ação 2: Ativa as chaves que alternam o expander para o Modo de Edição
+                                if c2.button("✏️ Editar Orçamento", key=f"ativar_ed_{orc_id}", use_container_width=True):
+                                    st.session_state[key_modo_edicao] = True
+                                    st.rerun()
+                                    
+                                # Ação 3: Remove completamente o registro de orçamento do banco de dados
+                                if c3.button("🗑️ Excluir Registro", key=f"excluir_{orc_id}", use_container_width=True):
+                                    try:
+                                        conn = conectar_banco()
+                                        cur = conn.cursor()
+                                        cur.execute("DELETE FROM orcamentos WHERE id=%s AND empresa_id=%s", (int(orc_id), int(emp_id)))
+                                        conn.commit()
+                                        conn.close()
+                                        st.success("Orçamento excluído do sistema!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Erro ao remover orçamento: {e}")
                 else:
                     st.info("Nenhum orçamento pendente no momento.")                
 
