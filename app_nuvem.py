@@ -3172,6 +3172,7 @@ Feliz aniversário! 🥳✨"""
                 # ---------------------------------------------------------
                 with aba_ver_agenda:
                     from datetime import date, timedelta
+                    import datetime
                     hoje = date.today()
                     
                     st.markdown("**🔍 Filtros de Busca:**")
@@ -3260,7 +3261,6 @@ Feliz aniversário! 🥳✨"""
                                         st.markdown(f"💰 **Valor:** R$ {compromisso['valor']:.2f}".replace('.', ','))
                                         
                                         # Botões de ação (só aparecem se o status for 'Agendado')
-                                        # Agora dividimos o espaço em 3 colunas
                                         c_btn1, c_btn2, c_btn3 = st.columns(3)
                                         
                                         if status_atual == "Agendado":
@@ -3308,78 +3308,97 @@ Feliz aniversário! 🥳✨"""
                         st.info(f"🌴 Nenhum atendimento encontrado no período de {dt_inicio.strftime('%d/%m/%Y')} a {dt_fim.strftime('%d/%m/%Y')}.")
 
                 # ---------------------------------------------------------
-                # SUB-ABA 2: MARCAR NOVO HORÁRIO (FORMULÁRIO DE CADASTRO)
+                # SUB-ABA 2: MARCAR NOVO HORÁRIO (AGENDA DINÂMICA)
                 # ---------------------------------------------------------
                 with aba_novo_agendamento:
                     st.markdown("### 📝 Agendar Novo Serviço")
                     
-                    # Carrega as listas necessárias do banco de dados
+                    # Carrega as listas necessárias. Adicionado COALESCE para garantir que tempo nulo vire 30 min.
                     df_cli_ag = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                     df_col_ag = carregar_dados("SELECT id, nome FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
-                    df_ser_ag = carregar_dados("SELECT id, nome, valor FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+                    df_ser_ag = carregar_dados("SELECT id, nome, valor, COALESCE(tempo_estimado, 30) AS tempo_estimado FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
                     
                     if not df_cli_ag.empty and not df_col_ag.empty and not df_ser_ag.empty:
                         with st.form("form_novo_agendamento", clear_on_submit=True):
                             
-                            sel_cliente = st.selectbox("👤 Selecione a Cliente:", options=df_cli_ag['nome'].tolist())
-                            sel_colaboradora = st.selectbox("💇‍♀️ Escolha a Profissional:", options=df_col_ag['nome'].tolist())
+                            # Formata o serviço mostrando o preço e a duração ao lado
+                            df_ser_ag['display'] = df_ser_ag.apply(lambda x: f"{x['nome']} (R$ {x['valor']:.2f} | ⏱️ {int(x['tempo_estimado'])} min)", axis=1)
+                            sel_servico = st.selectbox("🛠️ Primeiro, selecione o Serviço:", options=df_ser_ag['display'].tolist(), index=None, placeholder="Escolha o procedimento para calcular a grade...")
                             
-                            # Formata o serviço mostrando o preço padrão ao lado
-                            df_ser_ag['display'] = df_ser_ag.apply(lambda x: f"{x['nome']} (R$ {x['valor']:.2f})", axis=1)
-                            sel_servico = st.selectbox("🛠️ Selecione o Serviço:", options=df_ser_ag['display'].tolist())
-                            
-                            c_data, c_hora = st.columns(2)
-                            data_escolhida = c_data.date_input("📅 Data:", value=hoje, format="DD/MM/YYYY")
-                            
-                            # Lista de horários padrão para facilitar o clique no celular
-                            lista_horarios = [f"{h:02d}:{m:02d}" for h in range(7, 21) for m in (0, 30)]
-                            hora_escolhida = c_hora.selectbox("⏰ Horário de Início:", options=lista_horarios, index=4) # Inicia às 09:00 por padrão
-                            
-                            obs_ag = st.text_input("📝 Alguma observação? (Opcional)")
-                            
-                            if st.form_submit_button("🗓️ Confirmar Agendamento", type="primary", use_container_width=True):
-                                id_cli_ag = int(df_cli_ag[df_cli_ag['nome'] == sel_cliente].iloc[0]['id'])
-                                id_col_ag = int(df_col_ag[df_col_ag['nome'] == sel_colaboradora].iloc[0]['id'])
+                            # Trava de segurança: O formulário do meio pra baixo só aparece após a escolha do serviço
+                            if sel_servico:
+                                st.markdown("---")
+                                sel_cliente = st.selectbox("👤 Selecione a Cliente:", options=df_cli_ag['nome'].tolist(), index=None, placeholder="Escolha a cliente...")
+                                sel_colaboradora = st.selectbox("💇‍♀️ Escolha a Profissional:", options=df_col_ag['nome'].tolist(), index=None, placeholder="Escolha a profissional executora...")
                                 
+                                c_data, c_hora = st.columns(2)
+                                data_escolhida = c_data.date_input("📅 Data do Agendamento:", value=hoje, format="DD/MM/YYYY")
+                                
+                                # --- O CÁLCULO DINÂMICO DE HORÁRIOS ---
                                 idx_ser = df_ser_ag['display'].tolist().index(sel_servico)
-                                id_ser_ag = int(df_ser_ag.iloc[idx_ser]['id'])
+                                duracao = int(df_ser_ag.iloc[idx_ser]['tempo_estimado'])
+                                if duracao <= 0: duracao = 30 # Proteção extra
                                 
-                                try:
-                                    conn = conectar_banco()
-                                    cur = conn.cursor()
+                                # Define o horário de funcionamento (Ex: 08:00 às 20:00)
+                                hora_abertura = datetime.time(8, 0)
+                                hora_fechamento = datetime.time(20, 0)
+                                
+                                dt_atual = datetime.datetime.combine(data_escolhida, hora_abertura)
+                                dt_limite = datetime.datetime.combine(data_escolhida, hora_fechamento)
+                                
+                                lista_horarios = []
+                                while dt_atual <= dt_limite:
+                                    lista_horarios.append(dt_atual.strftime("%H:%M"))
+                                    dt_atual += datetime.timedelta(minutes=duracao)
+                                
+                                hora_escolhida = c_hora.selectbox("⏰ Horários Sequenciais Livres:", options=lista_horarios, index=None, placeholder="Selecione o horário de início...")
+                                
+                                obs_ag = st.text_input("📝 Alguma observação? (Opcional)")
+                                
+                                # O botão trava caso campos essenciais não estejam preenchidos
+                                trava = (sel_cliente is None) or (sel_colaboradora is None) or (hora_escolhida is None)
+                                
+                                if st.form_submit_button("🗓️ Confirmar Agendamento", type="primary", use_container_width=True, disabled=trava):
+                                    id_cli_ag = int(df_cli_ag[df_cli_ag['nome'] == sel_cliente].iloc[0]['id'])
+                                    id_col_ag = int(df_col_ag[df_col_ag['nome'] == sel_colaboradora].iloc[0]['id'])
+                                    id_ser_ag = int(df_ser_ag.iloc[idx_ser]['id'])
                                     
-                                    # 🔍 O GUARDIÃO: Verifica se a profissional já está ocupada nesse exato momento
-                                    query_verificar_conflito = """
-                                        SELECT id 
-                                        FROM agendamentos 
-                                        WHERE empresa_id = %s 
-                                          AND colaboradora_id = %s 
-                                          AND data_agendamento = %s 
-                                          AND hora_inicio = %s
-                                          AND status != 'Cancelado'
-                                    """
-                                    cur.execute(query_verificar_conflito, (emp_id, id_col_ag, data_escolhida, hora_escolhida))
-                                    conflito = cur.fetchone()
-                                    
-                                    if conflito:
-                                        # Se encontrou algum registro, barra o agendamento e avisa na tela
-                                        st.error(f"⚠️ **Conflito de Agenda!** {sel_colaboradora} já possui um compromisso marcado para o dia {data_escolhida.strftime('%d/%m/%Y')} às {hora_escolhida}.")
-                                        conn.close()
-                                    else:
-                                        # Se o caminho estiver livre, realiza o cadastro normalmente
-                                        cur.execute("""
-                                            INSERT INTO agendamentos (empresa_id, cliente_id, colaboradora_id, servico_id, data_agendamento, hora_inicio, observacao)
-                                            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                        """, (emp_id, id_cli_ag, id_col_ag, id_ser_ag, data_escolhida, hora_escolhida, obs_ag))
-                                        conn.commit()
-                                        conn.close()
+                                    try:
+                                        conn = conectar_banco()
+                                        cur = conn.cursor()
                                         
-                                        st.success("🎯 Horário reservado com sucesso!")
-                                        st.rerun()
+                                        # 🔍 O GUARDIÃO: Verifica se a profissional já está ocupada nesse exato momento de início
+                                        query_verificar_conflito = """
+                                            SELECT id 
+                                            FROM agendamentos 
+                                            WHERE empresa_id = %s 
+                                              AND colaboradora_id = %s 
+                                              AND data_agendamento = %s 
+                                              AND hora_inicio = %s
+                                              AND status != 'Cancelado'
+                                        """
+                                        cur.execute(query_verificar_conflito, (emp_id, id_col_ag, data_escolhida, hora_escolhida))
+                                        conflito = cur.fetchone()
                                         
-                                except Exception as e:
-                                    st.error(f"Erro ao salvar agendamento: {e}")
-                                    if 'conn' in locals(): conn.close()
+                                        if conflito:
+                                            st.error(f"⚠️ **Conflito de Agenda!** {sel_colaboradora} já possui um compromisso marcado para o dia {data_escolhida.strftime('%d/%m/%Y')} exatamente às {hora_escolhida}.")
+                                            conn.close()
+                                        else:
+                                            cur.execute("""
+                                                INSERT INTO agendamentos (empresa_id, cliente_id, colaboradora_id, servico_id, data_agendamento, hora_inicio, observacao)
+                                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                            """, (emp_id, id_cli_ag, id_col_ag, id_ser_ag, data_escolhida, hora_escolhida, obs_ag))
+                                            conn.commit()
+                                            conn.close()
+                                            
+                                            st.success("🎯 Horário reservado com sucesso!")
+                                            st.rerun()
+                                            
+                                    except Exception as e:
+                                        st.error(f"Erro ao salvar agendamento: {e}")
+                                        if 'conn' in locals(): conn.close()
+                            else:
+                                st.info("👆 Selecione o procedimento que a cliente deseja para que o sistema monte a grade de horários compatível com o tempo de duração.")
                     else:
                         st.warning("⚠️ Para usar a agenda, certifique-se de ter Clientes, Colaboradoras e Serviços (tipo='S') cadastrados no sistema.") 
     
