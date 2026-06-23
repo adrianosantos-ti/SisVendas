@@ -226,45 +226,68 @@ elif st.session_state['perfil'] == 'master':
             else:
                 st.info("Não há empresas cadastradas para editar.")
 
-        # --- TABELA FINAL DE EXIBIÇÃO ---
-        st.dataframe(df_empresas, use_container_width=True, hide_index=True)
-        with aba_cad_usuario:
-            st.subheader("Novo Login e Acessos")
-        
-        # Carrega lista de empresas para usar nos selects
-        df_emp_list = carregar_dados("SELECT id, nome FROM empresas ORDER BY id")
+# --- TABELA FINAL DE EXIBIÇÃO ---
+st.dataframe(df_empresas, use_container_width=True, hide_index=True)
+
+with aba_cad_usuario:
+    st.subheader("Novo Login e Acessos")
+    
+    # ATENÇÃO À INDENTAÇÃO: Tudo abaixo deve estar recuado dentro do 'with aba_cad_usuario:'
+    
+    # Carrega lista de empresas para usar nos selects
+    df_emp_list = carregar_dados("SELECT id, nome FROM empresas ORDER BY id")
+    
+    if not df_emp_list.empty:
         dict_empresas = dict(zip(df_emp_list['nome'], df_emp_list['id']))
         lista_nomes_empresas = list(dict_empresas.keys())
+    else:
+        dict_empresas = {}
+        lista_nomes_empresas = []
 
-        # --- 1. BLOCO DE NOVO CADASTRO ---
-        with st.form("form_novo_usuario", clear_on_submit=True):
-            nome_usu = st.text_input("Nome")
-            emp_usu = st.selectbox("Empresa", options=lista_nomes_empresas)
-            login_usu = st.text_input("Login")
-            senha_usu = st.text_input("Senha", type="password")
-            
-            # Campo para já definir se é admin ou comum na criação
-            perfil_usu = st.selectbox("Perfil de Acesso", ["comum", "admin"], help="Admins têm acesso a todas as telas automaticamente. Comuns precisam de permissões específicas.")
-            
-            if st.form_submit_button("Criar"):
-                conn = conectar_banco()
-                conn.cursor().execute(
-                    "INSERT INTO usuarios (nome, login, senha, empresa_id, perfil) VALUES (%s,%s,%s,%s,%s)", 
-                    (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu], perfil_usu)
-                )
-                conn.commit()
-                conn.close()
-                st.success(f"Usuário '{nome_usu}' criado com sucesso! Agora configure as permissões dele na aba abaixo.")
-                st.rerun()
+    # --- 1. BLOCO DE NOVO CADASTRO ---
+    with st.form("form_novo_usuario", clear_on_submit=True):
+        nome_usu = st.text_input("Nome")
+        emp_usu = st.selectbox("Empresa", options=lista_nomes_empresas)
+        login_usu = st.text_input("Login")
+        senha_usu = st.text_input("Senha", type="password")
+        
+        perfil_usu = st.selectbox("Perfil de Acesso", ["comum", "admin"], help="Admins têm acesso a todas as telas automaticamente. Comuns precisam de permissões específicas.")
+        
+        if st.form_submit_button("Criar"):
+            # Dica rápida de banco: se estiver rodando isso em SQLite, o placeholder 
+            # padrão costuma ser '?' e não '%s'. Se for Postgres ou MySQL, '%s' está perfeito.
+            conn = conectar_banco()
+            conn.cursor().execute(
+                "INSERT INTO usuarios (nome, login, senha, empresa_id, perfil) VALUES (%s,%s,%s,%s,%s)", 
+                (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu], perfil_usu)
+            )
+            conn.commit()
+            conn.close()
+            st.success(f"Usuário '{nome_usu}' criado com sucesso! Agora configure as permissões dele na aba abaixo.")
+            st.rerun()
 
-        # Carrega os dados atualizados
-        df_usuarios = carregar_dados("SELECT u.id, u.nome, u.login, u.perfil, u.empresa_id, e.nome as empresa FROM usuarios u JOIN empresas e ON u.empresa_id = e.id ORDER BY u.id")
-        opcoes_usuarios = df_usuarios['id'].tolist() if not df_usuarios.empty else []
+    st.divider()
+    st.subheader("Usuários Cadastrados")
+
+    # Carrega os dados atualizados
+    df_usuarios = carregar_dados("SELECT u.id, u.nome, u.login, u.perfil, u.empresa_id, e.nome as empresa FROM usuarios u JOIN empresas e ON u.empresa_id = e.id ORDER BY u.id")
+    
+    # --- O CÓDIGO QUE FALTAVA PARA EXIBIR OS DADOS ---
+    if not df_usuarios.empty:
+        opcoes_usuarios = df_usuarios['id'].tolist()
         
         def formatar_usuario(u_id):
             linha = df_usuarios[df_usuarios['id'] == u_id].iloc[0]
             return f"ID {linha['id']} - {linha['nome']} ({linha['perfil'].upper()}) | Emp: {linha['empresa']}"
-
+        
+        # 1. Exibe a caixa de seleção com os usuários formatados
+        usuario_selecionado = st.selectbox("Selecione um Usuário", options=opcoes_usuarios, format_func=formatar_usuario)
+        
+        # 2. (Opcional) Exibe a tabela completa abaixo
+        st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum usuário cadastrado ou encontrado no sistema.")
+        
         # --- 2. NOVO BLOCO: GERENCIAR PERMISSÕES ---
         with st.expander("🔐 Gerenciar Permissões de Acesso (Menu)"):
             if not df_usuarios.empty:
