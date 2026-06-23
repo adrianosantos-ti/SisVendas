@@ -1285,10 +1285,86 @@ Feliz aniversário! 🥳✨"""
                 df_produtos_base = df_p[(df_p['quantidade'] > 0) & (df_p.get('classe', 'Venda') == 'Venda')] if not df_p.empty else pd.DataFrame()
                 
                 if not df_produtos_base.empty:
-                    # (Mantém a mesma lógica interna de kits que já tínhamos fixado antes...)
-                    st.info("Painel de Kits ativado apenas para produtos da classe 'Venda'.")
+                    st.caption("Monte combos unindo produtos de revenda para atrair mais clientes.")
+                    
+                    df_produtos_base['display_kit'] = df_produtos_base.apply(lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])} | R$ {float(x['valor']):.2f})", axis=1)
+                    opcoes_kit = df_produtos_base['display_kit'].tolist()
+                    
+                    with st.form("form_montar_kit", clear_on_submit=True):
+                        st.markdown("**1. Selecione os produtos que farão parte do Kit**")
+                        itens_selecionados = st.multiselect("Produtos Base:", options=opcoes_kit, placeholder="Selecione dois ou mais produtos...")
+                        
+                        st.markdown("**2. Detalhes do Novo Kit**")
+                        c1, c2 = st.columns(2)
+                        nome_kit = c1.text_input("Nome do Kit", placeholder="Ex: Combo Dia das Mães")
+                        qtd_kit = c2.number_input("Quantidade de Kits a montar", min_value=1, step=1, help="Esta quantidade será descontada dos produtos base.")
+                        
+                        c3, c4 = st.columns(2)
+                        preco_sugerido = 0.0
+                        
+                        # Calcula preço sugerido (soma dos valores originais)
+                        if itens_selecionados:
+                            for item_str in itens_selecionados:
+                                # Extrai o ID/Valor baseado no texto selecionado
+                                idx = opcoes_kit.index(item_str)
+                                p_valor = float(df_produtos_base.iloc[idx]['valor'])
+                                preco_sugerido += p_valor
+                        
+                        st.info(f"💡 Valor Total Original (Sem Desconto): **R$ {preco_sugerido:.2f}**".replace('.', ','))
+                        
+                        preco_kit = c3.number_input("Preço de Venda do Kit (R$)", min_value=0.0, format="%.2f", value=preco_sugerido)
+                        cat_kit = c4.selectbox("Categoria", lista_cat)
+                        
+                        if st.form_submit_button("📦 Criar Kit Promocional", type="primary"):
+                            if len(itens_selecionados) < 2:
+                                st.warning("Um kit precisa ter pelo menos 2 produtos.")
+                            elif not nome_kit:
+                                st.warning("Dê um nome para o seu Kit.")
+                            else:
+                                erro_estoque = False
+                                ids_para_abater = []
+                                
+                                # Verifica se há estoque suficiente para montar a quantidade de kits desejada
+                                for item_str in itens_selecionados:
+                                    idx = opcoes_kit.index(item_str)
+                                    p_id = int(df_produtos_base.iloc[idx]['id'])
+                                    p_estoque = int(df_produtos_base.iloc[idx]['quantidade'])
+                                    p_nome = df_produtos_base.iloc[idx]['nome']
+                                    
+                                    if p_estoque < qtd_kit:
+                                        st.error(f"Estoque insuficiente de '{p_nome}' para montar {qtd_kit} kits. (Disponível: {p_estoque})")
+                                        erro_estoque = True
+                                        break
+                                    else:
+                                        ids_para_abater.append(p_id)
+                                
+                                if not erro_estoque:
+                                    conn = conectar_banco()
+                                    cur = conn.cursor()
+                                    
+                                    try:
+                                        # 1. Cria o Kit como um NOVO produto (da classe Venda)
+                                        custo_zerado = 0.0
+                                        markup_zerado = 0.0
+                                        cur.execute("""
+                                            INSERT INTO produtos (nome, quantidade, valor, preco_custo, markup, marca, categoria, empresa_id, tipo, classe) 
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'P', 'Venda')
+                                        """, (f"[KIT] {nome_kit}", int(qtd_kit), float(preco_kit), custo_zerado, markup_zerado, "Kit Promocional", cat_kit, int(emp_id)))
+                                        
+                                        # 2. Dá baixa no estoque dos produtos individuais usados para montar os kits
+                                        for p_id in ids_para_abater:
+                                            cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id = %s", (int(qtd_kit), p_id))
+                                            
+                                        conn.commit()
+                                        st.success(f"Kit '{nome_kit}' criado com sucesso! Estoque dos itens base foi atualizado.")
+                                        st.rerun()
+                                        
+                                    except Exception as e:
+                                        st.error(f"Erro ao gerar kit: {e}")
+                                    finally:
+                                        conn.close()
                 else:
-                    st.info("Não há produtos comerciais de venda disponíveis para montar kits.")
+                    st.info("Não há produtos comerciais de venda com estoque disponível para montar kits.")
 
             # --- PAINEL DE FILTROS E EXIBIÇÃO DA TABELA ---
             if not df_p.empty:
