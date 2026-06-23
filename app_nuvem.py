@@ -1854,10 +1854,29 @@ Feliz aniversário! 🥳✨"""
 
                     # 3. Carrinho e Configurações Financeiras
                     if st.session_state['carrinho']:
-                        df_car = pd.DataFrame(st.session_state['carrinho'])
-                        st.table(df_car[['nome', 'qtd', 'unit', 'desc', 'total']])
-                    
-                        total_pdv = float(df_car['total'].sum())
+                        st.markdown("### 🛍️ Itens no Carrinho")
+                        
+                        col_c1, col_c2, col_c3, col_c4 = st.columns([4, 1.5, 2, 1])
+                        col_c1.markdown("**Item**")
+                        col_c2.markdown("**Qtd**")
+                        col_c3.markdown("**Subtotal**")
+                        st.markdown("---")
+                        
+                        total_pdv = 0.0
+                        
+                        for i, item in enumerate(st.session_state['carrinho']):
+                            col_i1, col_i2, col_i3, col_i4 = st.columns([4, 1.5, 2, 1])
+                            col_i1.write(f"▫️ {item['nome']}")
+                            col_i2.write(f"{item['qtd']}x")
+                            col_i3.write(f"R$ {item['total']:.2f}".replace('.', ','))
+                            
+                            # O botão mágico de exclusão individual
+                            if col_i4.button("🗑️", key=f"del_pdv_{i}", help="Remover item"):
+                                st.session_state['carrinho'].pop(i)
+                                st.rerun()
+                                
+                            total_pdv += float(item['total'])
+                        
                         st.header(f"Total Atual: R$ {total_pdv:.2f}".replace('.', ','))
                     
                         st.markdown("---")
@@ -2169,10 +2188,28 @@ Feliz aniversário! 🥳✨"""
 
                     # 3. Carrinho e Configurações Financeiras
                     if st.session_state['carrinho_servicos']:
-                        df_car = pd.DataFrame(st.session_state['carrinho_servicos'])
-                        st.table(df_car[['nome', 'qtd', 'unit', 'desc', 'total']])
-                    
-                        total_pdv = float(df_car['total'].sum())
+                        st.markdown("### 🛍️ Serviços Adicionados")
+                        
+                        col_c1, col_c2, col_c3, col_c4 = st.columns([4, 1.5, 2, 1])
+                        col_c1.markdown("**Procedimento**")
+                        col_c2.markdown("**Sessões**")
+                        col_c3.markdown("**Subtotal**")
+                        st.markdown("---")
+                        
+                        total_pdv = 0.0
+                        
+                        for i, item in enumerate(st.session_state['carrinho_servicos']):
+                            col_i1, col_i2, col_i3, col_i4 = st.columns([4, 1.5, 2, 1])
+                            col_i1.write(f"▫️ {item['nome']}")
+                            col_i2.write(f"{item['qtd']}x")
+                            col_i3.write(f"R$ {item['total']:.2f}".replace('.', ','))
+                            
+                            if col_i4.button("🗑️", key=f"del_serv_{i}", help="Remover serviço"):
+                                st.session_state['carrinho_servicos'].pop(i)
+                                st.rerun()
+                                
+                            total_pdv += float(item['total'])
+                        
                         st.header(f"Total a Pagar: R$ {total_pdv:.2f}".replace('.', ','))
                     
                         st.markdown("---")
