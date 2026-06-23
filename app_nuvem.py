@@ -1932,27 +1932,30 @@ Feliz aniversário! 🥳✨"""
                     if st.session_state['carrinho']:
                         st.markdown("### 🛍️ Itens no Carrinho")
                         
-                        col_c1, col_c2, col_c3, col_c4 = st.columns([4, 1.5, 2, 1])
+                        # Adicionado gap="small" para aproximar horizontalmente e verticalmente
+                        col_c1, col_c2, col_c3, col_c4, col_vazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
                         col_c1.markdown("**Item**")
                         col_c2.markdown("**Qtd**")
                         col_c3.markdown("**Subtotal**")
-                        st.markdown("---")
+                        
+                        # CORREÇÃO CRÍTICA: Linha fina com margem de apenas 4px acima e 8px abaixo
+                        st.markdown("<hr style='margin: 4px 0px 8px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
                         
                         total_pdv = 0.0
                         
                         for i, item in enumerate(st.session_state['carrinho']):
-                            col_i1, col_i2, col_i3, col_i4 = st.columns([4, 1.5, 2, 1])
+                            col_i1, col_i2, col_i3, col_i4, col_ivazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
                             col_i1.write(f"▫️ {item['nome']}")
                             col_i2.write(f"{item['qtd']}x")
                             col_i3.write(f"R$ {item['total']:.2f}".replace('.', ','))
                             
-                            # O botão mágico de exclusão individual
                             if col_i4.button("🗑️", key=f"del_pdv_{i}", help="Remover item"):
                                 st.session_state['carrinho'].pop(i)
                                 st.rerun()
                                 
                             total_pdv += float(item['total'])
                         
+                        st.markdown("<hr style='margin: 10px 0px 10px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
                         st.header(f"Total Atual: R$ {total_pdv:.2f}".replace('.', ','))
                     
                         st.markdown("---")
@@ -2266,16 +2269,18 @@ Feliz aniversário! 🥳✨"""
                     if st.session_state['carrinho_servicos']:
                         st.markdown("### 🛍️ Serviços Adicionados")
                         
-                        col_c1, col_c2, col_c3, col_c4 = st.columns([4, 1.5, 2, 1])
+                        col_c1, col_c2, col_c3, col_c4, col_vazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
                         col_c1.markdown("**Procedimento**")
                         col_c2.markdown("**Sessões**")
                         col_c3.markdown("**Subtotal**")
-                        st.markdown("---")
+                        
+                        # CORREÇÃO CRÍTICA: Linha fina com margem controlada
+                        st.markdown("<hr style='margin: 4px 0px 8px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
                         
                         total_pdv = 0.0
                         
                         for i, item in enumerate(st.session_state['carrinho_servicos']):
-                            col_i1, col_i2, col_i3, col_i4 = st.columns([4, 1.5, 2, 1])
+                            col_i1, col_i2, col_i3, col_i4, col_ivazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
                             col_i1.write(f"▫️ {item['nome']}")
                             col_i2.write(f"{item['qtd']}x")
                             col_i3.write(f"R$ {item['total']:.2f}".replace('.', ','))
@@ -2286,6 +2291,7 @@ Feliz aniversário! 🥳✨"""
                                 
                             total_pdv += float(item['total'])
                         
+                        st.markdown("<hr style='margin: 10px 0px 10px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
                         st.header(f"Total a Pagar: R$ {total_pdv:.2f}".replace('.', ','))
                     
                         st.markdown("---")
