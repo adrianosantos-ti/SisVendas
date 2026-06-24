@@ -1001,6 +1001,7 @@ Feliz aniversário! 🥳✨"""
         with aba_alertas:
             st.markdown("### 📦 Alertas de Reposição de Estoque")
             
+            # CORREÇÃO: Adicionado o "AND tipo = 'P'" para excluir serviços da lista
             df_estoque = carregar_dados("""
                 SELECT 
                     referencia AS "Ref.", 
@@ -1009,7 +1010,7 @@ Feliz aniversário! 🥳✨"""
                     categoria AS "Categoria", 
                     quantidade AS "Qtd Atual"
                 FROM produtos
-                WHERE empresa_id = %s
+                WHERE empresa_id = %s AND tipo = 'P'
                 ORDER BY quantidade ASC
             """, (emp_id,))
             
@@ -1049,7 +1050,7 @@ Feliz aniversário! 🥳✨"""
                 else:
                     st.success("🎉 Tudo certo! Nenhum cosmético com estoque crítico ou zerado no momento.")
             else:
-                st.info("Nenhum produto cadastrado.")
+                st.info("Nenhum produto físico cadastrado.")
                 
         # ==========================================
         # NOVA TELA: VISÃO APP (Acompanhamento Rápido)
