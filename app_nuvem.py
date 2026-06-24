@@ -1255,8 +1255,12 @@ Feliz aniversário! 🥳✨"""
                         p_atual = df_p[df_p['id'] == prod_id_selecionado].iloc[0]
                         classe_atual = p_atual.get('classe', 'Venda')
                         
-                        with st.form("f_edita_p", clear_on_submit=False):
-                            st.caption(f"Editando um produto de **{ 'Consumo Interno (Insumo)' if classe_atual == 'Insumo' else 'Venda / Comercialização' }**")
+                        # Trocado st.form por st.container para que os campos desabilitem na mesma hora
+                        with st.container(border=True):
+                            
+                            index_classe_atual = 1 if classe_atual == 'Insumo' else 0
+                            e_classe_desc = st.selectbox("Finalidade do Produto:", ["Venda / Comercialização", "Insumo / Consumo Interno"], index=index_classe_atual)
+                            e_classe_letra = 'Venda' if e_classe_desc == "Venda / Comercialização" else 'Insumo'
                             
                             c1, c2 = st.columns(2)
                             e_nome = c1.text_input("Nome", value=p_atual['nome'])
@@ -1273,8 +1277,8 @@ Feliz aniversário! 🥳✨"""
                             val_markup = float(p_atual['markup']) if 'markup' in p_atual and pd.notnull(p_atual['markup']) else 0.0
                             
                             e_custo = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f", value=val_custo)
-                            e_markup = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", value=val_markup, disabled=(classe_atual == 'Insumo'))
-                            e_valor = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']), disabled=(classe_atual == 'Insumo'))
+                            e_markup = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", value=val_markup, disabled=(e_classe_letra == 'Insumo'))
+                            e_valor = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']), disabled=(e_classe_letra == 'Insumo'))
                             
                             try:
                                 cat_index = lista_cat.index(p_atual['categoria'])
@@ -1283,18 +1287,35 @@ Feliz aniversário! 🥳✨"""
                                 
                             e_cat = st.selectbox("Categoria", lista_cat, index=cat_index)
                             
-                            if st.form_submit_button("💾 Salvar Alterações"):
+                            st.markdown("---")
+                            # Botões lado a lado
+                            col_btn_salvar, col_btn_excluir = st.columns(2)
+                            
+                            if col_btn_salvar.button("💾 Salvar Alterações", type="primary", use_container_width=True):
                                 conn = conectar_banco()
                                 conn.cursor().execute("""
                                     UPDATE produtos 
-                                    SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s 
+                                    SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s, classe=%s 
                                     WHERE id=%s AND empresa_id=%s
-                                """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, e_ref, int(prod_id_selecionado), emp_id))
+                                """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, e_ref, e_classe_letra, int(prod_id_selecionado), emp_id))
                                 conn.commit()
                                 conn.close()
                                 
                                 st.success("Cadastro atualizado com sucesso!")
                                 st.rerun()
+                                
+                            if col_btn_excluir.button("🗑️ Excluir Produto", use_container_width=True):
+                                try:
+                                    conn = conectar_banco()
+                                    conn.cursor().execute("DELETE FROM produtos WHERE id=%s AND empresa_id=%s", (int(prod_id_selecionado), emp_id))
+                                    conn.commit()
+                                    conn.close()
+                                    
+                                    st.success("✅ Produto excluído com sucesso!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error("⚠️ **Não é possível excluir!** Este produto já possui histórico de vendas ou foi utilizado em serviços vinculados ao seu financeiro.")
+                                    if 'conn' in locals(): conn.close()
                 else:
                     st.info("Não há produtos cadastrados para editar.")
 
@@ -1417,15 +1438,31 @@ Feliz aniversário! 🥳✨"""
                         df_final = df_filtrado
                         
                     if not df_final.empty:
-                        # Remove colunas de controle interno
+                        # Remove colunas de controle interno para a visualização ficar limpa
                         df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa', 'tipo'], errors='ignore')
                         
                         st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
                         
-                        # Capital de estoque foca apenas nos produtos comerciais de venda
+                        # --- NOVAS MÉTRICAS DE CAPITAL DE ESTOQUE ---
+                        st.markdown("### 💰 Resumo Financeiro do Estoque")
+                        m1, m2 = st.columns(2)
+                        
+                        # 1. Capital de Venda (Potencial de Faturamento usando Preço de Venda)
                         df_venda_soma = df_final[df_final.get('classe', 'Venda') == 'Venda']
-                        val_est = (df_venda_soma['quantidade'] * df_venda_soma['valor']).sum()
-                        st.metric("Capital Total em Estoque Comercial (Venda)", f"R$ {val_est:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                        val_est_venda = (df_venda_soma['quantidade'] * df_venda_soma['valor']).sum()
+                        
+                        # 2. Capital de Insumo (Dinheiro parado usando Preço de Custo)
+                        df_insumo_soma = df_final[df_final.get('classe', 'Venda') == 'Insumo']
+                        
+                        # Tratamento de segurança caso o banco tenha produtos antigos sem custo preenchido
+                        if not df_insumo_soma.empty:
+                            df_insumo_soma['custo_seguro'] = df_insumo_soma['preco_custo'].fillna(0).astype(float)
+                            val_est_insumo = (df_insumo_soma['quantidade'] * df_insumo_soma['custo_seguro']).sum()
+                        else:
+                            val_est_insumo = 0.0
+                            
+                        m1.metric("🛒 Potencial de Faturamento (Revenda)", f"R$ {val_est_venda:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        m2.metric("🧴 Capital Imobilizado (Insumos)", f"R$ {val_est_insumo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                 else:
                     st.info("Nenhum produto encontrado com os filtros atuais.")
                     
