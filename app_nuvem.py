@@ -2237,19 +2237,18 @@ Feliz aniversário! 🥳✨"""
                     nome_colab = col_s2.selectbox("👤 Quem executou?", options=df_colab['nome'].tolist(), index=None, placeholder="Selecione o profissional executor...")
                     
                     opcoes_insumos = df_prod_insumo['nome'].tolist() if not df_prod_insumo.empty else []
-                    insumos_selecionados = st.multiselect("🧴 Produtos/Insumos Utilizados na Sessão (Histórico do Cliente):", options=opcoes_insumos, placeholder="Selecione os produtos utilizados (opcional)...", help="Estes itens ficarão salvos na ficha da cliente para consultas futuras, sem alterar o valor final do serviço.")
+                    msg_placeholder = "Selecione os produtos utilizados (opcional)..." if opcoes_insumos else "⚠️ Nenhum produto classificado como 'Insumo' no banco."
+                    insumos_selecionados = st.multiselect("🧴 Produtos/Insumos Utilizados na Sessão (Histórico do Cliente):", options=opcoes_insumos, placeholder=msg_placeholder, help="Estes itens ficarão salvos na ficha da cliente para consultas futuras.")
                 
-                    # --- INTERRUPTOR DE SEGURANÇA: Só libera o formulário se o preenchimento essencial foi feito ---
-                    if cliente_pdv and f_pag and serv_display and nome_colab:
-                        # Resgate de IDs e Valores seguro
+                    # --- NOVO FLUXO: Mostra detalhes do serviço assim que ele for selecionado ---
+                    if serv_display:
                         s_info = df_serv[df_serv['nome'] == serv_display].iloc[0]
                         preco_tabela = float(s_info['valor'])
                         
-                        idx_colab = df_colab['nome'].tolist().index(nome_colab)
-                        profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
+                        st.info(f"🏷️ Preço Base do Serviço: **R$ {preco_tabela:.2f}**".replace('.', ','))
                         
-                        # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
-                        with st.form("form_add_servico", clear_on_submit=True):
+                        # Trocado st.form por st.container para que a validação do botão seja em tempo real
+                        with st.container(border=True):
                             c1, c2, c3, c4 = st.columns(4)
                         
                             q_pdv = c1.number_input("Quantidade de Sessões:", min_value=1, step=1, value=1)
@@ -2257,10 +2256,17 @@ Feliz aniversário! 🥳✨"""
                             desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f", key="d_rs_s")
                             desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f", key="d_perc_s")
                         
-                            if st.form_submit_button("➕ Adicionar Serviço"):
+                            trava_add = (cliente_pdv is None) or (f_pag is None) or (nome_colab is None)
+                            
+                            if trava_add:
+                                st.warning("⚠️ Preencha Cliente, Forma de Pagamento e Profissional para habilitar a adição ao carrinho.")
+                        
+                            if st.button("➕ Adicionar Serviço", type="primary", disabled=trava_add):
                                 desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
                                 
-                                # Traduz insumos para IDs para salvar no banco
+                                idx_colab = df_colab['nome'].tolist().index(nome_colab)
+                                profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
+                                
                                 insumos_ids = []
                                 for ins in insumos_selecionados:
                                     ins_id = df_prod_insumo[df_prod_insumo['nome'] == ins].iloc[0]['id']
@@ -2281,8 +2287,6 @@ Feliz aniversário! 🥳✨"""
                                     'insumos_ids': insumos_ids
                                 })
                                 st.rerun()
-                    else:
-                        st.info("👆 Selecione o cliente, a forma de pagamento, o serviço e o profissional executor para iniciar o atendimento.")
 
                     # 3. Carrinho e Configurações Financeiras
                     if st.session_state['carrinho_servicos']:
@@ -2293,7 +2297,6 @@ Feliz aniversário! 🥳✨"""
                         col_c2.markdown("**Sessões**")
                         col_c3.markdown("**Subtotal**")
                         
-                        # CORREÇÃO CRÍTICA: Linha fina com margem controlada
                         st.markdown("<hr style='margin: 4px 0px 8px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
                         
                         total_pdv = 0.0
@@ -2362,19 +2365,16 @@ Feliz aniversário! 🥳✨"""
                                 cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
                             
                                 for it in st.session_state['carrinho_servicos']:
-                                    # 1. Grava a Venda do Serviço
                                     cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                                (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), int(it['colab_id'])))
                                     
-                                    # 2. Grava a Ficha Técnica (Insumos)
                                     if it['insumos_ids']:
                                         for insumo_id in it['insumos_ids']:
                                             cur.execute("""INSERT INTO historico_insumos (venda_codigo, cliente_id, produto_id, data_uso, empresa_id) 
                                                            VALUES (%s,%s,%s,%s,%s)""",
                                                         (int(novo_cod), int(cli_id_v), int(insumo_id), data_venda_input, int(emp_id)))
                             
-                                # Inserção no Contas a Receber
                                 if f_pag == "Crediário" and valor_entrada > 0:
                                     cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -2398,7 +2398,6 @@ Feliz aniversário! 🥳✨"""
                                                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                                    (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))                        
                             
-                                # WhatsApp - Recibo do Serviço
                                 cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
                                 resultado_tel = cur.fetchone()
                                 tel_cli = resultado_tel[0] if resultado_tel else None
