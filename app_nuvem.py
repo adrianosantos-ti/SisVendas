@@ -1210,7 +1210,7 @@ Feliz aniversário! 🥳✨"""
                     
                     c3, c4 = st.columns(2)
                     q_p = c3.number_input("Qtd Inicial em Estoque", min_value=0, step=1)
-                    m_p = c4.text_input("Marca / Linha", placeholder="Ex: L'Oréal, D'Grava")
+                    m_p = c4.text_input("Marca / Linha", placeholder="Ex: Mary Kay, D'Grava")
                     
                     st.markdown("**Finanças e Precificação**")
                     c5, c6, c7 = st.columns(3)
