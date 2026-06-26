@@ -56,7 +56,7 @@ DATABASE_URL = st.secrets["DATABASE_URL"]
 # ==========================================
 @st.cache_resource
 def obter_pool():
-    return psycopg2.pool.SimpleConnectionPool(1, 5, DATABASE_URL)
+    return psycopg2.pool.SimpleConnectionPool(2, 10, DATABASE_URL)
 
 def conectar_banco():
     pool = obter_pool()
@@ -81,6 +81,29 @@ def carregar_dados(query, params=None):
         else:
             df = pd.DataFrame()
         return df
+    finally:
+        devolver_conexao(conn)
+
+def executar_escrita(operacoes):
+    """
+    Executa uma ou mais operações de escrita no banco de forma segura.
+    Garante que a conexão é sempre devolvida ao pool, mesmo em caso de erro.
+    
+    Uso:
+        def minhas_operacoes(cur):
+            cur.execute("UPDATE ...", (params,))
+            cur.execute("INSERT ...", (params,))
+        
+        executar_escrita(minhas_operacoes)
+    """
+    conn = conectar_banco()
+    try:
+        cur = conn.cursor()
+        operacoes(cur)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         devolver_conexao(conn)
 
