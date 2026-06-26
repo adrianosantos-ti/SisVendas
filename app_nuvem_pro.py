@@ -1302,69 +1302,82 @@ Feliz aniversário! 🥳✨"""
                         classe_tag = "[INVENTÁRIO]" if linha.get('classe', 'Venda') == 'Insumo' else "[REVENDA]"
                         return f"{classe_tag} {linha['nome']}{ref}"
                         
-                    prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto)
+                    prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto, key="sel_editar_produto")
                     
                     if prod_id_selecionado:
                         p_atual = df_p[df_p['id'] == prod_id_selecionado].iloc[0]
                         classe_atual = p_atual.get('classe', 'Venda')
                         
-                        # Trocado st.form por st.container para que os campos desabilitem na mesma hora
+                        # Tratamento seguro de nulos para todos os campos
+                        val_nome   = str(p_atual['nome']) if pd.notnull(p_atual['nome']) else ""
+                        val_ref    = str(p_atual['referencia']) if pd.notnull(p_atual['referencia']) else ""
+                        val_marca  = str(p_atual['marca']) if pd.notnull(p_atual['marca']) else ""
+                        val_qtd    = int(p_atual['quantidade']) if pd.notnull(p_atual['quantidade']) else 0
+                        val_custo  = float(p_atual['preco_custo']) if pd.notnull(p_atual.get('preco_custo')) else 0.0
+                        val_markup = float(p_atual['markup']) if pd.notnull(p_atual.get('markup')) else 0.0
+                        val_valor  = float(p_atual['valor']) if pd.notnull(p_atual['valor']) else 0.0
+                        
+                        # Chave única por produto — força o Streamlit a limpar os campos ao trocar de produto
+                        key_prefix = f"edit_prod_{prod_id_selecionado}"
+                        
                         with st.container(border=True):
                             
                             index_classe_atual = 1 if classe_atual == 'Insumo' else 0
-                            e_classe_desc = st.selectbox("Finalidade do Produto:", ["Venda / Comercialização", "Insumo / Consumo Interno"], index=index_classe_atual)
+                            e_classe_desc = st.selectbox("Finalidade do Produto:", ["Venda / Comercialização", "Insumo / Consumo Interno"], index=index_classe_atual, key=f"{key_prefix}_classe")
                             e_classe_letra = 'Venda' if e_classe_desc == "Venda / Comercialização" else 'Insumo'
                             
                             c1, c2 = st.columns(2)
-                            e_nome = c1.text_input("Nome", value=p_atual['nome'])
-                            e_ref = c2.text_input("Referência", value=p_atual['referencia'] if p_atual['referencia'] else "")
+                            e_nome = c1.text_input("Nome", value=val_nome, key=f"{key_prefix}_nome")
+                            e_ref  = c2.text_input("Referência", value=val_ref, key=f"{key_prefix}_ref")
                             
                             c3, c4 = st.columns(2)
-                            e_qtd = c3.number_input("Quantidade em Estoque Atualizada", min_value=0, step=1, value=int(p_atual['quantidade']))
-                            e_marca = c4.text_input("Marca / Linha", value=p_atual['marca'])
+                            e_qtd   = c3.number_input("Quantidade em Estoque Atualizada", min_value=0, step=1, value=val_qtd, key=f"{key_prefix}_qtd")
+                            e_marca = c4.text_input("Marca / Linha", value=val_marca, key=f"{key_prefix}_marca")
                             
                             st.markdown("**Finanças e Precificação**")
                             c5, c6, c7 = st.columns(3)
                             
-                            val_custo = float(p_atual['preco_custo']) if 'preco_custo' in p_atual and pd.notnull(p_atual['preco_custo']) else 0.0
-                            val_markup = float(p_atual['markup']) if 'markup' in p_atual and pd.notnull(p_atual['markup']) else 0.0
-                            
-                            e_custo = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f", value=val_custo)
-                            e_markup = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", value=val_markup, disabled=(e_classe_letra == 'Insumo'))
-                            e_valor = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']), disabled=(e_classe_letra == 'Insumo'))
+                            e_custo  = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f", value=val_custo, key=f"{key_prefix}_custo")
+                            e_markup = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", value=val_markup, disabled=(e_classe_letra == 'Insumo'), key=f"{key_prefix}_markup")
+                            e_valor  = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", value=val_valor, disabled=(e_classe_letra == 'Insumo'), key=f"{key_prefix}_valor")
                             
                             try:
                                 cat_index = lista_cat.index(p_atual['categoria'])
-                            except ValueError:
+                            except (ValueError, TypeError):
                                 cat_index = 0
                                 
-                            e_cat = st.selectbox("Categoria", lista_cat, index=cat_index)
+                            e_cat = st.selectbox("Categoria", lista_cat, index=cat_index, key=f"{key_prefix}_cat")
                             
                             st.markdown("---")
-                            # Botões lado a lado
                             col_btn_salvar, col_btn_excluir = st.columns(2)
                             
-                            if col_btn_salvar.button("💾 Salvar Alterações", type="primary", use_container_width=True):
-                                conn = conectar_banco()
-                                conn.cursor().execute("""
-                                    UPDATE produtos 
-                                    SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s, classe=%s 
-                                    WHERE id=%s AND empresa_id=%s
-                                """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, e_ref, e_classe_letra, int(prod_id_selecionado), emp_id))
-                                conn.commit()
-                                devolver_conexao(conn)
-                                
-                                st.success("Cadastro atualizado com sucesso!")
-                                limpar_cache()
-                                st.rerun()
-                                
-                            if col_btn_excluir.button("🗑️ Excluir Produto", use_container_width=True):
+                            if col_btn_salvar.button("💾 Salvar Alterações", type="primary", use_container_width=True, key=f"{key_prefix}_salvar"):
                                 try:
                                     conn = conectar_banco()
-                                    conn.cursor().execute("DELETE FROM produtos WHERE id=%s AND empresa_id=%s", (int(prod_id_selecionado), emp_id))
+                                    cur = conn.cursor()
+                                    cur.execute("""
+                                        UPDATE produtos 
+                                        SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s, classe=%s 
+                                        WHERE id=%s AND empresa_id=%s
+                                    """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, e_ref, e_classe_letra, int(prod_id_selecionado), emp_id))
+                                    cur.close()
                                     conn.commit()
                                     devolver_conexao(conn)
-                                    
+                                    st.success("Cadastro atualizado com sucesso!")
+                                    limpar_cache()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro ao salvar: {e}")
+                                    if 'conn' in locals(): devolver_conexao(conn)
+                                
+                            if col_btn_excluir.button("🗑️ Excluir Produto", use_container_width=True, key=f"{key_prefix}_excluir"):
+                                try:
+                                    conn = conectar_banco()
+                                    cur = conn.cursor()
+                                    cur.execute("DELETE FROM produtos WHERE id=%s AND empresa_id=%s", (int(prod_id_selecionado), emp_id))
+                                    cur.close()
+                                    conn.commit()
+                                    devolver_conexao(conn)
                                     st.success("✅ Produto excluído com sucesso!")
                                     limpar_cache()
                                     st.rerun()
