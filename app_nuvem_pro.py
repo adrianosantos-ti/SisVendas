@@ -2782,10 +2782,11 @@ Feliz aniversário! 🥳✨"""
                                     if not prod_selecionado:
                                         st.warning("⚠️ Selecione um produto na lista.")
                                     else:
-                                        ref_oficial = df_produtos[df_produtos['nome'] == prod_selecionado].iloc[0]['referencia']
+                                        prod_row = df_produtos[df_produtos['nome'] == prod_selecionado].iloc[0]
                                         
                                         st.session_state['carrinho_compra'].append({
-                                            "Código": ref_oficial,
+                                            "id": int(prod_row['id']),           # ID direto — nunca é nulo
+                                            "Código": prod_row['referencia'],
                                             "Produto": prod_selecionado,
                                             "Quantidade": int(qtd_input),
                                             "Preço Un. (R$)": float(custo_input)
@@ -2872,22 +2873,31 @@ Feliz aniversário! 🥳✨"""
                                             v_nome = str(item['Produto']).strip()
                                             v_qtd = int(item['Quantidade'])
                                             v_valor = float(item['Preço Un. (R$)'])
+                                            prod_id_direto = item.get('id')  # presente para produtos já cadastrados
                                             
                                             cur.execute("""
                                                 INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
                                                 VALUES (%s, %s, %s, %s, %s)
                                             """, (compra_id, v_cod, v_nome, v_qtd, v_valor))
                                             
-                                            cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
-                                            prod_existe = cur.fetchone()
-                                            
-                                            if prod_existe:
-                                                cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
-                                            else:
+                                            if prod_id_direto:
+                                                # Produto já cadastrado: atualiza diretamente pelo ID (nunca falha)
                                                 cur.execute("""
-                                                    INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
-                                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                                """, (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
+                                                    UPDATE produtos 
+                                                    SET quantidade = quantidade + %s, preco_custo = %s 
+                                                    WHERE id = %s
+                                                """, (v_qtd, v_valor, prod_id_direto))
+                                            else:
+                                                # Produto novo: verifica por referência antes de inserir
+                                                cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
+                                                prod_existe = cur.fetchone()
+                                                if prod_existe:
+                                                    cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
+                                                else:
+                                                    cur.execute("""
+                                                        INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
+                                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                                    """, (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
                                                 
                                             itens_salvos += 1
                                             
