@@ -4239,7 +4239,18 @@ Feliz aniversário! 🥳✨"""
                 tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
                 if len(tel_limpo) >= 10:
                     if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
-                    link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(mensagem_padrao)}"
+                    
+                    # Mensagem editável antes do envio
+                    key_msg = f"msg_{tipo_contato}_{row['codigo_venda']}"
+                    msg_editada = st.text_area(
+                        "✏️ Editar mensagem antes de enviar:",
+                        value=mensagem_padrao,
+                        height=100,
+                        key=key_msg,
+                        label_visibility="collapsed"
+                    )
+                    
+                    link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg_editada)}"
                     
                     # Layout Lado a Lado (Link e Ação de Conclusão)
                     col_wpp, col_done = st.columns(2)
