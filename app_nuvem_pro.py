@@ -1,5 +1,11 @@
 import os
 import time
+import re
+import json
+import base64
+import calendar
+import datetime
+import urllib.parse
 
 # Força o servidor inteiro a rodar no fuso correto
 os.environ['TZ'] = 'America/Fortaleza'
@@ -9,13 +15,13 @@ import streamlit as st
 import psycopg2
 import pandas as pd
 import plotly.express as px
+import pdfplumber
+import pytz
 import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
-hoje = date.today()
-import urllib.parse
-import base64
-import json
 from PIL import Image
+
+hoje = date.today()
 
 # 1. Forçamos a leitura da imagem (use o nome exato do seu arquivo PNG)
 icone = Image.open("logo.png") 
@@ -128,7 +134,6 @@ if 'logado' not in st.session_state:
 if not st.session_state['logado']:
     # 1. Função para converter a imagem e poder usar no HTML
     def get_base64_image(caminho_imagem):
-        import base64
         with open(caminho_imagem, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode()
 
@@ -538,8 +543,6 @@ else:
         pass
 
     # Lógica inteligente para renderizar a logo
-    import base64
-    import os
     
     logo_html = "<span style='font-size: 28px;'>🏢</span>" # Fallback ajustado
     
@@ -587,8 +590,6 @@ else:
         op_per = ["Mês Atual", "Hoje", "Últimos 7 Dias", "Últimos 15 Dias", "Últimos 30 Dias", "Mês Anterior", "Todo o Período", "Personalizado"]
         per_sel = st.selectbox("Filtrar:", op_per)
         
-        from datetime import date, timedelta
-        import pandas as pd
         
         hoje = date.today()
         d_ini, d_fim = None, None
@@ -598,7 +599,6 @@ else:
         elif per_sel == "Últimos 15 Dias": d_ini, d_fim = hoje - timedelta(days=15), hoje
         elif per_sel == "Últimos 30 Dias": d_ini, d_fim = hoje - timedelta(days=30), hoje
         elif per_sel == "Mês Atual": 
-            import calendar
             d_ini = hoje.replace(day=1)
             ultimo_dia_mes = calendar.monthrange(hoje.year, hoje.month)[1]
             d_fim = hoje.replace(day=ultimo_dia_mes)
@@ -642,7 +642,6 @@ else:
                     col3.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
                     
                     st.markdown("---")
-                    import plotly.express as px
                     
                     df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
                     st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
@@ -750,7 +749,6 @@ Mais do que celebrar uma data, queremos celebrar você e agradecer por fazer par
 Aproveite cada momento do seu dia, receba todo o carinho que merece e celebre muito!
 
 Feliz aniversário! 🥳✨"""
-                            from urllib.parse import quote
                             return f"https://api.whatsapp.com/send?phone={num}&text={quote(msg)}"
                         return None
                     
@@ -980,7 +978,6 @@ Feliz aniversário! 🥳✨"""
                             st.text_area("Pré-visualização da Mensagem:", value=msg, height=250, disabled=True)
 
                             if tel:
-                                import urllib.parse
                                 tel_limpo = ''.join(filter(str.isdigit, str(tel)))
                                 if len(tel_limpo) >= 10:
                                     if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
@@ -1109,7 +1106,6 @@ Feliz aniversário! 🥳✨"""
         with aba_app:
             st.markdown("### 📱 Acompanhamento Diário")
             
-            from datetime import date
             hoje = date.today()
             
             meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
@@ -1672,8 +1668,6 @@ Feliz aniversário! 🥳✨"""
         with tab_cli:
             #st.subheader("Gerenciamento de Clientes")
             
-            from datetime import datetime
-            import pytz
 
             # Força o sistema a usar o fuso horário correto
             fuso_local = pytz.timezone('America/Fortaleza')
@@ -2739,8 +2733,6 @@ Feliz aniversário! 🥳✨"""
 
                     if arquivo_pdf:
                         if st.button("🔍 Processar PDF do Pedido", type="primary"):
-                            import pdfplumber
-                            import re
                             
                             try:
                                 texto_extraido = ""
@@ -3321,8 +3313,6 @@ Feliz aniversário! 🥳✨"""
                 # SUB-ABA 1: VISUALIZAR AGENDA (TIMELINE COM FILTROS AVANÇADOS)
                 # ---------------------------------------------------------
                 with aba_ver_agenda:
-                    from datetime import date, timedelta
-                    import datetime
                     hoje = date.today()
                     
                     st.markdown("**🔍 Filtros de Busca:**")
@@ -3702,7 +3692,6 @@ Feliz aniversário! 🥳✨"""
                 # --- NOVO EXPANDER DE LEMBRETE DO WHATSAPP ---
                 with st.expander("📲 Enviar Lembrete via WhatsApp", expanded=False):
                     if not df_p.empty:
-                        import urllib.parse
                         
                         op_lembrete = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
                         lembrete_sel = st.selectbox("Selecione a parcela para enviar lembrete:", options=op_lembrete, key="sel_lembrete")
@@ -3759,7 +3748,6 @@ Feliz aniversário! 🥳✨"""
             
                             with st.form(f"f_reajuste_{v_id}"):
                                 novos_dados = {}
-                                import datetime
                 
                                 for index, row in df_parc.iterrows():
                                     st.write(f"**Parcela {row['num_parcela']} de {row['total_parcelas']}** - Status: {row['status']}")
@@ -3839,7 +3827,6 @@ Feliz aniversário! 🥳✨"""
             """, (emp_id,))
             
             if not df_receber_geral.empty:
-                import datetime
                 hoje = datetime.date.today()
                 
                 # Cria uma coluna de data real (oculta) para a matemática de atrasos funcionar
