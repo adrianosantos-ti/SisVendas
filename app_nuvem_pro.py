@@ -7,7 +7,6 @@ time.tzset()
 
 import streamlit as st
 import psycopg2
-import psycopg2.pool
 import pandas as pd
 import plotly.express as px
 import xml.etree.ElementTree as ET
@@ -49,22 +48,19 @@ if 'carrinho' not in st.session_state:
 DATABASE_URL = st.secrets["DATABASE_URL"]
 
 # ==========================================
-# POOL DE CONEXÕES
-# Mantém entre 1 e 5 conexões abertas e
-# reutilizadas, evitando abrir/fechar a cada
-# query. Fica em cache da sessão do Streamlit.
+# CONEXÃO AO BANCO
+# Usa uma conexão por execução com reconexão
+# automática. Simples, robusto e compatível
+# com o PgBouncer do Supabase (porta 6543).
 # ==========================================
-@st.cache_resource
-def obter_pool():
-    return psycopg2.pool.SimpleConnectionPool(1, 3, DATABASE_URL)
-
 def conectar_banco():
-    pool = obter_pool()
-    return pool.getconn()
+    return psycopg2.connect(DATABASE_URL)
 
 def devolver_conexao(conn):
-    pool = obter_pool()
-    pool.putconn(conn)
+    try:
+        conn.close()
+    except Exception:
+        pass
 
 def carregar_dados(query, params=None):
     conn = conectar_banco()
@@ -86,14 +82,12 @@ def carregar_dados(query, params=None):
 
 def executar_escrita(operacoes):
     """
-    Executa uma ou mais operações de escrita no banco de forma segura.
-    Garante que a conexão é sempre devolvida ao pool, mesmo em caso de erro.
+    Executa operações de escrita no banco de forma segura.
+    Garante commit ou rollback e fechamento da conexão.
     
     Uso:
         def minhas_operacoes(cur):
             cur.execute("UPDATE ...", (params,))
-            cur.execute("INSERT ...", (params,))
-        
         executar_escrita(minhas_operacoes)
     """
     conn = conectar_banco()
