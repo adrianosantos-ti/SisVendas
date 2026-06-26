@@ -7,6 +7,7 @@ time.tzset()
 
 import streamlit as st
 import psycopg2
+import psycopg2.pool
 import pandas as pd
 import plotly.express as px
 import xml.etree.ElementTree as ET
@@ -47,25 +48,41 @@ if 'carrinho' not in st.session_state:
 
 DATABASE_URL = st.secrets["DATABASE_URL"]
 
+# ==========================================
+# POOL DE CONEXÕES
+# Mantém entre 1 e 5 conexões abertas e
+# reutilizadas, evitando abrir/fechar a cada
+# query. Fica em cache da sessão do Streamlit.
+# ==========================================
+@st.cache_resource
+def obter_pool():
+    return psycopg2.pool.SimpleConnectionPool(1, 5, DATABASE_URL)
+
 def conectar_banco():
-    return psycopg2.connect(DATABASE_URL)
+    pool = obter_pool()
+    return pool.getconn()
+
+def devolver_conexao(conn):
+    pool = obter_pool()
+    pool.putconn(conn)
 
 def carregar_dados(query, params=None):
     conn = conectar_banco()
-    cursor = conn.cursor()
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query)
-    
-    if cursor.description:
-        cols = [desc[0] for desc in cursor.description]
-        df = pd.DataFrame(cursor.fetchall(), columns=cols)
-    else:
-        df = pd.DataFrame()
-    
-    conn.close()
-    return df
+    try:
+        cursor = conn.cursor()
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        
+        if cursor.description:
+            cols = [desc[0] for desc in cursor.description]
+            df = pd.DataFrame(cursor.fetchall(), columns=cols)
+        else:
+            df = pd.DataFrame()
+        return df
+    finally:
+        devolver_conexao(conn)
 
 # ==========================================
 # CACHE DE LEITURA (reduz chamadas ao banco)
@@ -161,10 +178,10 @@ if not st.session_state['logado']:
                         st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
 
                     # Agora sim, com tudo salvo na memória, fechamos o banco e recarregamos a tela
-                    conn.close()
+                    devolver_conexao(conn)
                     st.rerun()
                 else:
-                    conn.close()
+                    devolver_conexao(conn)
                     st.error("❌ Usuário ou senha incorretos.")
 
 # --- PAINEL DO ADMINISTRADOR MASTER ---
@@ -192,7 +209,7 @@ elif st.session_state['perfil'] == 'master':
                     (nome_emp, cnpj_emp, logo_emp)
                 )
                 conn.commit()
-                conn.close()
+                devolver_conexao(conn)
                 st.success(f"Empresa '{nome_emp}' cadastrada!")
                 limpar_cache()
                 st.rerun()
@@ -231,7 +248,7 @@ elif st.session_state['perfil'] == 'master':
                                 (e_nome, e_cnpj, e_logo, int(emp_selecionada))
                             )
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             
                             st.success("✅ Cadastro da empresa atualizado com sucesso!")
                             limpar_cache()
@@ -271,7 +288,7 @@ elif st.session_state['perfil'] == 'master':
                     (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu], perfil_usu)
                 )
                 conn.commit()
-                conn.close()
+                devolver_conexao(conn)
                 st.success(f"Usuário '{nome_usu}' criado com sucesso! Agora configure as permissões dele na aba abaixo.")
                 limpar_cache()
                 st.rerun()
@@ -342,7 +359,7 @@ elif st.session_state['perfil'] == 'master':
                                             )
                                     
                                     conn.commit()
-                                    conn.close()
+                                    devolver_conexao(conn)
                                     st.success(f"Permissões de {linha_usu['nome']} atualizadas com sucesso!")
             else:
                 st.info("Cadastre um usuário primeiro.")
@@ -372,7 +389,7 @@ elif st.session_state['perfil'] == 'master':
                                     (e_nome, e_login, dict_empresas[e_emp], e_perfil, int(usu_ed_sel))
                                 )
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("✅ Usuário atualizado com sucesso!")
                                 limpar_cache()
                                 st.rerun()
@@ -387,7 +404,7 @@ elif st.session_state['perfil'] == 'master':
                             conn = conectar_banco()
                             conn.cursor().execute("DELETE FROM usuarios WHERE id=%s", (int(usu_del_sel),))
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("🗑️ Usuário excluído!")
                             limpar_cache()
                             st.rerun()
@@ -407,7 +424,7 @@ elif st.session_state['perfil'] == 'master':
                 conn = conectar_banco()
                 conn.cursor().execute("UPDATE usuarios SET senha = %s WHERE id = %s", (nova_sen, dict_todos_usu[usu_sel]))
                 conn.commit()
-                conn.close()
+                devolver_conexao(conn)
                 st.success("Senha alterada!")
         else:
             st.info("Nenhum usuário para resetar a senha.")
@@ -481,7 +498,7 @@ else:
                     conn.commit()
                     st.success("OK!")
                 else: st.error("Incorreta")
-                conn.close()
+                devolver_conexao(conn)
 
     if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
         st.session_state.clear()
@@ -820,8 +837,8 @@ Feliz aniversário! 🥳✨"""
                                         novo_restante = novo_total - nova_entrada
                                         cursor.execute("UPDATE vendas SET data_venda=%s, forma_pagamento=%s, prazo=%s, valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s, valor_restante=%s WHERE id=%s AND empresa_id=%s", 
                                                      (nova_data.strftime("%d/%m/%Y"), novo_pag, novo_prazo, novo_tabela, novo_desc, novo_total, nova_entrada, novo_restante, venda_id_edit, emp_id))
-                                        conn.commit(); conn.close(); st.success("Atualizado!"); limpar_cache(); st.rerun()
-                            else: conn.close()
+                                        conn.commit(); devolver_conexao(conn); st.success("Atualizado!"); limpar_cache(); st.rerun()
+                            else: devolver_conexao(conn)
 
                 with col_opcoes2:
                     with st.expander("❌ Cancelar / Estornar Item", expanded=False):
@@ -841,8 +858,8 @@ Feliz aniversário! 🥳✨"""
                                     cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
                                     cursor.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
                                     cursor.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
-                                    conn.commit(); conn.close(); st.success("Cancelado!"); limpar_cache(); st.rerun()
-                                else: conn.close(); st.error("Erro.")
+                                    conn.commit(); devolver_conexao(conn); st.success("Cancelado!"); limpar_cache(); st.rerun()
+                                else: devolver_conexao(conn); st.error("Erro.")
                 
                 #st.markdown("---")
 
@@ -876,7 +893,7 @@ Feliz aniversário! 🥳✨"""
                         """, (venda_id_recibo, emp_id))
                         
                         dados_recibo = cursor.fetchall()
-                        conn.close()
+                        devolver_conexao(conn)
 
                         if dados_recibo:
                             tel = dados_recibo[0][0]
@@ -1252,7 +1269,7 @@ Feliz aniversário! 🥳✨"""
                                 (n_p, q_p, v_p, custo_p, markup_p, m_p, cat_p, emp_id, ref_p, classe_letra)
                             )
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success(f"Produto de {classe_letra} cadastrado com sucesso!")
                             limpar_cache()
                             st.rerun()
@@ -1318,7 +1335,7 @@ Feliz aniversário! 🥳✨"""
                                     WHERE id=%s AND empresa_id=%s
                                 """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, e_ref, e_classe_letra, int(prod_id_selecionado), emp_id))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 
                                 st.success("Cadastro atualizado com sucesso!")
                                 limpar_cache()
@@ -1329,14 +1346,14 @@ Feliz aniversário! 🥳✨"""
                                     conn = conectar_banco()
                                     conn.cursor().execute("DELETE FROM produtos WHERE id=%s AND empresa_id=%s", (int(prod_id_selecionado), emp_id))
                                     conn.commit()
-                                    conn.close()
+                                    devolver_conexao(conn)
                                     
                                     st.success("✅ Produto excluído com sucesso!")
                                     limpar_cache()
                                     st.rerun()
                                 except Exception as e:
                                     st.error("⚠️ **Não é possível excluir!** Este produto já possui histórico de vendas ou foi utilizado em serviços vinculados ao seu financeiro.")
-                                    if 'conn' in locals(): conn.close()
+                                    if 'conn' in locals(): devolver_conexao(conn)
                 else:
                     st.info("Não há produtos cadastrados para editar.")
 
@@ -1424,7 +1441,7 @@ Feliz aniversário! 🥳✨"""
                                     except Exception as e:
                                         st.error(f"Erro ao gerar kit: {e}")
                                     finally:
-                                        conn.close()
+                                        devolver_conexao(conn)
                 else:
                     st.info("Não há produtos comerciais de venda com estoque disponível para montar kits.")
 
@@ -1531,7 +1548,7 @@ Feliz aniversário! 🥳✨"""
                                 (n_s, v_s, cat_s, emp_id, ref_s, t_s, com_s)
                             )
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("Serviço cadastrado com sucesso!")
                             limpar_cache()
                             st.rerun()
@@ -1583,7 +1600,7 @@ Feliz aniversário! 🥳✨"""
                                     WHERE id=%s AND empresa_id=%s
                                 """, (e_nome_s, e_valor_s, e_cat_s, e_ref_s, e_tempo_s, e_com_s, int(serv_id_selecionado), emp_id))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 
                                 st.success("Serviço atualizado com sucesso!")
                                 limpar_cache()
@@ -1616,11 +1633,11 @@ Feliz aniversário! 🥳✨"""
             with c1:
                 cat_n = st.text_input("Nova Categoria")
                 if st.button("Salvar Categoria"):
-                    conn = conectar_banco(); conn.cursor().execute("INSERT INTO categorias (nome, empresa_id) VALUES (%s,%s)",(cat_n, emp_id)); conn.commit(); conn.close(); limpar_cache(); st.rerun()
+                    conn = conectar_banco(); conn.cursor().execute("INSERT INTO categorias (nome, empresa_id) VALUES (%s,%s)",(cat_n, emp_id)); conn.commit(); devolver_conexao(conn); limpar_cache(); st.rerun()
             with c2:
                 cat_del = st.selectbox("Excluir:", lista_cat)
                 if st.button("Remover", type="primary"):
-                    conn = conectar_banco(); conn.cursor().execute("DELETE FROM categorias WHERE nome=%s AND empresa_id=%s",(cat_del, emp_id)); conn.commit(); conn.close(); limpar_cache(); st.rerun()
+                    conn = conectar_banco(); conn.cursor().execute("DELETE FROM categorias WHERE nome=%s AND empresa_id=%s",(cat_del, emp_id)); conn.commit(); devolver_conexao(conn); limpar_cache(); st.rerun()
 
         with tab_cli:
             #st.subheader("Gerenciamento de Clientes")
@@ -1662,7 +1679,7 @@ Feliz aniversário! 🥳✨"""
                             (nome_cli, nasc_cli, tel_cli, emp_id, tipo_cli_letra)
                         )
                         conn.commit()
-                        conn.close()
+                        devolver_conexao(conn)
                         st.success(f"{tipo_cli_desc} cadastrado com sucesso!")
                         limpar_cache()
                         st.rerun()
@@ -1697,7 +1714,7 @@ Feliz aniversário! 🥳✨"""
                                 (novo_nome_cli, novo_nasc_cli, novo_tel_cli, novo_tipo_letra, cli_id, emp_id)
                             )
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("Atualizado com sucesso!")
                             limpar_cache()
                             st.rerun()
@@ -1711,7 +1728,7 @@ Feliz aniversário! 🥳✨"""
                             conn = conectar_banco()
                             conn.cursor().execute("DELETE FROM clientes WHERE id=%s AND empresa_id=%s", (clientes_dict[cli_del_selecionado], emp_id))
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("Excluído com sucesso!")
                             limpar_cache()
                             st.rerun()
@@ -1742,7 +1759,7 @@ Feliz aniversário! 🥳✨"""
                     c_f = st.text_input("CNPJ")
                     t_f = st.text_input("Telefone")
                     if st.form_submit_button("Salvar Fornecedor"):
-                        conn = conectar_banco(); conn.cursor().execute("INSERT INTO fornecedores (nome, cnpj, telefone, empresa_id) VALUES (%s,%s,%s,%s)",(n_f, c_f, t_f, emp_id)); conn.commit(); conn.close(); limpar_cache(); st.rerun()
+                        conn = conectar_banco(); conn.cursor().execute("INSERT INTO fornecedores (nome, cnpj, telefone, empresa_id) VALUES (%s,%s,%s,%s)",(n_f, c_f, t_f, emp_id)); conn.commit(); devolver_conexao(conn); limpar_cache(); st.rerun()
             st.dataframe(carregar_dados_cached("SELECT nome, cnpj, telefone FROM fornecedores WHERE empresa_id=%s ORDER BY nome",(emp_id,)), use_container_width=True)
 
         # ==========================================
@@ -1778,7 +1795,7 @@ Feliz aniversário! 🥳✨"""
                                 VALUES (%s, %s, %s, %s, %s)
                             """, (nome_c, cargo_c, tel_c, is_ativo, emp_id))
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             
                             st.success(f"Colaborador(a) {nome_c} cadastrado(a) com sucesso!")
                             limpar_cache()
@@ -1821,7 +1838,7 @@ Feliz aniversário! 🥳✨"""
                                         WHERE id=%s AND empresa_id=%s
                                     """, (e_nome, e_cargo, e_tel, is_ativo_edit, id_selecionado, emp_id))
                                     conn.commit()
-                                    conn.close()
+                                    devolver_conexao(conn)
                                     
                                     st.success("Cadastro atualizado com sucesso!")
                                     limpar_cache()
@@ -2174,7 +2191,7 @@ Feliz aniversário! 🥳✨"""
                                         st.session_state['zap_total'] = total_pdv
                             
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.session_state['carrinho'] = []
                                 st.success(f"Venda {novo_cod} salva com sucesso como PEDIDO!")
                                 limpar_cache()
@@ -2182,7 +2199,7 @@ Feliz aniversário! 🥳✨"""
                             
                             except Exception as e:
                                 st.error(f"Erro no banco: {e}")
-                                if 'conn' in locals(): conn.close()
+                                if 'conn' in locals(): devolver_conexao(conn)
 
                         # --- AÇÃO: ORÇAMENTO ---
                         if c2_orcamento.button("📋 Salvar Orçamento", use_container_width=True):
@@ -2196,7 +2213,7 @@ Feliz aniversário! 🥳✨"""
                                                VALUES (%s,%s,%s,%s,%s)""", 
                                             (int(emp_id), cliente_pdv, data_hoje_str, float(total_pdv), carrinho_texto))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("Orçamento gravado no sistema com sucesso!")
                             except Exception as e:
                                 st.error(f"Erro ao salvar orçamento: {e}")
@@ -2491,7 +2508,7 @@ Feliz aniversário! 🥳✨"""
                                         st.session_state['zap_total_serv'] = total_pdv
                             
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.session_state['carrinho_servicos'] = []
                                 st.success(f"Ficha técnica e Atendimento {novo_cod} salvos com sucesso!")
                                 limpar_cache()
@@ -2499,7 +2516,7 @@ Feliz aniversário! 🥳✨"""
                             
                             except Exception as e:
                                 st.error(f"Erro no banco: {e}")
-                                if 'conn' in locals(): conn.close()
+                                if 'conn' in locals(): devolver_conexao(conn)
 
                         if c3_limpar.button("🗑️ Limpar Painel", use_container_width=True): 
                             st.session_state['carrinho_servicos'] = []
@@ -2602,7 +2619,7 @@ Feliz aniversário! 🥳✨"""
                                                 WHERE id = %s AND empresa_id = %s
                                             """, (float(novo_total), carrinho_texto, int(orc_id), int(emp_id)))
                                             conn.commit()
-                                            conn.close()
+                                            devolver_conexao(conn)
                                             
                                             # Limpa as variáveis de controle de edição da memória
                                             del st.session_state[key_modo_edicao]
@@ -2626,7 +2643,7 @@ Feliz aniversário! 🥳✨"""
                                         cur = conn.cursor()
                                         cur.execute("DELETE FROM orcamentos WHERE id=%s AND empresa_id=%s", (int(orc_id), int(emp_id)))
                                         conn.commit()
-                                        conn.close()
+                                        devolver_conexao(conn)
                                         del st.session_state[key_modo_edicao]
                                         if key_carrinho_edicao in st.session_state: del st.session_state[key_carrinho_edicao]
                                         limpar_cache()
@@ -2665,7 +2682,7 @@ Feliz aniversário! 🥳✨"""
                                         cur = conn.cursor()
                                         cur.execute("DELETE FROM orcamentos WHERE id=%s AND empresa_id=%s", (int(orc_id), int(emp_id)))
                                         conn.commit()
-                                        conn.close()
+                                        devolver_conexao(conn)
                                         st.success("Orçamento excluído do sistema!")
                                         limpar_cache()
                                         st.rerun()
@@ -2896,7 +2913,7 @@ Feliz aniversário! 🥳✨"""
                                                 """, (compra_id, id_forn_salvar, i, qtd_parcelas, valor_parcela, venc_texto, emp_id))
                                         
                                         conn.commit()
-                                        conn.close()
+                                        devolver_conexao(conn)
                                         
                                         st.success(f"🎉 Sucesso! A NF {numero_nota} foi registrada. {itens_salvos} itens entraram no estoque e o financeiro foi atualizado.")
                                         st.session_state['carrinho_compra'] = []
@@ -2905,7 +2922,7 @@ Feliz aniversário! 🥳✨"""
                                         
                                     except Exception as e:
                                         st.error(f"Erro ao salvar no banco: {e}")
-                                        if 'conn' in locals(): conn.rollback(); conn.close()
+                                        if 'conn' in locals(): conn.rollback(); devolver_conexao(conn)
                             
                             if st.button("🗑️ Limpar Carrinho", use_container_width=True):
                                 st.session_state['carrinho_compra'] = []
@@ -2994,7 +3011,7 @@ Feliz aniversário! 🥳✨"""
                                 cur.execute("DELETE FROM compras WHERE id = %s", (int(compra_selecionada_id),))
                                 
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 
                                 st.success(f"✅ Sucesso! A Entrada {dados_compra['numero_pedido']} e suas respectivas parcelas financeiras foram completamente removidas do sistema.")
                                 limpar_cache()
@@ -3002,7 +3019,7 @@ Feliz aniversário! 🥳✨"""
                                 
                             except Exception as e:
                                 st.error(f"Erro ao processar estorno no banco de dados: {e}")
-                                if 'conn' in locals(): conn.rollback(); conn.close()
+                                if 'conn' in locals(): conn.rollback(); devolver_conexao(conn)
                 else:
                     st.warning("Nenhuma nota de entrada processada neste período.")   
                     
@@ -3150,7 +3167,7 @@ Feliz aniversário! 🥳✨"""
                                         cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id=%s", (item['qtd'], item['id']))
                                 
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 
                                 st.session_state['troca_saida'] = []
                                 st.session_state['troca_entrada'] = []
@@ -3160,7 +3177,7 @@ Feliz aniversário! 🥳✨"""
                                 
                             except Exception as e:
                                 st.error(f"Erro ao processar transação: {e}")
-                                if 'conn' in locals(): conn.close()
+                                if 'conn' in locals(): devolver_conexao(conn)
 
                     # ==========================================
                     # VISÃO APP: ACOMPANHAMENTO DE TROCAS EM STANDBY
@@ -3237,13 +3254,13 @@ Feliz aniversário! 🥳✨"""
                                                 
                                             cur.execute("UPDATE trocas SET status_financeiro = %s, diferenca = %s WHERE id = %s", (status_fin, dif, id_t))
                                             conn.commit()
-                                            conn.close()
+                                            devolver_conexao(conn)
                                             st.success(f"Troca Nº {id_t} finalizada e resolvida financeiramente!")
                                             limpar_cache()
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Erro ao finalizar: {e}")
-                                            if 'conn' in locals(): conn.close()
+                                            if 'conn' in locals(): devolver_conexao(conn)
                     else:
                         st.info("Não há nenhuma movimentação de troca em standby no momento.")
                         
@@ -3363,7 +3380,7 @@ Feliz aniversário! 🥳✨"""
                                                     cur = conn.cursor()
                                                     cur.execute("UPDATE agendamentos SET status = 'Concluído' WHERE id = %s", (id_agendamento,))
                                                     conn.commit()
-                                                    conn.close()
+                                                    devolver_conexao(conn)
                                                     st.success("Atendimento concluído!")
                                                     limpar_cache()
                                                     st.rerun()
@@ -3376,7 +3393,7 @@ Feliz aniversário! 🥳✨"""
                                                     cur = conn.cursor()
                                                     cur.execute("UPDATE agendamentos SET status = 'Cancelado' WHERE id = %s", (id_agendamento,))
                                                     conn.commit()
-                                                    conn.close()
+                                                    devolver_conexao(conn)
                                                     st.warning("Agendamento cancelado.")
                                                     limpar_cache()
                                                     st.rerun()
@@ -3394,7 +3411,7 @@ Feliz aniversário! 🥳✨"""
                                                 cur = conn.cursor()
                                                 cur.execute("DELETE FROM agendamentos WHERE id = %s AND empresa_id = %s", (id_agendamento, emp_id))
                                                 conn.commit()
-                                                conn.close()
+                                                devolver_conexao(conn)
                                                 st.success("Agendamento excluído!")
                                                 limpar_cache()
                                                 st.rerun()
@@ -3481,14 +3498,14 @@ Feliz aniversário! 🥳✨"""
                                         
                                         if conflito:
                                             st.error(f"⚠️ **Conflito de Agenda!** A profissional selecionada já possui um compromisso marcado para o dia {data_escolhida.strftime('%d/%m/%Y')} exatamente às {hora_escolhida}.")
-                                            conn.close()
+                                            devolver_conexao(conn)
                                         else:
                                             cur.execute("""
                                                 INSERT INTO agendamentos (empresa_id, cliente_id, colaboradora_id, servico_id, data_agendamento, hora_inicio, observacao)
                                                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                                             """, (emp_id, id_cli_ag, id_col_ag, id_ser_ag, data_escolhida, hora_escolhida, obs_ag))
                                             conn.commit()
-                                            conn.close()
+                                            devolver_conexao(conn)
                                             
                                             st.success("🎯 Horário reservado com sucesso!")
                                             limpar_cache()
@@ -3496,7 +3513,7 @@ Feliz aniversário! 🥳✨"""
                                             
                                     except Exception as e:
                                         st.error(f"Erro ao salvar agendamento: {e}")
-                                        if 'conn' in locals(): conn.close()
+                                        if 'conn' in locals(): devolver_conexao(conn)
                             else:
                                 st.info("👆 Selecione o procedimento que a cliente deseja para que o sistema monte a grade de horários compatível com o tempo de duração.")
                     else:
@@ -3617,7 +3634,7 @@ Feliz aniversário! 🥳✨"""
                                             """, (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
                                             
                                             conn.commit()
-                                            conn.close()
+                                            devolver_conexao(conn)
                                             
                                             # Limpa completamente a memória de controle após o sucesso
                                             st.session_state['venda_editando'] = None
@@ -3629,7 +3646,7 @@ Feliz aniversário! 🥳✨"""
                                             
                                         except Exception as e:
                                             st.error(f"Erro ao salvar no banco: {e}")
-                                            if 'conn' in locals(): conn.close()
+                                            if 'conn' in locals(): devolver_conexao(conn)
                             
                             # Botão extra para caso você queira fechar o painel sem baixar nada
                             st.markdown("---")
@@ -3754,7 +3771,7 @@ Feliz aniversário! 🥳✨"""
                                                 (dados['valor'], dados['data'], parcela_id, emp_id)
                                             )
                                         conn.commit()
-                                        conn.close()
+                                        devolver_conexao(conn)
                         
                                         st.success("✅ Valores e datas reajustados com sucesso!")
                                         del st.session_state['venda_editando']
@@ -3898,7 +3915,7 @@ Feliz aniversário! 🥳✨"""
                                 # Salva como YYYY-MM-DD
                                 conn.cursor().execute("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%Y-%m-%d"), id_desp_baixa, emp_id))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("Despesa baixada com sucesso no fluxo financeiro!")
                                 limpar_cache()
                                 st.rerun()
@@ -3931,7 +3948,7 @@ Feliz aniversário! 🥳✨"""
                                 """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%Y-%m-%d"), emp_id))
                             
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success(f"Despesa com {tot_parc_manual} parcela(s) lançada com sucesso!")
                             limpar_cache()
                             st.rerun()
@@ -3978,7 +3995,7 @@ Feliz aniversário! 🥳✨"""
                                     WHERE id = %s AND empresa_id = %s
                                 """, (float(novo_v_desp), novo_venc_desp.strftime("%Y-%m-%d"), novo_pagto_desp_val, id_desp_crud, emp_id))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("Lançamento atualizado com sucesso!")
                                 limpar_cache()
                                 st.rerun()
@@ -3993,7 +4010,7 @@ Feliz aniversário! 🥳✨"""
                                 conn = conectar_banco()
                                 conn.cursor().execute("DELETE FROM contas_pagar WHERE id = %s AND empresa_id = %s", (id_desp_crud, emp_id))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("Despesa removida com sucesso!")
                                 limpar_cache()
                                 st.rerun()
@@ -4211,7 +4228,7 @@ Feliz aniversário! 🥳✨"""
                                 VALUES (%s, %s, %s)
                             """, (int(row['codigo_venda']), tipo_contato, emp_id))
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("Registrado!")
                             time.sleep(0.4)
                             limpar_cache()
