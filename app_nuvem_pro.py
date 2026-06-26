@@ -56,7 +56,7 @@ DATABASE_URL = st.secrets["DATABASE_URL"]
 # ==========================================
 @st.cache_resource
 def obter_pool():
-    return psycopg2.pool.SimpleConnectionPool(2, 10, DATABASE_URL)
+    return psycopg2.pool.SimpleConnectionPool(1, 3, DATABASE_URL)
 
 def conectar_banco():
     pool = obter_pool()
