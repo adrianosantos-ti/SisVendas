@@ -120,6 +120,51 @@ def limpar_cache():
     st.cache_data.clear()
 
 # ==========================================
+# PAINEL DE AVALIAÇÕES (visível no sistema)
+# ==========================================
+def exibir_painel_avaliacoes(emp_id):
+    st.subheader("⭐ Avaliações de Atendimento")
+    
+    df_aval = carregar_dados_cached("""
+        SELECT venda_codigo, cliente_nome, nota, comentario, data_avaliacao
+        FROM avaliacoes
+        WHERE empresa_id = %s
+        ORDER BY data_avaliacao DESC
+    """, (emp_id,))
+    
+    if df_aval.empty:
+        st.info("Nenhuma avaliação recebida ainda.")
+        return
+    
+    media = df_aval['nota'].mean()
+    total = len(df_aval)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("⭐ Nota Média", f"{media:.1f} / 5.0")
+    col2.metric("📋 Total de Avaliações", total)
+    col3.metric("😊 Satisfeitos (4-5 ⭐)", f"{len(df_aval[df_aval['nota'] >= 4])} ({len(df_aval[df_aval['nota'] >= 4])*100//total}%)")
+    
+    st.markdown("---")
+    
+    dist = df_aval['nota'].value_counts().sort_index(ascending=False)
+    labels = {5: "⭐⭐⭐⭐⭐", 4: "⭐⭐⭐⭐", 3: "⭐⭐⭐", 2: "⭐⭐", 1: "⭐"}
+    for nota, qtd in dist.items():
+        barra = "█" * qtd + "░" * (total - qtd)
+        st.markdown(f"`{labels.get(nota, nota)}` {barra} **{qtd}**")
+    
+    st.markdown("---")
+    
+    st.markdown("**💬 Comentários Recentes:**")
+    comentarios = df_aval[df_aval['comentario'].notna() & (df_aval['comentario'] != '')]
+    if comentarios.empty:
+        st.caption("Nenhum comentário recebido ainda.")
+    else:
+        for _, row in comentarios.head(10).iterrows():
+            estrelas_str = "⭐" * int(row['nota'])
+            st.markdown(f"{estrelas_str} **{row['cliente_nome']}** — *Atend. Nº {row['venda_codigo']}*")
+            st.caption(f"_{row['comentario']}_")
+            st.markdown("<hr style='margin: 0.3em 0; opacity:0.2'>", unsafe_allow_html=True)
+
+# ==========================================
 # INTERFACE CONFIG E CONTROLE DE LOGIN
 # ==========================================
 #st.set_page_config(page_title="Apprimory - Inteligência para Gestão", layout="wide")
@@ -4408,52 +4453,3 @@ if "avaliacao" in params and "empresa" in params:
             if 'conn' in locals(): devolver_conexao(conn)
     
     st.stop()
-
-# ==========================================
-# PAINEL DE AVALIAÇÕES (visível no sistema)
-# Acessado pelos módulos existentes
-# ==========================================
-def exibir_painel_avaliacoes(emp_id):
-    st.subheader("⭐ Avaliações de Atendimento")
-    
-    df_aval = carregar_dados_cached("""
-        SELECT venda_codigo, cliente_nome, nota, comentario, data_avaliacao
-        FROM avaliacoes
-        WHERE empresa_id = %s
-        ORDER BY data_avaliacao DESC
-    """, (emp_id,))
-    
-    if df_aval.empty:
-        st.info("Nenhuma avaliação recebida ainda.")
-        return
-    
-    # Métricas gerais
-    media = df_aval['nota'].mean()
-    total = len(df_aval)
-    col1, col2, col3 = st.columns(3)
-    col1.metric("⭐ Nota Média", f"{media:.1f} / 5.0")
-    col2.metric("📋 Total de Avaliações", total)
-    col3.metric("😊 Satisfeitos (4-5 ⭐)", f"{len(df_aval[df_aval['nota'] >= 4])} ({len(df_aval[df_aval['nota'] >= 4])*100//total}%)")
-    
-    st.markdown("---")
-    
-    # Distribuição por nota
-    dist = df_aval['nota'].value_counts().sort_index(ascending=False)
-    labels = {5: "⭐⭐⭐⭐⭐", 4: "⭐⭐⭐⭐", 3: "⭐⭐⭐", 2: "⭐⭐", 1: "⭐"}
-    for nota, qtd in dist.items():
-        barra = "█" * qtd + "░" * (total - qtd)
-        st.markdown(f"`{labels.get(nota, nota)}` {barra} **{qtd}**")
-    
-    st.markdown("---")
-    
-    # Comentários recentes
-    st.markdown("**💬 Comentários Recentes:**")
-    comentarios = df_aval[df_aval['comentario'].notna() & (df_aval['comentario'] != '')]
-    if comentarios.empty:
-        st.caption("Nenhum comentário recebido ainda.")
-    else:
-        for _, row in comentarios.head(10).iterrows():
-            estrelas_str = "⭐" * int(row['nota'])
-            st.markdown(f"{estrelas_str} **{row['cliente_nome']}** — *Atend. Nº {row['venda_codigo']}*")
-            st.caption(f"_{row['comentario']}_")
-            st.markdown("<hr style='margin: 0.3em 0; opacity:0.2'>", unsafe_allow_html=True)
