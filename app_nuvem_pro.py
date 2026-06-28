@@ -165,6 +165,79 @@ def exibir_painel_avaliacoes(emp_id):
             st.markdown("<hr style='margin: 0.3em 0; opacity:0.2'>", unsafe_allow_html=True)
 
 # ==========================================
+# TELA PÚBLICA DE AVALIAÇÃO
+# Deve vir ANTES do login para interceptar
+# o cliente sem exigir autenticação.
+# URL: ?avaliacao=CODIGO&empresa=ID
+# ==========================================
+params = st.query_params
+if "avaliacao" in params and "empresa" in params:
+    cod_aval = params["avaliacao"]
+    emp_aval = params["empresa"]
+
+    st.markdown("""
+        <style>
+        .block-container { max-width: 600px; margin: auto; padding-top: 2rem; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.title("⭐ Avalie seu Atendimento")
+    st.markdown(f"**Atendimento Nº {cod_aval}**")
+    st.markdown("Sua opinião é muito importante para continuarmos melhorando! 💜")
+    st.markdown("---")
+
+    df_ja_avaliou = carregar_dados(
+        "SELECT id FROM avaliacoes WHERE venda_codigo = %s AND empresa_id = %s",
+        (int(cod_aval), int(emp_aval))
+    )
+
+    if not df_ja_avaliou.empty:
+        st.success("✅ Você já enviou sua avaliação para este atendimento. Obrigada! 🌸")
+        st.stop()
+
+    estrelas = {
+        "⭐⭐⭐⭐⭐ — Muito satisfatório": 5,
+        "⭐⭐⭐⭐ — Satisfatório": 4,
+        "⭐⭐⭐ — Regular": 3,
+        "⭐⭐ — Insatisfatório": 2,
+        "⭐ — Muito insatisfatório": 1,
+    }
+
+    nota_desc = st.radio(
+        "Como você avalia seu atendimento/serviço?",
+        options=list(estrelas.keys()),
+        index=0
+    )
+    nota_valor = estrelas[nota_desc]
+
+    comentario = st.text_area(
+        "Deixe seu comentário (opcional):",
+        placeholder="Conte como foi sua experiência...",
+        height=120
+    )
+
+    nome_cliente = st.text_input("Seu nome (opcional):", placeholder="Como podemos te chamar?")
+
+    if st.button("📨 Enviar Avaliação", type="primary", use_container_width=True):
+        try:
+            conn = conectar_banco()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO avaliacoes (empresa_id, venda_codigo, cliente_nome, nota, comentario)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (int(emp_aval), int(cod_aval), nome_cliente or "Anônimo", nota_valor, comentario))
+            cur.close()
+            conn.commit()
+            devolver_conexao(conn)
+            st.success("✅ Avaliação enviada com sucesso! Muito obrigada pelo seu feedback. 🌸")
+            st.balloons()
+        except Exception as e:
+            st.error(f"Erro ao salvar avaliação: {e}")
+            if 'conn' in locals(): devolver_conexao(conn)
+
+    st.stop()  # Impede qualquer coisa abaixo de renderizar (login, sistema, etc.)
+
+# ==========================================
 # INTERFACE CONFIG E CONTROLE DE LOGIN
 # ==========================================
 #st.set_page_config(page_title="Apprimory - Inteligência para Gestão", layout="wide")
@@ -4378,78 +4451,3 @@ Feliz aniversário! 🥳✨"""
                     gerar_linha_contato(row, msg_2m, "2m")
             else:
                 st.info("Nenhum cliente na janela de 2 meses pendente de envio.")
-
-# ==========================================
-# TELA PÚBLICA DE AVALIAÇÃO
-# Acessada pelo cliente via link no WhatsApp
-# URL: ?avaliacao=CODIGO&empresa=ID
-# ==========================================
-params = st.query_params
-if "avaliacao" in params and "empresa" in params:
-    cod_aval = params["avaliacao"]
-    emp_aval = params["empresa"]
-    
-    st.set_page_config(page_title="Avalie seu Atendimento", page_icon="⭐")
-    
-    st.markdown("""
-        <style>
-        .block-container { max-width: 600px; margin: auto; padding-top: 2rem; }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    st.title("⭐ Avalie seu Atendimento")
-    st.markdown(f"**Atendimento Nº {cod_aval}**")
-    st.markdown("Sua opinião é muito importante para continuarmos melhorando! 💜")
-    st.markdown("---")
-    
-    # Verifica se já avaliou
-    df_ja_avaliou = carregar_dados(
-        "SELECT id FROM avaliacoes WHERE venda_codigo = %s AND empresa_id = %s",
-        (int(cod_aval), int(emp_aval))
-    )
-    
-    if not df_ja_avaliou.empty:
-        st.success("✅ Você já enviou sua avaliação para este atendimento. Obrigada! 🌸")
-        st.stop()
-    
-    estrelas = {
-        "⭐⭐⭐⭐⭐ — Muito satisfatório": 5,
-        "⭐⭐⭐⭐ — Satisfatório": 4,
-        "⭐⭐⭐ — Regular": 3,
-        "⭐⭐ — Insatisfatório": 2,
-        "⭐ — Muito insatisfatório": 1,
-    }
-    
-    nota_desc = st.radio(
-        "Como você avalia seu atendimento/serviço?",
-        options=list(estrelas.keys()),
-        index=0
-    )
-    nota_valor = estrelas[nota_desc]
-    
-    comentario = st.text_area(
-        "Deixe seu comentário (opcional):",
-        placeholder="Conte como foi sua experiência...",
-        height=120
-    )
-    
-    nome_cliente = st.text_input("Seu nome (opcional):", placeholder="Como podemos te chamar?")
-    
-    if st.button("📨 Enviar Avaliação", type="primary", use_container_width=True):
-        try:
-            conn = conectar_banco()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO avaliacoes (empresa_id, venda_codigo, cliente_nome, nota, comentario)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (int(emp_aval), int(cod_aval), nome_cliente or "Anônimo", nota_valor, comentario))
-            cur.close()
-            conn.commit()
-            devolver_conexao(conn)
-            st.success("✅ Avaliação enviada com sucesso! Muito obrigada pelo seu feedback. 🌸")
-            st.balloons()
-        except Exception as e:
-            st.error(f"Erro ao salvar avaliação: {e}")
-            if 'conn' in locals(): devolver_conexao(conn)
-    
-    st.stop()
