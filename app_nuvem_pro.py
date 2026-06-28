@@ -792,6 +792,11 @@ Feliz aniversário! 🥳✨"""
                 st.dataframe(df_ranking_crm, hide_index=True, use_container_width=True)
             else:
                 st.warning("Nenhuma venda para gerar o ranking neste período.")
+            
+            st.markdown("---")
+            
+            # --- PAINEL DE AVALIAÇÕES ---
+            exibir_painel_avaliacoes(emp_id)
                 
         with aba_hist:
             st.subheader("📜 Histórico Geral e Faturamento")
@@ -2510,17 +2515,27 @@ Feliz aniversário! 🥳✨"""
                                 resultado_tel = cur.fetchone()
                                 tel_cli = resultado_tel[0] if resultado_tel else None
                             
+                                # Monta lista de serviços com profissional e insumos visíveis
                                 lista_produtos_msg = ""
                                 for it in st.session_state['carrinho_servicos']:
-                                    lista_produtos_msg += f"▫️ {it['nome'].split(' |')[0]} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                                    partes = it['nome'].split(' | Insumos:')
+                                    nome_serv = partes[0]  # inclui "(Profissional: Nome)"
+                                    lista_produtos_msg += f"▫️ {nome_serv} (R$ {it['unit']:.2f})\n".replace('.', ',')
                             
+                                # Link de avaliação personalizado por atendimento
+                                link_avaliacao = f"https://wa.me/?text=Atendimento%20N%C2%BA%20{novo_cod}%20-%20Avalia%C3%A7%C3%A3o"
+                                url_base = st.secrets.get("APP_URL", "")
+                                if url_base:
+                                    link_avaliacao = f"{url_base}?avaliacao={novo_cod}&empresa={emp_id}"
+
                                 msg = f"Olá, {cliente_pdv}! ✨\n\n"
                                 msg += f"Obrigada por escolher nossos serviços hoje ({data_v}). Aqui está o seu recibo:\n\n"
                                 msg += f"🧾 *Atendimento Nº {novo_cod}*\n\n"
                                 msg += f"*Procedimentos Realizados:*\n{lista_produtos_msg}\n"
                                 msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
                                 msg += f"💳 *Forma de Pagto:* {f_pag}\n\n"
-                                msg += "Foi um prazer atender você. Até a próxima! 🌸"
+                                msg += "Foi um prazer atender você. Até a próxima! 🌸\n\n"
+                                msg += f"⭐ *Avalie seu atendimento:*\n{link_avaliacao}"
                             
                                 if tel_cli:
                                     tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
@@ -2530,6 +2545,7 @@ Feliz aniversário! 🥳✨"""
                                         st.session_state['zap_msg_serv'] = msg
                                         st.session_state['zap_codigo_serv'] = f"ATENDIMENTO Nº {novo_cod}"
                                         st.session_state['zap_total_serv'] = total_pdv
+                                        st.session_state['zap_tel_serv'] = tel_limpo
                             
                                 conn.commit()
                                 devolver_conexao(conn)
@@ -2554,13 +2570,27 @@ Feliz aniversário! 🥳✨"""
                     with st.container(border=True):
                         st.success(f"🎉 {st.session_state['zap_codigo_serv']} finalizado! Total: R$ {st.session_state['zap_total_serv']:.2f}".replace('.', ','))
                         st.subheader("📲 Enviar Recibo via WhatsApp")
-                        st.text_area("Visualização da mensagem:", value=st.session_state['zap_msg_serv'], height=180, disabled=True)
-                        st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link_serv'], type="primary", use_container_width=True)
+                        
+                        # Mensagem editável antes do envio
+                        msg_editada = st.text_area(
+                            "✏️ Edite a mensagem antes de enviar:",
+                            value=st.session_state['zap_msg_serv'],
+                            height=250
+                        )
+                        
+                        # Atualiza o link do WhatsApp com a mensagem editada
+                        tel_serv = st.session_state.get('zap_tel_serv', '')
+                        if tel_serv:
+                            link_atualizado = f"https://wa.me/{tel_serv}?text={urllib.parse.quote(msg_editada)}"
+                        else:
+                            link_atualizado = st.session_state['zap_link_serv']
+                        
+                        st.link_button("🟢 Abrir WhatsApp e Enviar", link_atualizado, type="primary", use_container_width=True)
+                        
                         if st.button("❌ Fechar Painel", use_container_width=True, key="fechar_zap_s"):
                             del st.session_state['zap_link_serv']
-                            if 'zap_msg_serv' in st.session_state: del st.session_state['zap_msg_serv']
-                            if 'zap_codigo_serv' in st.session_state: del st.session_state['zap_codigo_serv']
-                            if 'zap_total_serv' in st.session_state: del st.session_state['zap_total_serv']
+                            for k in ['zap_msg_serv', 'zap_codigo_serv', 'zap_total_serv', 'zap_tel_serv']:
+                                if k in st.session_state: del st.session_state[k]
                             st.rerun()         
                             
         if tab_orcamentos:
@@ -4303,3 +4333,127 @@ Feliz aniversário! 🥳✨"""
                     gerar_linha_contato(row, msg_2m, "2m")
             else:
                 st.info("Nenhum cliente na janela de 2 meses pendente de envio.")
+
+# ==========================================
+# TELA PÚBLICA DE AVALIAÇÃO
+# Acessada pelo cliente via link no WhatsApp
+# URL: ?avaliacao=CODIGO&empresa=ID
+# ==========================================
+params = st.query_params
+if "avaliacao" in params and "empresa" in params:
+    cod_aval = params["avaliacao"]
+    emp_aval = params["empresa"]
+    
+    st.set_page_config(page_title="Avalie seu Atendimento", page_icon="⭐")
+    
+    st.markdown("""
+        <style>
+        .block-container { max-width: 600px; margin: auto; padding-top: 2rem; }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.title("⭐ Avalie seu Atendimento")
+    st.markdown(f"**Atendimento Nº {cod_aval}**")
+    st.markdown("Sua opinião é muito importante para continuarmos melhorando! 💜")
+    st.markdown("---")
+    
+    # Verifica se já avaliou
+    df_ja_avaliou = carregar_dados(
+        "SELECT id FROM avaliacoes WHERE venda_codigo = %s AND empresa_id = %s",
+        (int(cod_aval), int(emp_aval))
+    )
+    
+    if not df_ja_avaliou.empty:
+        st.success("✅ Você já enviou sua avaliação para este atendimento. Obrigada! 🌸")
+        st.stop()
+    
+    estrelas = {
+        "⭐⭐⭐⭐⭐ — Muito satisfatório": 5,
+        "⭐⭐⭐⭐ — Satisfatório": 4,
+        "⭐⭐⭐ — Regular": 3,
+        "⭐⭐ — Insatisfatório": 2,
+        "⭐ — Muito insatisfatório": 1,
+    }
+    
+    nota_desc = st.radio(
+        "Como você avalia seu atendimento/serviço?",
+        options=list(estrelas.keys()),
+        index=0
+    )
+    nota_valor = estrelas[nota_desc]
+    
+    comentario = st.text_area(
+        "Deixe seu comentário (opcional):",
+        placeholder="Conte como foi sua experiência...",
+        height=120
+    )
+    
+    nome_cliente = st.text_input("Seu nome (opcional):", placeholder="Como podemos te chamar?")
+    
+    if st.button("📨 Enviar Avaliação", type="primary", use_container_width=True):
+        try:
+            conn = conectar_banco()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO avaliacoes (empresa_id, venda_codigo, cliente_nome, nota, comentario)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (int(emp_aval), int(cod_aval), nome_cliente or "Anônimo", nota_valor, comentario))
+            cur.close()
+            conn.commit()
+            devolver_conexao(conn)
+            st.success("✅ Avaliação enviada com sucesso! Muito obrigada pelo seu feedback. 🌸")
+            st.balloons()
+        except Exception as e:
+            st.error(f"Erro ao salvar avaliação: {e}")
+            if 'conn' in locals(): devolver_conexao(conn)
+    
+    st.stop()
+
+# ==========================================
+# PAINEL DE AVALIAÇÕES (visível no sistema)
+# Acessado pelos módulos existentes
+# ==========================================
+def exibir_painel_avaliacoes(emp_id):
+    st.subheader("⭐ Avaliações de Atendimento")
+    
+    df_aval = carregar_dados_cached("""
+        SELECT venda_codigo, cliente_nome, nota, comentario, data_avaliacao
+        FROM avaliacoes
+        WHERE empresa_id = %s
+        ORDER BY data_avaliacao DESC
+    """, (emp_id,))
+    
+    if df_aval.empty:
+        st.info("Nenhuma avaliação recebida ainda.")
+        return
+    
+    # Métricas gerais
+    media = df_aval['nota'].mean()
+    total = len(df_aval)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("⭐ Nota Média", f"{media:.1f} / 5.0")
+    col2.metric("📋 Total de Avaliações", total)
+    col3.metric("😊 Satisfeitos (4-5 ⭐)", f"{len(df_aval[df_aval['nota'] >= 4])} ({len(df_aval[df_aval['nota'] >= 4])*100//total}%)")
+    
+    st.markdown("---")
+    
+    # Distribuição por nota
+    dist = df_aval['nota'].value_counts().sort_index(ascending=False)
+    labels = {5: "⭐⭐⭐⭐⭐", 4: "⭐⭐⭐⭐", 3: "⭐⭐⭐", 2: "⭐⭐", 1: "⭐"}
+    for nota, qtd in dist.items():
+        barra = "█" * qtd + "░" * (total - qtd)
+        st.markdown(f"`{labels.get(nota, nota)}` {barra} **{qtd}**")
+    
+    st.markdown("---")
+    
+    # Comentários recentes
+    st.markdown("**💬 Comentários Recentes:**")
+    comentarios = df_aval[df_aval['comentario'].notna() & (df_aval['comentario'] != '')]
+    if comentarios.empty:
+        st.caption("Nenhum comentário recebido ainda.")
+    else:
+        for _, row in comentarios.head(10).iterrows():
+            estrelas_str = "⭐" * int(row['nota'])
+            st.markdown(f"{estrelas_str} **{row['cliente_nome']}** — *Atend. Nº {row['venda_codigo']}*")
+            st.caption(f"_{row['comentario']}_")
+            st.markdown("<hr style='margin: 0.3em 0; opacity:0.2'>", unsafe_allow_html=True)
