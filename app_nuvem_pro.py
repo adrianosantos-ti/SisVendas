@@ -174,6 +174,7 @@ params = st.query_params
 if "avaliacao" in params and "empresa" in params:
     cod_aval = params["avaliacao"]
     emp_aval = params["empresa"]
+    nome_cliente = urllib.parse.unquote(params.get("cliente", "Cliente"))
 
     st.markdown("""
         <style>
@@ -181,10 +182,22 @@ if "avaliacao" in params and "empresa" in params:
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("⭐ Avalie seu Atendimento")
-    st.markdown(f"**Atendimento Nº {cod_aval}**")
-    st.markdown("Sua opinião é muito importante para continuarmos melhorando! 💜")
-    st.markdown("---")
+    # Tela de agradecimento após envio
+    if st.session_state.get('avaliacao_enviada'):
+        st.markdown(f"""
+            <div style='text-align: center; padding: 3rem 1rem;'>
+                <div style='font-size: 5rem;'>🌸</div>
+                <h1 style='color: #7c3aed;'>Obrigada, {nome_cliente.split()[0]}!</h1>
+                <p style='font-size: 1.2rem; color: #555;'>
+                    Sua avaliação foi registrada com sucesso.<br>
+                    Ela nos ajuda a melhorar cada vez mais! 💜
+                </p>
+                <p style='font-size: 1rem; color: #888; margin-top: 2rem;'>
+                    Você já pode fechar esta página.
+                </p>
+            </div>
+        """, unsafe_allow_html=True)
+        st.stop()
 
     df_ja_avaliou = carregar_dados(
         "SELECT id FROM avaliacoes WHERE venda_codigo = %s AND empresa_id = %s",
@@ -194,6 +207,11 @@ if "avaliacao" in params and "empresa" in params:
     if not df_ja_avaliou.empty:
         st.success("✅ Você já enviou sua avaliação para este atendimento. Obrigada! 🌸")
         st.stop()
+
+    st.title("⭐ Avalie seu Atendimento")
+    st.markdown(f"Olá, **{nome_cliente.split()[0]}**! Atendimento Nº {cod_aval}")
+    st.markdown("Sua opinião é muito importante para continuarmos melhorando! 💜")
+    st.markdown("---")
 
     estrelas = {
         "⭐⭐⭐⭐⭐ — Muito satisfatório": 5,
@@ -216,8 +234,6 @@ if "avaliacao" in params and "empresa" in params:
         height=120
     )
 
-    nome_cliente = st.text_input("Seu nome (opcional):", placeholder="Como podemos te chamar?")
-
     if st.button("📨 Enviar Avaliação", type="primary", use_container_width=True):
         try:
             conn = conectar_banco()
@@ -225,17 +241,17 @@ if "avaliacao" in params and "empresa" in params:
             cur.execute("""
                 INSERT INTO avaliacoes (empresa_id, venda_codigo, cliente_nome, nota, comentario)
                 VALUES (%s, %s, %s, %s, %s)
-            """, (int(emp_aval), int(cod_aval), nome_cliente or "Anônimo", nota_valor, comentario))
+            """, (int(emp_aval), int(cod_aval), nome_cliente, nota_valor, comentario))
             cur.close()
             conn.commit()
             devolver_conexao(conn)
-            st.success("✅ Avaliação enviada com sucesso! Muito obrigada pelo seu feedback. 🌸")
-            st.balloons()
+            st.session_state['avaliacao_enviada'] = True
+            st.rerun()
         except Exception as e:
             st.error(f"Erro ao salvar avaliação: {e}")
             if 'conn' in locals(): devolver_conexao(conn)
 
-    st.stop()  # Impede qualquer coisa abaixo de renderizar (login, sistema, etc.)
+    st.stop()
 
 # ==========================================
 # INTERFACE CONFIG E CONTROLE DE LOGIN
@@ -2644,7 +2660,8 @@ Feliz aniversário! 🥳✨"""
                                 link_avaliacao = f"https://wa.me/?text=Atendimento%20N%C2%BA%20{novo_cod}%20-%20Avalia%C3%A7%C3%A3o"
                                 url_base = st.secrets.get("APP_URL", "")
                                 if url_base:
-                                    link_avaliacao = f"{url_base}?avaliacao={novo_cod}&empresa={emp_id}"
+                                    nome_encoded = urllib.parse.quote(cliente_pdv)
+                                    link_avaliacao = f"{url_base}?avaliacao={novo_cod}&empresa={emp_id}&cliente={nome_encoded}"
 
                                 msg = f"Olá, {cliente_pdv}! ✨\n\n"
                                 msg += f"Obrigada por escolher nossos serviços hoje ({data_v}). Aqui está o seu recibo:\n\n"
