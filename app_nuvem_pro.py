@@ -1197,7 +1197,7 @@ Feliz aniversário! 🥳✨"""
                     categoria AS "Categoria", 
                     quantidade AS "Qtd Atual"
                 FROM produtos
-                WHERE empresa_id = %s
+                WHERE empresa_id = %s AND tipo='P'
                 ORDER BY quantidade ASC
             """, (emp_id,))
             
