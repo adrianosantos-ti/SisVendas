@@ -5,3 +5,4 @@ plotly
 fpdf2
 pdfplumber
 pytz
+reportlab
