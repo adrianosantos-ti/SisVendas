@@ -3885,7 +3885,7 @@ Feliz aniversário! 🥳✨"""
                                     try:
                                         data_atual = datetime.datetime.strptime(row['data_vencimento'], "%d/%m/%Y").date()
                                     except:
-                                        data_atual = datetime.date.today() # Proteção anti-erro
+                                        data_atual = date.today() # Proteção anti-erro
                                         
                                     # Coloca o Valor e a Data lado a lado
                                     col_val, col_dat = st.columns(2)
@@ -3956,7 +3956,7 @@ Feliz aniversário! 🥳✨"""
             """, (emp_id,))
             
             if not df_receber_geral.empty:
-                hoje = datetime.date.today()
+                hoje = date.today()
                 
                 # Cria uma coluna de data real (oculta) para a matemática de atrasos funcionar
                 df_receber_geral['Data_Venc_Obj'] = pd.to_datetime(df_receber_geral['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
