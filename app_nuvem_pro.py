@@ -4308,7 +4308,6 @@ Feliz aniversário! 🥳✨"""
             if st.button("📊 Gerar Fechamento", type="primary"):
                 data_str = data_fechamento.strftime('%d/%m/%Y')
 
-                # --- ENTRADAS: vendas e serviços do dia ---
                 df_entradas_dia = carregar_dados("""
                     SELECT 
                         v.codigo_venda,
@@ -4324,7 +4323,6 @@ Feliz aniversário! 🥳✨"""
                     ORDER BY v.codigo_venda
                 """, (emp_id, data_str))
 
-                # --- RECEBIMENTOS: parcelas recebidas no dia ---
                 df_recebimentos_dia = carregar_dados("""
                     SELECT 
                         cr.venda_codigo,
@@ -4341,7 +4339,6 @@ Feliz aniversário! 🥳✨"""
                     ORDER BY cr.venda_codigo
                 """, (emp_id, data_str))
 
-                # --- SAÍDAS: contas pagas no dia ---
                 df_saidas_dia = carregar_dados("""
                     SELECT 
                         f.nome AS fornecedor,
@@ -4357,13 +4354,24 @@ Feliz aniversário! 🥳✨"""
                     ORDER BY f.nome
                 """, (emp_id, data_str))
 
-                # --- CÁLCULOS ---
-                total_vendas    = float(df_entradas_dia['valor_total'].sum()) if not df_entradas_dia.empty else 0.0
-                total_recebido  = float(df_recebimentos_dia['valor_parcela'].sum()) if not df_recebimentos_dia.empty else 0.0
-                total_saidas    = float(df_saidas_dia['valor_parcela'].sum()) if not df_saidas_dia.empty else 0.0
-                saldo_liquido   = total_recebido - total_saidas
+                # Salva no session_state para persistir após clique no PDF
+                st.session_state['fechamento_data_str']      = data_str
+                st.session_state['fechamento_entradas']      = df_entradas_dia
+                st.session_state['fechamento_recebimentos']  = df_recebimentos_dia
+                st.session_state['fechamento_saidas']        = df_saidas_dia
 
-                # --- BREAKDOWN POR FORMA DE PAGAMENTO ---
+            # Exibe o fechamento se já foi gerado
+            if 'fechamento_data_str' in st.session_state:
+                data_str        = st.session_state['fechamento_data_str']
+                df_entradas_dia = st.session_state['fechamento_entradas']
+                df_recebimentos_dia = st.session_state['fechamento_recebimentos']
+                df_saidas_dia   = st.session_state['fechamento_saidas']
+
+                total_vendas   = float(df_entradas_dia['valor_total'].sum()) if not df_entradas_dia.empty else 0.0
+                total_recebido = float(df_recebimentos_dia['valor_parcela'].sum()) if not df_recebimentos_dia.empty else 0.0
+                total_saidas   = float(df_saidas_dia['valor_parcela'].sum()) if not df_saidas_dia.empty else 0.0
+                saldo_liquido  = total_recebido - total_saidas
+
                 formas_pagamento = {}
                 if not df_entradas_dia.empty:
                     for forma, grupo in df_entradas_dia.groupby('forma_pagamento'):
@@ -4372,22 +4380,19 @@ Feliz aniversário! 🥳✨"""
                 st.markdown(f"### 📅 Fechamento do dia {data_str}")
                 st.markdown("---")
 
-                # Métricas principais
                 col1, col2, col3, col4 = st.columns(4)
-                col1.metric("🛒 Vendas do Dia",     f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
-                col2.metric("💰 Total Recebido",    f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X","."))
-                col3.metric("📤 Total de Saídas",   f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
-                col4.metric("💵 Saldo Líquido",     f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                col1.metric("🛒 Vendas do Dia",    f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col2.metric("💰 Total Recebido",   f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col3.metric("📤 Total de Saídas",  f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col4.metric("💵 Saldo Líquido",    f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X","."),
                             delta=f"{'positivo' if saldo_liquido >= 0 else 'negativo'}")
 
-                # Breakdown por forma de pagamento
                 if formas_pagamento:
                     st.markdown("#### 💳 Entradas por Forma de Pagamento")
                     cols_fp = st.columns(len(formas_pagamento))
                     for idx, (forma, valor) in enumerate(formas_pagamento.items()):
                         cols_fp[idx].metric(forma, f"R$ {valor:,.2f}".replace(",","X").replace(".",",").replace("X","."))
 
-                # Detalhamento das movimentações
                 col_ent, col_sai = st.columns(2)
 
                 with col_ent:
@@ -4410,44 +4415,63 @@ Feliz aniversário! 🥳✨"""
                     else:
                         st.info("Nenhuma saída neste dia.")
 
-                # --- GERAÇÃO DO PDF ---
                 st.markdown("---")
-                if st.button("📄 Exportar Fechamento em PDF", use_container_width=True):
-                    from reportlab.lib.pagesizes import A4
-                    from reportlab.lib import colors
-                    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-                    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-                    from reportlab.lib.units import cm
-                    import io
 
-                    buffer = io.BytesIO()
-                    doc = SimpleDocTemplate(buffer, pagesize=A4,
-                                            rightMargin=2*cm, leftMargin=2*cm,
-                                            topMargin=2*cm, bottomMargin=2*cm)
-                    styles = getSampleStyleSheet()
-                    elementos = []
+                # Geração do PDF em memória (sempre disponível após gerar fechamento)
+                from reportlab.lib.pagesizes import A4
+                from reportlab.lib import colors
+                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.units import cm
+                import io
 
-                    # Título
-                    titulo_style = ParagraphStyle('titulo', parent=styles['Title'], fontSize=16, spaceAfter=6)
-                    sub_style   = ParagraphStyle('sub', parent=styles['Normal'], fontSize=10, textColor=colors.grey, spaceAfter=20)
-                    bold_style  = ParagraphStyle('bold', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', spaceAfter=6)
-                    norm_style  = ParagraphStyle('norm', parent=styles['Normal'], fontSize=10, spaceAfter=4)
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4,
+                                        rightMargin=2*cm, leftMargin=2*cm,
+                                        topMargin=2*cm, bottomMargin=2*cm)
+                styles = getSampleStyleSheet()
+                elementos = []
 
-                    elementos.append(Paragraph("Fechamento de Caixa", titulo_style))
-                    elementos.append(Paragraph(f"Data: {data_str}", sub_style))
-                    elementos.append(Spacer(1, 0.3*cm))
+                titulo_style = ParagraphStyle('titulo', parent=styles['Title'], fontSize=16, spaceAfter=6)
+                sub_style    = ParagraphStyle('sub', parent=styles['Normal'], fontSize=10, textColor=colors.grey, spaceAfter=20)
+                bold_style   = ParagraphStyle('bold', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', spaceAfter=6)
 
-                    # Resumo geral
-                    elementos.append(Paragraph("Resumo Geral", bold_style))
-                    dados_resumo = [
-                        ["Descrição", "Valor"],
-                        ["Total de Vendas do Dia", f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
-                        ["Total Recebido (Parcelas)", f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
-                        ["Total de Saídas", f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
-                        ["Saldo Líquido", f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
-                    ]
-                    t_resumo = Table(dados_resumo, colWidths=[11*cm, 5*cm])
-                    t_resumo.setStyle(TableStyle([
+                elementos.append(Paragraph("Fechamento de Caixa", titulo_style))
+                elementos.append(Paragraph(f"Data: {data_str}", sub_style))
+                elementos.append(Spacer(1, 0.3*cm))
+
+                elementos.append(Paragraph("Resumo Geral", bold_style))
+                dados_resumo = [
+                    ["Descrição", "Valor"],
+                    ["Total de Vendas do Dia",    f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                    ["Total Recebido (Parcelas)",  f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                    ["Total de Saídas",            f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                    ["Saldo Líquido",              f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                ]
+                t_resumo = Table(dados_resumo, colWidths=[11*cm, 5*cm])
+                t_resumo.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,-1), 10),
+                    ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                    ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                    ('TEXTCOLOR', (0,-1), (-1,-1), colors.HexColor('#00703c') if saldo_liquido >= 0 else colors.red),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                    ('TOPPADDING', (0,0), (-1,-1), 6),
+                ]))
+                elementos.append(t_resumo)
+                elementos.append(Spacer(1, 0.5*cm))
+
+                if formas_pagamento:
+                    elementos.append(Paragraph("Entradas por Forma de Pagamento", bold_style))
+                    dados_fp = [["Forma de Pagamento", "Total"]]
+                    for forma, valor in formas_pagamento.items():
+                        dados_fp.append([forma, f"R$ {valor:,.2f}".replace(",","X").replace(".",",").replace("X",".")])
+                    t_fp = Table(dados_fp, colWidths=[11*cm, 5*cm])
+                    t_fp.setStyle(TableStyle([
                         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
                         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
                         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -4455,95 +4479,75 @@ Feliz aniversário! 🥳✨"""
                         ('ALIGN', (1,0), (1,-1), 'RIGHT'),
                         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
                         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-                        ('TEXTCOLOR', (0,-1), (-1,-1), colors.HexColor('#00703c') if saldo_liquido >= 0 else colors.red),
                         ('BOTTOMPADDING', (0,0), (-1,-1), 6),
                         ('TOPPADDING', (0,0), (-1,-1), 6),
                     ]))
-                    elementos.append(t_resumo)
+                    elementos.append(t_fp)
                     elementos.append(Spacer(1, 0.5*cm))
 
-                    # Formas de pagamento
-                    if formas_pagamento:
-                        elementos.append(Paragraph("Entradas por Forma de Pagamento", bold_style))
-                        dados_fp = [["Forma de Pagamento", "Total"]]
-                        for forma, valor in formas_pagamento.items():
-                            dados_fp.append([forma, f"R$ {valor:,.2f}".replace(",","X").replace(".",",").replace("X",".")])
-                        t_fp = Table(dados_fp, colWidths=[11*cm, 5*cm])
-                        t_fp.setStyle(TableStyle([
-                            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
-                            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0,0), (-1,-1), 10),
-                            ('ALIGN', (1,0), (1,-1), 'RIGHT'),
-                            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
-                            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-                            ('TOPPADDING', (0,0), (-1,-1), 6),
-                        ]))
-                        elementos.append(t_fp)
-                        elementos.append(Spacer(1, 0.5*cm))
+                if not df_entradas_dia.empty:
+                    elementos.append(Paragraph("Vendas e Serviços do Dia", bold_style))
+                    dados_v = [["Cliente", "Produto/Serviço", "Forma Pgto", "Valor"]]
+                    for _, row in df_entradas_dia.iterrows():
+                        dados_v.append([
+                            str(row['cliente']),
+                            str(row['produto']),
+                            str(row['forma_pagamento']),
+                            f"R$ {float(row['valor_total']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+                        ])
+                    t_v = Table(dados_v, colWidths=[5*cm, 5*cm, 3*cm, 3*cm])
+                    t_v.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 9),
+                        ('ALIGN', (3,0), (3,-1), 'RIGHT'),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                        ('TOPPADDING', (0,0), (-1,-1), 5),
+                    ]))
+                    elementos.append(t_v)
+                    elementos.append(Spacer(1, 0.5*cm))
 
-                    # Vendas do dia
-                    if not df_entradas_dia.empty:
-                        elementos.append(Paragraph("Vendas e Serviços do Dia", bold_style))
-                        dados_v = [["Cliente", "Produto/Serviço", "Forma Pgto", "Valor"]]
-                        for _, row in df_entradas_dia.iterrows():
-                            dados_v.append([
-                                str(row['cliente']),
-                                str(row['produto']),
-                                str(row['forma_pagamento']),
-                                f"R$ {float(row['valor_total']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
-                            ])
-                        t_v = Table(dados_v, colWidths=[5*cm, 5*cm, 3*cm, 3*cm])
-                        t_v.setStyle(TableStyle([
-                            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
-                            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0,0), (-1,-1), 9),
-                            ('ALIGN', (3,0), (3,-1), 'RIGHT'),
-                            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
-                            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-                            ('TOPPADDING', (0,0), (-1,-1), 5),
-                        ]))
-                        elementos.append(t_v)
-                        elementos.append(Spacer(1, 0.5*cm))
+                if not df_saidas_dia.empty:
+                    elementos.append(Paragraph("Saídas do Dia", bold_style))
+                    dados_s = [["Fornecedor", "Parcela", "Valor"]]
+                    for _, row in df_saidas_dia.iterrows():
+                        dados_s.append([
+                            str(row['fornecedor']),
+                            f"{row['num_parcela']}/{row['total_parcelas']}",
+                            f"R$ {float(row['valor_parcela']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+                        ])
+                    t_s = Table(dados_s, colWidths=[9*cm, 3*cm, 4*cm])
+                    t_s.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#8a2a2a')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 9),
+                        ('ALIGN', (2,0), (2,-1), 'RIGHT'),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fff0f0')]),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                        ('TOPPADDING', (0,0), (-1,-1), 5),
+                    ]))
+                    elementos.append(t_s)
 
-                    # Saídas do dia
-                    if not df_saidas_dia.empty:
-                        elementos.append(Paragraph("Saídas do Dia", bold_style))
-                        dados_s = [["Fornecedor", "Parcela", "Valor"]]
-                        for _, row in df_saidas_dia.iterrows():
-                            dados_s.append([
-                                str(row['fornecedor']),
-                                f"{row['num_parcela']}/{row['total_parcelas']}",
-                                f"R$ {float(row['valor_parcela']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
-                            ])
-                        t_s = Table(dados_s, colWidths=[9*cm, 3*cm, 4*cm])
-                        t_s.setStyle(TableStyle([
-                            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#8a2a2a')),
-                            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0,0), (-1,-1), 9),
-                            ('ALIGN', (2,0), (2,-1), 'RIGHT'),
-                            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fff0f0')]),
-                            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-                            ('TOPPADDING', (0,0), (-1,-1), 5),
-                        ]))
-                        elementos.append(t_s)
+                doc.build(elementos)
+                buffer.seek(0)
 
-                    doc.build(elementos)
-                    buffer.seek(0)
+                st.download_button(
+                    label="⬇️ Baixar PDF do Fechamento",
+                    data=buffer,
+                    file_name=f"fechamento_caixa_{data_fechamento.strftime('%d-%m-%Y')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
 
-                    st.download_button(
-                        label="⬇️ Baixar PDF do Fechamento",
-                        data=buffer,
-                        file_name=f"fechamento_caixa_{data_fechamento.strftime('%d-%m-%Y')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
+                if st.button("🔄 Novo Fechamento", use_container_width=True):
+                    for k in ['fechamento_data_str', 'fechamento_entradas', 'fechamento_recebimentos', 'fechamento_saidas']:
+                        if k in st.session_state: del st.session_state[k]
+                    st.rerun()
                 
     # ==========================================================
     # MÓDULO 5: CRM (COM FILTRO DINÂMICO DE ENVIO)
