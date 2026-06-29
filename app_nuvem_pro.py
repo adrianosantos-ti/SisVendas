@@ -4348,8 +4348,7 @@ Feliz aniversário! 🥳✨"""
                         cp.valor_parcela,
                         cp.num_parcela,
                         cp.total_parcelas,
-                        cp.data_pagamento,
-                        cp.forma_pagamento
+                        cp.data_pagamento
                     FROM contas_pagar cp
                     JOIN fornecedores f ON f.id = cp.fornecedor_id
                     WHERE cp.empresa_id = %s 
