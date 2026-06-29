@@ -2087,7 +2087,7 @@ Feliz aniversário! 🥳✨"""
                 df_cli = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                 
                 # Traz apenas produtos comerciais de Venda ou Serviços
-                df_pro = carregar_dados_cached("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s AND (tipo='S' OR (tipo='P' AND classe='Venda')) ORDER BY nome", (emp_id,))
+                df_pro = carregar_dados_cached("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s AND tipo='P' AND classe='Venda' ORDER BY nome", (emp_id,))
             
                 if not df_cli.empty and not df_pro.empty:
                     # 1. Configurações da Venda
@@ -2098,7 +2098,6 @@ Feliz aniversário! 🥳✨"""
                     c_pag, c_parc = st.columns(2)
                     f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...")
                     
-                    # Inicialização padrão para evitar erros de renderização financeira se f_pag estiver vazio
                     qtd_parcelas = 1
                     data_1_venc = date.today()
                     
@@ -2109,86 +2108,51 @@ Feliz aniversário! 🥳✨"""
                 
                     st.markdown("---")
                 
-                    # 2. Seleção de Produto com Visão Dinâmica (Produto vs Serviço)
-                    tradutor_tipo = {'P': 'Produto', 'S': 'Serviço'}
-                    
+                    # 2. Seleção de Produto
                     df_pro['display_pesquisa'] = df_pro.apply(
-                        lambda x: f"{x['nome']} ({tradutor_tipo.get(x['tipo'], 'Produto')}) - Estoque: {int(x['quantidade'])}" if x['tipo'] == 'P' else f"{x['nome']} (Serviço)", axis=1
+                        lambda x: f"{x['nome']} - Estoque: {int(x['quantidade'])}", axis=1
                     )
                 
-                    prod_display = st.selectbox("🔍 Pesquise o Item (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto/serviço...")
+                    prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto...")
                 
-                    # --- INTERRUPTOR DE SEGURANÇA: Só abre o painel se os dados iniciais fundamentais existirem ---
                     if cliente_pdv and f_pag and prod_display:
-                        # Resgate das informações baseadas na escolha
                         p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
                         estoque_atual = int(p_info['quantidade'])
                         preco_tabela = float(p_info['valor'])
-                        item_tipo = p_info['tipo']
-                        
-                        profissional_selecionado = None
-                        nome_profissional = None
+
+                        if estoque_atual <= 0:
+                            st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                        elif estoque_atual == 1:
+                            st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                        elif estoque_atual <= 3:
+                            st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                        else:
+                            st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
                     
-                        # --- PAINEL VISUAL CONDICIONAL ---
-                        if item_tipo == 'P':
-                            if estoque_atual <= 0:
-                                st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                            elif estoque_atual == 1:
-                                st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                            elif estoque_atual <= 3:
-                                st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                            else:
-                                st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                        
-                        elif item_tipo == 'S':
-                            st.info(f"🛠️ Serviço Prestado | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                            
-                            df_colab = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
-                            if not df_colab.empty:
-                                lista_nomes = df_colab['nome'].tolist()
-                                nome_colab = st.selectbox("👤 Quem executou o serviço?", options=lista_nomes, index=None, placeholder="Selecione o profissional executor...")
-                                
-                                if nome_colab:
-                                    idx_colab = lista_nomes.index(nome_colab)
-                                    profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
-                                    nome_profissional = nome_colab
-                            else:
-                                st.warning("⚠️ Cadastre um colaborador na aba de Cadastros para registrar o serviço.")
-                    
-                        # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
                         with st.form("form_add_carrinho", clear_on_submit=True):
                             c1, c2, c3, c4 = st.columns(4)
                         
-                            limite_qtd = estoque_atual if (item_tipo == 'P' and estoque_atual > 0) else 999
+                            limite_qtd = estoque_atual if estoque_atual > 0 else 999
                             q_pdv = c1.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
-                        
                             preco_custom = c2.number_input("Preço Unitário (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
                             desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f")
                             desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
                         
-                            # O botão desabilita se for produto sem estoque OU se for serviço sem colaborador selecionado
-                            travar_botao = (item_tipo == 'P' and estoque_atual <= 0) or (item_tipo == 'S' and profissional_selecionado is None)
-                            
-                            if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=travar_botao):
-                                if item_tipo == 'S' or estoque_atual >= q_pdv:
+                            if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=(estoque_atual <= 0)):
+                                if estoque_atual >= q_pdv:
                                     desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
-                                    
-                                    nome_carrinho = str(p_info['nome'])
-                                    if item_tipo == 'S' and nome_profissional:
-                                        nome_carrinho += f" (Executado por: {nome_profissional})"
-                                    
                                     st.session_state['carrinho'].append({
-                                        'id': int(p_info['id']), 
-                                        'nome': nome_carrinho, 
-                                        'qtd': int(q_pdv), 
-                                        'unit': float(preco_custom), 
-                                        'desc': float(desconto_final), 
+                                        'id': int(p_info['id']),
+                                        'nome': str(p_info['nome']),
+                                        'qtd': int(q_pdv),
+                                        'unit': float(preco_custom),
+                                        'desc': float(desconto_final),
                                         'total': float((preco_custom - desconto_final) * q_pdv),
-                                        'tipo': item_tipo, 
-                                        'colab_id': profissional_selecionado
+                                        'tipo': 'P',
+                                        'colab_id': None
                                     })
                                     st.rerun()
-                                else: 
+                                else:
                                     st.error("Estoque insuficiente!")
                     else:
                         st.info("👆 preencha o cliente, a forma de pagamento e selecione um item para configurar a venda.")
