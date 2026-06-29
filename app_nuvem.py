@@ -1,5 +1,11 @@
 import os
 import time
+import re
+import json
+import base64
+import calendar
+import datetime
+import urllib.parse
 
 # Força o servidor inteiro a rodar no fuso correto
 os.environ['TZ'] = 'America/Fortaleza'
@@ -9,13 +15,13 @@ import streamlit as st
 import psycopg2
 import pandas as pd
 import plotly.express as px
+import pdfplumber
+import pytz
 import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
-hoje = date.today()
-import urllib.parse
-import base64
-import json
 from PIL import Image
+
+hoje = date.today()
 
 # 1. Forçamos a leitura da imagem (use o nome exato do seu arquivo PNG)
 icone = Image.open("logo.png") 
@@ -47,25 +53,205 @@ if 'carrinho' not in st.session_state:
 
 DATABASE_URL = st.secrets["DATABASE_URL"]
 
+# ==========================================
+# CONEXÃO AO BANCO
+# Usa uma conexão por execução com reconexão
+# automática. Simples, robusto e compatível
+# com o PgBouncer do Supabase (porta 6543).
+# ==========================================
 def conectar_banco():
     return psycopg2.connect(DATABASE_URL)
 
+def devolver_conexao(conn):
+    try:
+        conn.close()
+    except Exception:
+        pass
+
 def carregar_dados(query, params=None):
     conn = conectar_banco()
-    cursor = conn.cursor()
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query)
+    try:
+        cursor = conn.cursor()
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        
+        if cursor.description:
+            cols = [desc[0] for desc in cursor.description]
+            df = pd.DataFrame(cursor.fetchall(), columns=cols)
+        else:
+            df = pd.DataFrame()
+        return df
+    finally:
+        devolver_conexao(conn)
+
+def executar_escrita(operacoes):
+    """
+    Executa operações de escrita no banco de forma segura.
+    Garante commit ou rollback e fechamento da conexão.
     
-    if cursor.description:
-        cols = [desc[0] for desc in cursor.description]
-        df = pd.DataFrame(cursor.fetchall(), columns=cols)
-    else:
-        df = pd.DataFrame()
+    Uso:
+        def minhas_operacoes(cur):
+            cur.execute("UPDATE ...", (params,))
+        executar_escrita(minhas_operacoes)
+    """
+    conn = conectar_banco()
+    try:
+        cur = conn.cursor()
+        operacoes(cur)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        devolver_conexao(conn)
+
+# ==========================================
+# CACHE DE LEITURA (reduz chamadas ao banco)
+# TTL de 60s: dados ficam em memória por 1 min.
+# Use limpar_cache() após qualquer INSERT/UPDATE/DELETE.
+# ==========================================
+@st.cache_data(ttl=60, show_spinner=False)
+def carregar_dados_cached(query, params=None):
+    return carregar_dados(query, params)
+
+def limpar_cache():
+    st.cache_data.clear()
+
+# ==========================================
+# PAINEL DE AVALIAÇÕES (visível no sistema)
+# ==========================================
+def exibir_painel_avaliacoes(emp_id):
+    st.subheader("⭐ Avaliações de Atendimento")
     
-    conn.close()
-    return df
+    df_aval = carregar_dados_cached("""
+        SELECT venda_codigo, cliente_nome, nota, comentario, data_avaliacao
+        FROM avaliacoes
+        WHERE empresa_id = %s
+        ORDER BY data_avaliacao DESC
+    """, (emp_id,))
+    
+    if df_aval.empty:
+        st.info("Nenhuma avaliação recebida ainda.")
+        return
+    
+    media = df_aval['nota'].mean()
+    total = len(df_aval)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("⭐ Nota Média", f"{media:.1f} / 5.0")
+    col2.metric("📋 Total de Avaliações", total)
+    col3.metric("😊 Satisfeitos (4-5 ⭐)", f"{len(df_aval[df_aval['nota'] >= 4])} ({len(df_aval[df_aval['nota'] >= 4])*100//total}%)")
+    
+    st.markdown("---")
+    
+    dist = df_aval['nota'].value_counts().sort_index(ascending=False)
+    labels = {5: "⭐⭐⭐⭐⭐", 4: "⭐⭐⭐⭐", 3: "⭐⭐⭐", 2: "⭐⭐", 1: "⭐"}
+    for nota, qtd in dist.items():
+        barra = "█" * qtd + "░" * (total - qtd)
+        st.markdown(f"`{labels.get(nota, nota)}` {barra} **{qtd}**")
+    
+    st.markdown("---")
+    
+    st.markdown("**💬 Comentários Recentes:**")
+    comentarios = df_aval[df_aval['comentario'].notna() & (df_aval['comentario'] != '')]
+    if comentarios.empty:
+        st.caption("Nenhum comentário recebido ainda.")
+    else:
+        for _, row in comentarios.head(10).iterrows():
+            estrelas_str = "⭐" * int(row['nota'])
+            st.markdown(f"{estrelas_str} **{row['cliente_nome']}** — *Atend. Nº {row['venda_codigo']}*")
+            st.caption(f"_{row['comentario']}_")
+            st.markdown("<hr style='margin: 0.3em 0; opacity:0.2'>", unsafe_allow_html=True)
+
+# ==========================================
+# TELA PÚBLICA DE AVALIAÇÃO
+# Deve vir ANTES do login para interceptar
+# o cliente sem exigir autenticação.
+# URL: ?avaliacao=CODIGO&empresa=ID
+# ==========================================
+params = st.query_params
+if "avaliacao" in params and "empresa" in params:
+    cod_aval = params["avaliacao"]
+    emp_aval = params["empresa"]
+    nome_cliente = urllib.parse.unquote(params.get("cliente", "Cliente"))
+
+    st.markdown("""
+        <style>
+        .block-container { max-width: 600px; margin: auto; padding-top: 2rem; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Tela de agradecimento após envio
+    if st.session_state.get('avaliacao_enviada'):
+        st.markdown(f"""
+            <div style='text-align: center; padding: 3rem 1rem;'>
+                <div style='font-size: 5rem;'>🌸</div>
+                <h1 style='color: #7c3aed;'>Obrigada, {nome_cliente.split()[0]}!</h1>
+                <p style='font-size: 1.2rem; color: #555;'>
+                    Sua avaliação foi registrada com sucesso.<br>
+                    Ela nos ajuda a melhorar cada vez mais! 💜
+                </p>
+                <p style='font-size: 1rem; color: #888; margin-top: 2rem;'>
+                    Você já pode fechar esta página.
+                </p>
+            </div>
+        """, unsafe_allow_html=True)
+        st.stop()
+
+    df_ja_avaliou = carregar_dados(
+        "SELECT id FROM avaliacoes WHERE venda_codigo = %s AND empresa_id = %s",
+        (int(cod_aval), int(emp_aval))
+    )
+
+    if not df_ja_avaliou.empty:
+        st.success("✅ Você já enviou sua avaliação para este atendimento. Obrigada! 🌸")
+        st.stop()
+
+    st.title("⭐ Avalie seu Atendimento")
+    st.markdown(f"Olá, **{nome_cliente.split()[0]}**! Atendimento Nº {cod_aval}")
+    st.markdown("Sua opinião é muito importante para continuarmos melhorando! 💜")
+    st.markdown("---")
+
+    estrelas = {
+        "⭐⭐⭐⭐⭐ — Muito satisfatório": 5,
+        "⭐⭐⭐⭐ — Satisfatório": 4,
+        "⭐⭐⭐ — Regular": 3,
+        "⭐⭐ — Insatisfatório": 2,
+        "⭐ — Muito insatisfatório": 1,
+    }
+
+    nota_desc = st.radio(
+        "Como você avalia seu atendimento/serviço?",
+        options=list(estrelas.keys()),
+        index=0
+    )
+    nota_valor = estrelas[nota_desc]
+
+    comentario = st.text_area(
+        "Deixe seu comentário (opcional):",
+        placeholder="Conte como foi sua experiência...",
+        height=120
+    )
+
+    if st.button("📨 Enviar Avaliação", type="primary", use_container_width=True):
+        try:
+            conn = conectar_banco()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO avaliacoes (empresa_id, venda_codigo, cliente_nome, nota, comentario)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (int(emp_aval), int(cod_aval), nome_cliente, nota_valor, comentario))
+            cur.close()
+            conn.commit()
+            devolver_conexao(conn)
+            st.session_state['avaliacao_enviada'] = True
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao salvar avaliação: {e}")
+            if 'conn' in locals(): devolver_conexao(conn)
+
+    st.stop()
 
 # ==========================================
 # INTERFACE CONFIG E CONTROLE DE LOGIN
@@ -82,7 +268,6 @@ if 'logado' not in st.session_state:
 if not st.session_state['logado']:
     # 1. Função para converter a imagem e poder usar no HTML
     def get_base64_image(caminho_imagem):
-        import base64
         with open(caminho_imagem, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode()
 
@@ -149,10 +334,10 @@ if not st.session_state['logado']:
                         st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
 
                     # Agora sim, com tudo salvo na memória, fechamos o banco e recarregamos a tela
-                    conn.close()
+                    devolver_conexao(conn)
                     st.rerun()
                 else:
-                    conn.close()
+                    devolver_conexao(conn)
                     st.error("❌ Usuário ou senha incorretos.")
 
 # --- PAINEL DO ADMINISTRADOR MASTER ---
@@ -180,12 +365,13 @@ elif st.session_state['perfil'] == 'master':
                     (nome_emp, cnpj_emp, logo_emp)
                 )
                 conn.commit()
-                conn.close()
+                devolver_conexao(conn)
                 st.success(f"Empresa '{nome_emp}' cadastrada!")
+                limpar_cache()
                 st.rerun()
                 
         # Carrega os dados uma vez para usar na edição e na tabela
-        df_empresas = carregar_dados("SELECT id, nome, cnpj, logo_url FROM empresas ORDER BY id")
+        df_empresas = carregar_dados_cached("SELECT id, nome, cnpj, logo_url FROM empresas ORDER BY id")
         
         # --- NOVO BLOCO DE EDIÇÃO ---
         with st.expander("✏️ Editar Empresa"):
@@ -218,9 +404,10 @@ elif st.session_state['perfil'] == 'master':
                                 (e_nome, e_cnpj, e_logo, int(emp_selecionada))
                             )
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             
                             st.success("✅ Cadastro da empresa atualizado com sucesso!")
+                            limpar_cache()
                             st.rerun()
             else:
                 st.info("Não há empresas cadastradas para editar.")
@@ -232,7 +419,7 @@ elif st.session_state['perfil'] == 'master':
         st.subheader("Novo Login e Acessos")
         
         # Carrega lista de empresas para usar nos selects
-        df_emp_list = carregar_dados("SELECT id, nome FROM empresas ORDER BY id")
+        df_emp_list = carregar_dados_cached("SELECT id, nome FROM empresas ORDER BY id")
         
         if not df_emp_list.empty:
             dict_empresas = dict(zip(df_emp_list['nome'], df_emp_list['id']))
@@ -257,15 +444,16 @@ elif st.session_state['perfil'] == 'master':
                     (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu], perfil_usu)
                 )
                 conn.commit()
-                conn.close()
+                devolver_conexao(conn)
                 st.success(f"Usuário '{nome_usu}' criado com sucesso! Agora configure as permissões dele na aba abaixo.")
+                limpar_cache()
                 st.rerun()
 
         st.divider()
         st.subheader("Usuários Cadastrados")
 
         # Carrega os dados atualizados
-        df_usuarios = carregar_dados("SELECT u.id, u.nome, u.login, u.perfil, u.empresa_id, e.nome as empresa FROM usuarios u JOIN empresas e ON u.empresa_id = e.id ORDER BY u.id")
+        df_usuarios = carregar_dados_cached("SELECT u.id, u.nome, u.login, u.perfil, u.empresa_id, e.nome as empresa FROM usuarios u JOIN empresas e ON u.empresa_id = e.id ORDER BY u.id")
         
         if not df_usuarios.empty:
             opcoes_usuarios = df_usuarios['id'].tolist()
@@ -284,7 +472,7 @@ elif st.session_state['perfil'] == 'master':
         with st.expander("🔐 Gerenciar Permissões de Acesso (Menu)"):
             if not df_usuarios.empty:
                 # Puxa quais telas existem no sistema
-                df_modulos = carregar_dados("SELECT id, nome, chave FROM modulos ORDER BY id")
+                df_modulos = carregar_dados_cached("SELECT id, nome, chave FROM modulos ORDER BY id")
                 
                 if df_modulos.empty:
                     st.error("Nenhum módulo cadastrado no banco. Rode o INSERT na tabela 'modulos' primeiro.")
@@ -301,7 +489,7 @@ elif st.session_state['perfil'] == 'master':
                             
                             # Puxa do banco quais permissões esse usuário JÁ TEM hoje
                             query_perm_atuais = "SELECT modulo_id FROM permissoes_acesso WHERE usuario_id = %s"
-                            df_perm_atuais = carregar_dados(query_perm_atuais, (int(usu_perm_sel),))
+                            df_perm_atuais = carregar_dados_cached(query_perm_atuais, (int(usu_perm_sel),))
                             modulos_ja_permitidos = df_perm_atuais['modulo_id'].tolist() if not df_perm_atuais.empty else []
 
                             # Formulário de Checkboxes dinâmicos
@@ -327,7 +515,7 @@ elif st.session_state['perfil'] == 'master':
                                             )
                                     
                                     conn.commit()
-                                    conn.close()
+                                    devolver_conexao(conn)
                                     st.success(f"Permissões de {linha_usu['nome']} atualizadas com sucesso!")
             else:
                 st.info("Cadastre um usuário primeiro.")
@@ -357,8 +545,9 @@ elif st.session_state['perfil'] == 'master':
                                     (e_nome, e_login, dict_empresas[e_emp], e_perfil, int(usu_ed_sel))
                                 )
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("✅ Usuário atualizado com sucesso!")
+                                limpar_cache()
                                 st.rerun()
 
         with c_del:
@@ -371,8 +560,9 @@ elif st.session_state['perfil'] == 'master':
                             conn = conectar_banco()
                             conn.cursor().execute("DELETE FROM usuarios WHERE id=%s", (int(usu_del_sel),))
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("🗑️ Usuário excluído!")
+                            limpar_cache()
                             st.rerun()
 
         # --- 4. TABELA FINAL DE EXIBIÇÃO ---
@@ -381,7 +571,7 @@ elif st.session_state['perfil'] == 'master':
     
     with aba_senhas:
         st.subheader("Reset de Senhas")
-        df_todos_usu = carregar_dados("SELECT id, nome, login FROM usuarios ORDER BY nome")
+        df_todos_usu = carregar_dados_cached("SELECT id, nome, login FROM usuarios ORDER BY nome")
         if not df_todos_usu.empty:
             dict_todos_usu = {f"{row['nome']} ({row['login']})": row['id'] for _, row in df_todos_usu.iterrows()}
             usu_sel = st.selectbox("Selecione o Usuário", options=list(dict_todos_usu.keys()))
@@ -390,7 +580,7 @@ elif st.session_state['perfil'] == 'master':
                 conn = conectar_banco()
                 conn.cursor().execute("UPDATE usuarios SET senha = %s WHERE id = %s", (nova_sen, dict_todos_usu[usu_sel]))
                 conn.commit()
-                conn.close()
+                devolver_conexao(conn)
                 st.success("Senha alterada!")
         else:
             st.info("Nenhum usuário para resetar a senha.")
@@ -464,10 +654,11 @@ else:
                     conn.commit()
                     st.success("OK!")
                 else: st.error("Incorreta")
-                conn.close()
+                devolver_conexao(conn)
 
     if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
         st.session_state.clear()
+        limpar_cache()
         st.rerun()
 
     # ==========================================
@@ -478,7 +669,7 @@ else:
     
     try:
         # Puxa o nome e a URL da logo da empresa logada
-        df_emp = carregar_dados("SELECT nome, logo_url FROM empresas WHERE id = %s", (emp_id,))
+        df_emp = carregar_dados_cached("SELECT nome, logo_url FROM empresas WHERE id = %s", (emp_id,))
         if not df_emp.empty:
             nome_empresa = df_emp.iloc[0]['nome']
             logo_customizada = df_emp.iloc[0]['logo_url']
@@ -486,8 +677,6 @@ else:
         pass
 
     # Lógica inteligente para renderizar a logo
-    import base64
-    import os
     
     logo_html = "<span style='font-size: 28px;'>🏢</span>" # Fallback ajustado
     
@@ -535,8 +724,6 @@ else:
         op_per = ["Mês Atual", "Hoje", "Últimos 7 Dias", "Últimos 15 Dias", "Últimos 30 Dias", "Mês Anterior", "Todo o Período", "Personalizado"]
         per_sel = st.selectbox("Filtrar:", op_per)
         
-        from datetime import date, timedelta
-        import pandas as pd
         
         hoje = date.today()
         d_ini, d_fim = None, None
@@ -546,7 +733,6 @@ else:
         elif per_sel == "Últimos 15 Dias": d_ini, d_fim = hoje - timedelta(days=15), hoje
         elif per_sel == "Últimos 30 Dias": d_ini, d_fim = hoje - timedelta(days=30), hoje
         elif per_sel == "Mês Atual": 
-            import calendar
             d_ini = hoje.replace(day=1)
             ultimo_dia_mes = calendar.monthrange(hoje.year, hoje.month)[1]
             d_fim = hoje.replace(day=ultimo_dia_mes)
@@ -571,7 +757,7 @@ else:
         # --- ABA 1: DASHBOARD DE VENDAS (Seu código original adaptado) ---
         with aba_dash:
             query_dash = "SELECT v.codigo_venda, v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.empresa_id = %s"
-            df_dash = carregar_dados(query_dash, (emp_id,))
+            df_dash = carregar_dados_cached(query_dash, (emp_id,))
             
             if not df_dash.empty and d_ini and d_fim:
                 df_dash['Data_Obj'] = pd.to_datetime(df_dash['data_venda'], format='%d/%m/%Y', errors='coerce').dt.date
@@ -590,7 +776,6 @@ else:
                     col3.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
                     
                     st.markdown("---")
-                    import plotly.express as px
                     
                     df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
                     st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
@@ -618,7 +803,7 @@ else:
                 st.caption(f"Exibindo clientes que fazem aniversário entre **{d_ini.strftime('%d/%m/%Y')}** e **{d_fim.strftime('%d/%m/%Y')}**.")
                         
             query_cli = "SELECT nome, telefone, data_nascimento, tipo FROM clientes WHERE empresa_id = %s"
-            df_cli = carregar_dados(query_cli, (emp_id,))
+            df_cli = carregar_dados_cached(query_cli, (emp_id,))
             
             if not df_cli.empty and d_ini and d_fim:
                 
@@ -698,7 +883,6 @@ Mais do que celebrar uma data, queremos celebrar você e agradecer por fazer par
 Aproveite cada momento do seu dia, receba todo o carinho que merece e celebre muito!
 
 Feliz aniversário! 🥳✨"""
-                            from urllib.parse import quote
                             return f"https://api.whatsapp.com/send?phone={num}&text={quote(msg)}"
                         return None
                     
@@ -735,13 +919,18 @@ Feliz aniversário! 🥳✨"""
                 ORDER BY "Total Gasto (R$)" DESC
                 LIMIT 5
             """
-            df_ranking_crm = carregar_dados(query_crm_vendas, (emp_id, d_ini, d_fim))
+            df_ranking_crm = carregar_dados_cached(query_crm_vendas, (emp_id, d_ini, d_fim))
             
             if not df_ranking_crm.empty:
                 df_ranking_crm['Total Gasto (R$)'] = df_ranking_crm['Total Gasto (R$)'].apply(lambda x: f"R$ {x:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
                 st.dataframe(df_ranking_crm, hide_index=True, use_container_width=True)
             else:
                 st.warning("Nenhuma venda para gerar o ranking neste período.")
+            
+            st.markdown("---")
+            
+            # --- PAINEL DE AVALIAÇÕES ---
+            exibir_painel_avaliacoes(emp_id)
                 
         with aba_hist:
             st.subheader("📜 Histórico Geral e Faturamento")
@@ -758,7 +947,7 @@ Feliz aniversário! 🥳✨"""
                 WHERE v.empresa_id = %s
                 ORDER BY v.codigo_venda DESC, v.id DESC
             """
-            df_todas_vendas = carregar_dados(query_todas_vendas, (emp_id,))
+            df_todas_vendas = carregar_dados_cached(query_todas_vendas, (emp_id,))
             
             if not df_todas_vendas.empty:
                 col_opcoes1, col_opcoes2 = st.columns(2)
@@ -802,8 +991,8 @@ Feliz aniversário! 🥳✨"""
                                         novo_restante = novo_total - nova_entrada
                                         cursor.execute("UPDATE vendas SET data_venda=%s, forma_pagamento=%s, prazo=%s, valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s, valor_restante=%s WHERE id=%s AND empresa_id=%s", 
                                                      (nova_data.strftime("%d/%m/%Y"), novo_pag, novo_prazo, novo_tabela, novo_desc, novo_total, nova_entrada, novo_restante, venda_id_edit, emp_id))
-                                        conn.commit(); conn.close(); st.success("Atualizado!"); st.rerun()
-                            else: conn.close()
+                                        conn.commit(); devolver_conexao(conn); st.success("Atualizado!"); limpar_cache(); st.rerun()
+                            else: devolver_conexao(conn)
 
                 with col_opcoes2:
                     with st.expander("❌ Cancelar / Estornar Item", expanded=False):
@@ -823,8 +1012,8 @@ Feliz aniversário! 🥳✨"""
                                     cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
                                     cursor.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
                                     cursor.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
-                                    conn.commit(); conn.close(); st.success("Cancelado!"); st.rerun()
-                                else: conn.close(); st.error("Erro.")
+                                    conn.commit(); devolver_conexao(conn); st.success("Cancelado!"); limpar_cache(); st.rerun()
+                                else: devolver_conexao(conn); st.error("Erro.")
                 
                 #st.markdown("---")
 
@@ -858,7 +1047,7 @@ Feliz aniversário! 🥳✨"""
                         """, (venda_id_recibo, emp_id))
                         
                         dados_recibo = cursor.fetchall()
-                        conn.close()
+                        devolver_conexao(conn)
 
                         if dados_recibo:
                             tel = dados_recibo[0][0]
@@ -928,7 +1117,6 @@ Feliz aniversário! 🥳✨"""
                             st.text_area("Pré-visualização da Mensagem:", value=msg, height=250, disabled=True)
 
                             if tel:
-                                import urllib.parse
                                 tel_limpo = ''.join(filter(str.isdigit, str(tel)))
                                 if len(tel_limpo) >= 10:
                                     if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
@@ -1001,8 +1189,7 @@ Feliz aniversário! 🥳✨"""
         with aba_alertas:
             st.markdown("### 📦 Alertas de Reposição de Estoque")
             
-            # CORREÇÃO: Adicionado o "AND tipo = 'P'" para excluir serviços da lista
-            df_estoque = carregar_dados("""
+            df_estoque = carregar_dados_cached("""
                 SELECT 
                     referencia AS "Ref.", 
                     nome AS "Produto", 
@@ -1010,7 +1197,7 @@ Feliz aniversário! 🥳✨"""
                     categoria AS "Categoria", 
                     quantidade AS "Qtd Atual"
                 FROM produtos
-                WHERE empresa_id = %s AND tipo = 'P'
+                WHERE empresa_id = %s AND tipo='P'
                 ORDER BY quantidade ASC
             """, (emp_id,))
             
@@ -1050,7 +1237,7 @@ Feliz aniversário! 🥳✨"""
                 else:
                     st.success("🎉 Tudo certo! Nenhum cosmético com estoque crítico ou zerado no momento.")
             else:
-                st.info("Nenhum produto físico cadastrado.")
+                st.info("Nenhum produto cadastrado.")
                 
         # ==========================================
         # NOVA TELA: VISÃO APP (Acompanhamento Rápido)
@@ -1058,7 +1245,6 @@ Feliz aniversário! 🥳✨"""
         with aba_app:
             st.markdown("### 📱 Acompanhamento Diário")
             
-            from datetime import date
             hoje = date.today()
             
             meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
@@ -1106,7 +1292,7 @@ Feliz aniversário! 🥳✨"""
             """
             
             # Aqui fazemos a busca (se der erro de data, ajuste o cast de data_venda no SQL)
-            df_app = carregar_dados(query_app, (mes_num, ano_sel, emp_id))
+            df_app = carregar_dados_cached(query_app, (mes_num, ano_sel, emp_id))
             
             if not df_app.empty:
                 # Calculadora do rodapé
@@ -1185,8 +1371,8 @@ Feliz aniversário! 🥳✨"""
         # ==========================================
         with tab_prod:
             # --- Buscando apenas PRODUTOS FÍSICOS ('P') ---
-            df_p = carregar_dados("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='P' ORDER BY nome", (emp_id,))
-            df_c = carregar_dados("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+            df_p = carregar_dados_cached("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='P' ORDER BY nome", (emp_id,))
+            df_c = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
             
             # --- EXPANDER 1: NOVO PRODUTO ---
@@ -1235,8 +1421,9 @@ Feliz aniversário! 🥳✨"""
                                 (n_p, q_p, v_p, custo_p, markup_p, m_p, cat_p, emp_id, ref_p, classe_letra)
                             )
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success(f"Produto de {classe_letra} cadastrado com sucesso!")
+                            limpar_cache()
                             st.rerun()
 
             # --- EXPANDER 2: EDITAR PRODUTO ---
@@ -1250,73 +1437,88 @@ Feliz aniversário! 🥳✨"""
                         classe_tag = "[INVENTÁRIO]" if linha.get('classe', 'Venda') == 'Insumo' else "[REVENDA]"
                         return f"{classe_tag} {linha['nome']}{ref}"
                         
-                    prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto)
+                    prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto, key="sel_editar_produto")
                     
                     if prod_id_selecionado:
                         p_atual = df_p[df_p['id'] == prod_id_selecionado].iloc[0]
                         classe_atual = p_atual.get('classe', 'Venda')
                         
-                        # Trocado st.form por st.container para que os campos desabilitem na mesma hora
+                        # Tratamento seguro de nulos para todos os campos
+                        val_nome   = str(p_atual['nome']) if pd.notnull(p_atual['nome']) else ""
+                        val_ref    = str(p_atual['referencia']) if pd.notnull(p_atual['referencia']) else ""
+                        val_marca  = str(p_atual['marca']) if pd.notnull(p_atual['marca']) else ""
+                        val_qtd    = int(p_atual['quantidade']) if pd.notnull(p_atual['quantidade']) else 0
+                        val_custo  = float(p_atual['preco_custo']) if pd.notnull(p_atual.get('preco_custo')) else 0.0
+                        val_markup = float(p_atual['markup']) if pd.notnull(p_atual.get('markup')) else 0.0
+                        val_valor  = float(p_atual['valor']) if pd.notnull(p_atual['valor']) else 0.0
+                        
+                        # Chave única por produto — força o Streamlit a limpar os campos ao trocar de produto
+                        key_prefix = f"edit_prod_{prod_id_selecionado}"
+                        
                         with st.container(border=True):
                             
                             index_classe_atual = 1 if classe_atual == 'Insumo' else 0
-                            e_classe_desc = st.selectbox("Finalidade do Produto:", ["Venda / Comercialização", "Insumo / Consumo Interno"], index=index_classe_atual)
+                            e_classe_desc = st.selectbox("Finalidade do Produto:", ["Venda / Comercialização", "Insumo / Consumo Interno"], index=index_classe_atual, key=f"{key_prefix}_classe")
                             e_classe_letra = 'Venda' if e_classe_desc == "Venda / Comercialização" else 'Insumo'
                             
                             c1, c2 = st.columns(2)
-                            e_nome = c1.text_input("Nome", value=p_atual['nome'])
-                            e_ref = c2.text_input("Referência", value=p_atual['referencia'] if p_atual['referencia'] else "")
+                            e_nome = c1.text_input("Nome", value=val_nome, key=f"{key_prefix}_nome")
+                            e_ref  = c2.text_input("Referência", value=val_ref, key=f"{key_prefix}_ref")
                             
                             c3, c4 = st.columns(2)
-                            e_qtd = c3.number_input("Quantidade em Estoque Atualizada", min_value=0, step=1, value=int(p_atual['quantidade']))
-                            e_marca = c4.text_input("Marca / Linha", value=p_atual['marca'])
+                            e_qtd   = c3.number_input("Quantidade em Estoque Atualizada", min_value=0, step=1, value=val_qtd, key=f"{key_prefix}_qtd")
+                            e_marca = c4.text_input("Marca / Linha", value=val_marca, key=f"{key_prefix}_marca")
                             
                             st.markdown("**Finanças e Precificação**")
                             c5, c6, c7 = st.columns(3)
                             
-                            val_custo = float(p_atual['preco_custo']) if 'preco_custo' in p_atual and pd.notnull(p_atual['preco_custo']) else 0.0
-                            val_markup = float(p_atual['markup']) if 'markup' in p_atual and pd.notnull(p_atual['markup']) else 0.0
-                            
-                            e_custo = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f", value=val_custo)
-                            e_markup = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", value=val_markup, disabled=(e_classe_letra == 'Insumo'))
-                            e_valor = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", value=float(p_atual['valor']), disabled=(e_classe_letra == 'Insumo'))
+                            e_custo  = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f", value=val_custo, key=f"{key_prefix}_custo")
+                            e_markup = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", value=val_markup, disabled=(e_classe_letra == 'Insumo'), key=f"{key_prefix}_markup")
+                            e_valor  = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", value=val_valor, disabled=(e_classe_letra == 'Insumo'), key=f"{key_prefix}_valor")
                             
                             try:
                                 cat_index = lista_cat.index(p_atual['categoria'])
-                            except ValueError:
+                            except (ValueError, TypeError):
                                 cat_index = 0
                                 
-                            e_cat = st.selectbox("Categoria", lista_cat, index=cat_index)
+                            e_cat = st.selectbox("Categoria", lista_cat, index=cat_index, key=f"{key_prefix}_cat")
                             
                             st.markdown("---")
-                            # Botões lado a lado
                             col_btn_salvar, col_btn_excluir = st.columns(2)
                             
-                            if col_btn_salvar.button("💾 Salvar Alterações", type="primary", use_container_width=True):
-                                conn = conectar_banco()
-                                conn.cursor().execute("""
-                                    UPDATE produtos 
-                                    SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s, classe=%s 
-                                    WHERE id=%s AND empresa_id=%s
-                                """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, e_ref, e_classe_letra, int(prod_id_selecionado), emp_id))
-                                conn.commit()
-                                conn.close()
-                                
-                                st.success("Cadastro atualizado com sucesso!")
-                                st.rerun()
-                                
-                            if col_btn_excluir.button("🗑️ Excluir Produto", use_container_width=True):
+                            if col_btn_salvar.button("💾 Salvar Alterações", type="primary", use_container_width=True, key=f"{key_prefix}_salvar"):
                                 try:
                                     conn = conectar_banco()
-                                    conn.cursor().execute("DELETE FROM produtos WHERE id=%s AND empresa_id=%s", (int(prod_id_selecionado), emp_id))
+                                    cur = conn.cursor()
+                                    cur.execute("""
+                                        UPDATE produtos 
+                                        SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s, classe=%s 
+                                        WHERE id=%s AND empresa_id=%s
+                                    """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, e_ref, e_classe_letra, int(prod_id_selecionado), emp_id))
+                                    cur.close()
                                     conn.commit()
-                                    conn.close()
-                                    
+                                    devolver_conexao(conn)
+                                    st.success("Cadastro atualizado com sucesso!")
+                                    limpar_cache()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro ao salvar: {e}")
+                                    if 'conn' in locals(): devolver_conexao(conn)
+                                
+                            if col_btn_excluir.button("🗑️ Excluir Produto", use_container_width=True, key=f"{key_prefix}_excluir"):
+                                try:
+                                    conn = conectar_banco()
+                                    cur = conn.cursor()
+                                    cur.execute("DELETE FROM produtos WHERE id=%s AND empresa_id=%s", (int(prod_id_selecionado), emp_id))
+                                    cur.close()
+                                    conn.commit()
+                                    devolver_conexao(conn)
                                     st.success("✅ Produto excluído com sucesso!")
+                                    limpar_cache()
                                     st.rerun()
                                 except Exception as e:
                                     st.error("⚠️ **Não é possível excluir!** Este produto já possui histórico de vendas ou foi utilizado em serviços vinculados ao seu financeiro.")
-                                    if 'conn' in locals(): conn.close()
+                                    if 'conn' in locals(): devolver_conexao(conn)
                 else:
                     st.info("Não há produtos cadastrados para editar.")
 
@@ -1398,12 +1600,13 @@ Feliz aniversário! 🥳✨"""
                                             
                                         conn.commit()
                                         st.success(f"Kit '{nome_kit}' criado com sucesso! Estoque dos itens base foi atualizado.")
+                                        limpar_cache()
                                         st.rerun()
                                         
                                     except Exception as e:
                                         st.error(f"Erro ao gerar kit: {e}")
                                     finally:
-                                        conn.close()
+                                        devolver_conexao(conn)
                 else:
                     st.info("Não há produtos comerciais de venda com estoque disponível para montar kits.")
 
@@ -1474,10 +1677,10 @@ Feliz aniversário! 🥳✨"""
             #st.markdown("### 🛠️ Gestão de Serviços Prestados")
             
             # --- Buscando apenas SERVIÇOS ('S') com todas as colunas ---
-            df_s = carregar_dados("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+            df_s = carregar_dados_cached("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
             
             # Carregando categorias
-            df_c_serv = carregar_dados("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+            df_c_serv = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat_serv = df_c_serv['nome'].tolist() if not df_c_serv.empty else ["Geral"]
 
             # --- EXPANDER 1: NOVO SERVIÇO ---
@@ -1510,8 +1713,9 @@ Feliz aniversário! 🥳✨"""
                                 (n_s, v_s, cat_s, emp_id, ref_s, t_s, com_s)
                             )
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("Serviço cadastrado com sucesso!")
+                            limpar_cache()
                             st.rerun()
 
             # --- EXPANDER 2: EDITAR SERVIÇO ---
@@ -1561,9 +1765,10 @@ Feliz aniversário! 🥳✨"""
                                     WHERE id=%s AND empresa_id=%s
                                 """, (e_nome_s, e_valor_s, e_cat_s, e_ref_s, e_tempo_s, e_com_s, int(serv_id_selecionado), emp_id))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 
                                 st.success("Serviço atualizado com sucesso!")
+                                limpar_cache()
                                 st.rerun()
                 else:
                     st.info("Não há serviços cadastrados para editar.")
@@ -1593,23 +1798,21 @@ Feliz aniversário! 🥳✨"""
             with c1:
                 cat_n = st.text_input("Nova Categoria")
                 if st.button("Salvar Categoria"):
-                    conn = conectar_banco(); conn.cursor().execute("INSERT INTO categorias (nome, empresa_id) VALUES (%s,%s)",(cat_n, emp_id)); conn.commit(); conn.close(); st.rerun()
+                    conn = conectar_banco(); conn.cursor().execute("INSERT INTO categorias (nome, empresa_id) VALUES (%s,%s)",(cat_n, emp_id)); conn.commit(); devolver_conexao(conn); limpar_cache(); st.rerun()
             with c2:
                 cat_del = st.selectbox("Excluir:", lista_cat)
                 if st.button("Remover", type="primary"):
-                    conn = conectar_banco(); conn.cursor().execute("DELETE FROM categorias WHERE nome=%s AND empresa_id=%s",(cat_del, emp_id)); conn.commit(); conn.close(); st.rerun()
+                    conn = conectar_banco(); conn.cursor().execute("DELETE FROM categorias WHERE nome=%s AND empresa_id=%s",(cat_del, emp_id)); conn.commit(); devolver_conexao(conn); limpar_cache(); st.rerun()
 
         with tab_cli:
             #st.subheader("Gerenciamento de Clientes")
             
-            from datetime import datetime
-            import pytz
 
             # Força o sistema a usar o fuso horário correto
             fuso_local = pytz.timezone('America/Fortaleza')
             hoje_str = datetime.now(fuso_local).strftime("%d/%m")
 
-            df_aniv = carregar_dados("SELECT nome, telefone FROM clientes WHERE empresa_id=%s AND data_nascimento=%s", (emp_id, hoje_str))
+            df_aniv = carregar_dados_cached("SELECT nome, telefone FROM clientes WHERE empresa_id=%s AND data_nascimento=%s", (emp_id, hoje_str))
             if not df_aniv.empty:
                 st.success(f"🎉 Temos {len(df_aniv)} aniversariante(s) hoje ({hoje_str})!")
                 st.dataframe(df_aniv, use_container_width=True, hide_index=True)
@@ -1639,11 +1842,12 @@ Feliz aniversário! 🥳✨"""
                             (nome_cli, nasc_cli, tel_cli, emp_id, tipo_cli_letra)
                         )
                         conn.commit()
-                        conn.close()
+                        devolver_conexao(conn)
                         st.success(f"{tipo_cli_desc} cadastrado com sucesso!")
+                        limpar_cache()
                         st.rerun()
 
-            df_clientes = carregar_dados("SELECT * FROM clientes WHERE empresa_id = %s ORDER BY nome", (emp_id,))
+            df_clientes = carregar_dados_cached("SELECT * FROM clientes WHERE empresa_id = %s ORDER BY nome", (emp_id,))
             
             with sub_edit_cli:
                 if not df_clientes.empty:
@@ -1673,8 +1877,9 @@ Feliz aniversário! 🥳✨"""
                                 (novo_nome_cli, novo_nasc_cli, novo_tel_cli, novo_tipo_letra, cli_id, emp_id)
                             )
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("Atualizado com sucesso!")
+                            limpar_cache()
                             st.rerun()
 
             with sub_del_cli:
@@ -1686,15 +1891,16 @@ Feliz aniversário! 🥳✨"""
                             conn = conectar_banco()
                             conn.cursor().execute("DELETE FROM clientes WHERE id=%s AND empresa_id=%s", (clientes_dict[cli_del_selecionado], emp_id))
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("Excluído com sucesso!")
+                            limpar_cache()
                             st.rerun()
 
             with sub_hist_cli:
                 if not df_clientes.empty:
                     clientes_dict_hist = dict(zip(df_clientes['nome'], df_clientes['id']))
                     cli_hist_selecionado = st.selectbox("Selecione o Cliente", options=list(clientes_dict_hist.keys()), key="sel_hist_cli")
-                    df_h = carregar_dados("""
+                    df_h = carregar_dados_cached("""
                         SELECT v.codigo_venda AS "Nº Venda", p.nome AS "Produto", v.quantidade AS "Qtd", v.valor_total AS "Total (R$)", v.data_venda AS "Data"
                         FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.cliente_id = %s AND v.empresa_id = %s ORDER BY v.id DESC
                     """, (clientes_dict_hist[cli_hist_selecionado], emp_id))
@@ -1716,8 +1922,8 @@ Feliz aniversário! 🥳✨"""
                     c_f = st.text_input("CNPJ")
                     t_f = st.text_input("Telefone")
                     if st.form_submit_button("Salvar Fornecedor"):
-                        conn = conectar_banco(); conn.cursor().execute("INSERT INTO fornecedores (nome, cnpj, telefone, empresa_id) VALUES (%s,%s,%s,%s)",(n_f, c_f, t_f, emp_id)); conn.commit(); conn.close(); st.rerun()
-            st.dataframe(carregar_dados("SELECT nome, cnpj, telefone FROM fornecedores WHERE empresa_id=%s ORDER BY nome",(emp_id,)), use_container_width=True)
+                        conn = conectar_banco(); conn.cursor().execute("INSERT INTO fornecedores (nome, cnpj, telefone, empresa_id) VALUES (%s,%s,%s,%s)",(n_f, c_f, t_f, emp_id)); conn.commit(); devolver_conexao(conn); limpar_cache(); st.rerun()
+            st.dataframe(carregar_dados_cached("SELECT nome, cnpj, telefone FROM fornecedores WHERE empresa_id=%s ORDER BY nome",(emp_id,)), use_container_width=True)
 
         # ==========================================
         # ABA: GERENCIAR COLABORADORES
@@ -1726,7 +1932,7 @@ Feliz aniversário! 🥳✨"""
             st.markdown("### 👤 Equipe e Profissionais")
             
             # Carrega a lista atual de colaboradores
-            df_colab = carregar_dados("SELECT id, nome, cargo, telefone, ativo FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+            df_colab = carregar_dados_cached("SELECT id, nome, cargo, telefone, ativo FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             
             # --- EXPANDER 1: NOVO COLABORADOR ---
             with st.expander("➕ Cadastrar Novo Colaborador"):
@@ -1752,9 +1958,10 @@ Feliz aniversário! 🥳✨"""
                                 VALUES (%s, %s, %s, %s, %s)
                             """, (nome_c, cargo_c, tel_c, is_ativo, emp_id))
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             
                             st.success(f"Colaborador(a) {nome_c} cadastrado(a) com sucesso!")
+                            limpar_cache()
                             st.rerun()
 
             # --- EXPANDER 2: EDITAR COLABORADOR ---
@@ -1794,9 +2001,10 @@ Feliz aniversário! 🥳✨"""
                                         WHERE id=%s AND empresa_id=%s
                                     """, (e_nome, e_cargo, e_tel, is_ativo_edit, id_selecionado, emp_id))
                                     conn.commit()
-                                    conn.close()
+                                    devolver_conexao(conn)
                                     
                                     st.success("Cadastro atualizado com sucesso!")
+                                    limpar_cache()
                                     st.rerun()
                 else:
                     st.info("Não há colaboradores cadastrados para editar.")
@@ -1876,10 +2084,10 @@ Feliz aniversário! 🥳✨"""
                 st.subheader("🛒 Vendas")
             
                 # Carrega dados atualizados para o PDV
-                df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                df_cli = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                 
                 # Traz apenas produtos comerciais de Venda ou Serviços
-                df_pro = carregar_dados("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s AND (tipo='S' OR (tipo='P' AND classe='Venda')) ORDER BY nome", (emp_id,))
+                df_pro = carregar_dados_cached("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s AND tipo='P' AND classe='Venda' ORDER BY nome", (emp_id,))
             
                 if not df_cli.empty and not df_pro.empty:
                     # 1. Configurações da Venda
@@ -1890,7 +2098,6 @@ Feliz aniversário! 🥳✨"""
                     c_pag, c_parc = st.columns(2)
                     f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...")
                     
-                    # Inicialização padrão para evitar erros de renderização financeira se f_pag estiver vazio
                     qtd_parcelas = 1
                     data_1_venc = date.today()
                     
@@ -1901,86 +2108,51 @@ Feliz aniversário! 🥳✨"""
                 
                     st.markdown("---")
                 
-                    # 2. Seleção de Produto com Visão Dinâmica (Produto vs Serviço)
-                    tradutor_tipo = {'P': 'Produto', 'S': 'Serviço'}
-                    
+                    # 2. Seleção de Produto
                     df_pro['display_pesquisa'] = df_pro.apply(
-                        lambda x: f"{x['nome']} ({tradutor_tipo.get(x['tipo'], 'Produto')}) - Estoque: {int(x['quantidade'])}" if x['tipo'] == 'P' else f"{x['nome']} (Serviço)", axis=1
+                        lambda x: f"{x['nome']} - Estoque: {int(x['quantidade'])}", axis=1
                     )
                 
-                    prod_display = st.selectbox("🔍 Pesquise o Item (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto/serviço...")
+                    prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto...")
                 
-                    # --- INTERRUPTOR DE SEGURANÇA: Só abre o painel se os dados iniciais fundamentais existirem ---
                     if cliente_pdv and f_pag and prod_display:
-                        # Resgate das informações baseadas na escolha
                         p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
                         estoque_atual = int(p_info['quantidade'])
                         preco_tabela = float(p_info['valor'])
-                        item_tipo = p_info['tipo']
-                        
-                        profissional_selecionado = None
-                        nome_profissional = None
+
+                        if estoque_atual <= 0:
+                            st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                        elif estoque_atual == 1:
+                            st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                        elif estoque_atual <= 3:
+                            st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                        else:
+                            st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
                     
-                        # --- PAINEL VISUAL CONDICIONAL ---
-                        if item_tipo == 'P':
-                            if estoque_atual <= 0:
-                                st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                            elif estoque_atual == 1:
-                                st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                            elif estoque_atual <= 3:
-                                st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                            else:
-                                st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                        
-                        elif item_tipo == 'S':
-                            st.info(f"🛠️ Serviço Prestado | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                            
-                            df_colab = carregar_dados("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
-                            if not df_colab.empty:
-                                lista_nomes = df_colab['nome'].tolist()
-                                nome_colab = st.selectbox("👤 Quem executou o serviço?", options=lista_nomes, index=None, placeholder="Selecione o profissional executor...")
-                                
-                                if nome_colab:
-                                    idx_colab = lista_nomes.index(nome_colab)
-                                    profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
-                                    nome_profissional = nome_colab
-                            else:
-                                st.warning("⚠️ Cadastre um colaborador na aba de Cadastros para registrar o serviço.")
-                    
-                        # --- FORMULÁRIO DE ADIÇÃO AO CARRINHO ---
                         with st.form("form_add_carrinho", clear_on_submit=True):
                             c1, c2, c3, c4 = st.columns(4)
                         
-                            limite_qtd = estoque_atual if (item_tipo == 'P' and estoque_atual > 0) else 999
+                            limite_qtd = estoque_atual if estoque_atual > 0 else 999
                             q_pdv = c1.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
-                        
                             preco_custom = c2.number_input("Preço Unitário (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
                             desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f")
                             desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
                         
-                            # O botão desabilita se for produto sem estoque OU se for serviço sem colaborador selecionado
-                            travar_botao = (item_tipo == 'P' and estoque_atual <= 0) or (item_tipo == 'S' and profissional_selecionado is None)
-                            
-                            if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=travar_botao):
-                                if item_tipo == 'S' or estoque_atual >= q_pdv:
+                            if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=(estoque_atual <= 0)):
+                                if estoque_atual >= q_pdv:
                                     desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
-                                    
-                                    nome_carrinho = str(p_info['nome'])
-                                    if item_tipo == 'S' and nome_profissional:
-                                        nome_carrinho += f" (Executado por: {nome_profissional})"
-                                    
                                     st.session_state['carrinho'].append({
-                                        'id': int(p_info['id']), 
-                                        'nome': nome_carrinho, 
-                                        'qtd': int(q_pdv), 
-                                        'unit': float(preco_custom), 
-                                        'desc': float(desconto_final), 
+                                        'id': int(p_info['id']),
+                                        'nome': str(p_info['nome']),
+                                        'qtd': int(q_pdv),
+                                        'unit': float(preco_custom),
+                                        'desc': float(desconto_final),
                                         'total': float((preco_custom - desconto_final) * q_pdv),
-                                        'tipo': item_tipo, 
-                                        'colab_id': profissional_selecionado
+                                        'tipo': 'P',
+                                        'colab_id': None
                                     })
                                     st.rerun()
-                                else: 
+                                else:
                                     st.error("Estoque insuficiente!")
                     else:
                         st.info("👆 preencha o cliente, a forma de pagamento e selecione um item para configurar a venda.")
@@ -2146,14 +2318,15 @@ Feliz aniversário! 🥳✨"""
                                         st.session_state['zap_total'] = total_pdv
                             
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.session_state['carrinho'] = []
                                 st.success(f"Venda {novo_cod} salva com sucesso como PEDIDO!")
+                                limpar_cache()
                                 st.rerun()
                             
                             except Exception as e:
                                 st.error(f"Erro no banco: {e}")
-                                if 'conn' in locals(): conn.close()
+                                if 'conn' in locals(): devolver_conexao(conn)
 
                         # --- AÇÃO: ORÇAMENTO ---
                         if c2_orcamento.button("📋 Salvar Orçamento", use_container_width=True):
@@ -2167,12 +2340,12 @@ Feliz aniversário! 🥳✨"""
                                                VALUES (%s,%s,%s,%s,%s)""", 
                                             (int(emp_id), cliente_pdv, data_hoje_str, float(total_pdv), carrinho_texto))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("Orçamento gravado no sistema com sucesso!")
                             except Exception as e:
                                 st.error(f"Erro ao salvar orçamento: {e}")
                                 
-                            cur_cli = carregar_dados("SELECT telefone FROM clientes WHERE nome=%s AND empresa_id=%s", (cliente_pdv, emp_id))
+                            cur_cli = carregar_dados_cached("SELECT telefone FROM clientes WHERE nome=%s AND empresa_id=%s", (cliente_pdv, emp_id))
                             tel_cli = cur_cli.iloc[0]['telefone'] if not cur_cli.empty else None
                         
                             lista_produtos_msg = ""
@@ -2242,10 +2415,10 @@ Feliz aniversário! 🥳✨"""
                 st.subheader("✨ Lançamento de Serviços e Ficha Técnica")
                 
                 # Carrega dados
-                df_cli = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
-                df_serv = carregar_dados("SELECT id, nome, valor FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
-                df_prod_insumo = carregar_dados("SELECT id, nome FROM produtos WHERE empresa_id=%s AND tipo='P' AND classe='Insumo' ORDER BY nome", (emp_id,))
-                df_colab = carregar_dados("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
+                df_cli = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                df_serv = carregar_dados_cached("SELECT id, nome, valor FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+                df_prod_insumo = carregar_dados_cached("SELECT id, nome FROM produtos WHERE empresa_id=%s AND tipo='P' AND classe='Insumo' ORDER BY nome", (emp_id,))
+                df_colab = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
             
                 if not df_cli.empty and not df_serv.empty and not df_colab.empty:
                     # 1. Configurações do Atendimento
@@ -2440,17 +2613,28 @@ Feliz aniversário! 🥳✨"""
                                 resultado_tel = cur.fetchone()
                                 tel_cli = resultado_tel[0] if resultado_tel else None
                             
+                                # Monta lista de serviços com profissional e insumos visíveis
                                 lista_produtos_msg = ""
                                 for it in st.session_state['carrinho_servicos']:
-                                    lista_produtos_msg += f"▫️ {it['nome'].split(' |')[0]} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                                    partes = it['nome'].split(' | Insumos:')
+                                    nome_serv = partes[0]  # inclui "(Profissional: Nome)"
+                                    lista_produtos_msg += f"▫️ {nome_serv} (R$ {it['unit']:.2f})\n".replace('.', ',')
                             
+                                # Link de avaliação personalizado por atendimento
+                                link_avaliacao = f"https://wa.me/?text=Atendimento%20N%C2%BA%20{novo_cod}%20-%20Avalia%C3%A7%C3%A3o"
+                                url_base = st.secrets.get("APP_URL", "")
+                                if url_base:
+                                    nome_encoded = urllib.parse.quote(cliente_pdv)
+                                    link_avaliacao = f"{url_base}?avaliacao={novo_cod}&empresa={emp_id}&cliente={nome_encoded}"
+
                                 msg = f"Olá, {cliente_pdv}! ✨\n\n"
                                 msg += f"Obrigada por escolher nossos serviços hoje ({data_v}). Aqui está o seu recibo:\n\n"
                                 msg += f"🧾 *Atendimento Nº {novo_cod}*\n\n"
                                 msg += f"*Procedimentos Realizados:*\n{lista_produtos_msg}\n"
                                 msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
                                 msg += f"💳 *Forma de Pagto:* {f_pag}\n\n"
-                                msg += "Foi um prazer atender você. Até a próxima! 🌸"
+                                msg += "Foi um prazer atender você. Até a próxima! 🌸\n\n"
+                                msg += f"⭐ *Avalie seu atendimento:*\n{link_avaliacao}"
                             
                                 if tel_cli:
                                     tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
@@ -2460,16 +2644,18 @@ Feliz aniversário! 🥳✨"""
                                         st.session_state['zap_msg_serv'] = msg
                                         st.session_state['zap_codigo_serv'] = f"ATENDIMENTO Nº {novo_cod}"
                                         st.session_state['zap_total_serv'] = total_pdv
+                                        st.session_state['zap_tel_serv'] = tel_limpo
                             
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.session_state['carrinho_servicos'] = []
                                 st.success(f"Ficha técnica e Atendimento {novo_cod} salvos com sucesso!")
+                                limpar_cache()
                                 st.rerun()
                             
                             except Exception as e:
                                 st.error(f"Erro no banco: {e}")
-                                if 'conn' in locals(): conn.close()
+                                if 'conn' in locals(): devolver_conexao(conn)
 
                         if c3_limpar.button("🗑️ Limpar Painel", use_container_width=True): 
                             st.session_state['carrinho_servicos'] = []
@@ -2483,13 +2669,27 @@ Feliz aniversário! 🥳✨"""
                     with st.container(border=True):
                         st.success(f"🎉 {st.session_state['zap_codigo_serv']} finalizado! Total: R$ {st.session_state['zap_total_serv']:.2f}".replace('.', ','))
                         st.subheader("📲 Enviar Recibo via WhatsApp")
-                        st.text_area("Visualização da mensagem:", value=st.session_state['zap_msg_serv'], height=180, disabled=True)
-                        st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link_serv'], type="primary", use_container_width=True)
+                        
+                        # Mensagem editável antes do envio
+                        msg_editada = st.text_area(
+                            "✏️ Edite a mensagem antes de enviar:",
+                            value=st.session_state['zap_msg_serv'],
+                            height=250
+                        )
+                        
+                        # Atualiza o link do WhatsApp com a mensagem editada
+                        tel_serv = st.session_state.get('zap_tel_serv', '')
+                        if tel_serv:
+                            link_atualizado = f"https://wa.me/{tel_serv}?text={urllib.parse.quote(msg_editada)}"
+                        else:
+                            link_atualizado = st.session_state['zap_link_serv']
+                        
+                        st.link_button("🟢 Abrir WhatsApp e Enviar", link_atualizado, type="primary", use_container_width=True)
+                        
                         if st.button("❌ Fechar Painel", use_container_width=True, key="fechar_zap_s"):
                             del st.session_state['zap_link_serv']
-                            if 'zap_msg_serv' in st.session_state: del st.session_state['zap_msg_serv']
-                            if 'zap_codigo_serv' in st.session_state: del st.session_state['zap_codigo_serv']
-                            if 'zap_total_serv' in st.session_state: del st.session_state['zap_total_serv']
+                            for k in ['zap_msg_serv', 'zap_codigo_serv', 'zap_total_serv', 'zap_tel_serv']:
+                                if k in st.session_state: del st.session_state[k]
                             st.rerun()         
                             
         if tab_orcamentos:
@@ -2497,7 +2697,7 @@ Feliz aniversário! 🥳✨"""
                 st.subheader("📋 Orçamentos Salvos")
                 
                 # Carrega todos os orçamentos ativos da empresa
-                df_orcs = carregar_dados("SELECT id, cliente_nome, data_orcamento, valor_total, carrinho_json FROM orcamentos WHERE empresa_id=%s ORDER BY id DESC", (emp_id,))
+                df_orcs = carregar_dados_cached("SELECT id, cliente_nome, data_orcamento, valor_total, carrinho_json FROM orcamentos WHERE empresa_id=%s ORDER BY id DESC", (emp_id,))
                 
                 if not df_orcs.empty:
                     for index, row in df_orcs.iterrows():
@@ -2572,13 +2772,14 @@ Feliz aniversário! 🥳✨"""
                                                 WHERE id = %s AND empresa_id = %s
                                             """, (float(novo_total), carrinho_texto, int(orc_id), int(emp_id)))
                                             conn.commit()
-                                            conn.close()
+                                            devolver_conexao(conn)
                                             
                                             # Limpa as variáveis de controle de edição da memória
                                             del st.session_state[key_modo_edicao]
                                             del st.session_state[key_carrinho_edicao]
                                             
                                             st.success("✅ Orçamento atualizado com sucesso!")
+                                            limpar_cache()
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Erro ao salvar alterações: {e}")
@@ -2595,9 +2796,10 @@ Feliz aniversário! 🥳✨"""
                                         cur = conn.cursor()
                                         cur.execute("DELETE FROM orcamentos WHERE id=%s AND empresa_id=%s", (int(orc_id), int(emp_id)))
                                         conn.commit()
-                                        conn.close()
+                                        devolver_conexao(conn)
                                         del st.session_state[key_modo_edicao]
                                         if key_carrinho_edicao in st.session_state: del st.session_state[key_carrinho_edicao]
+                                        limpar_cache()
                                         st.rerun()
 
                             # -------------------------------------------------
@@ -2633,8 +2835,9 @@ Feliz aniversário! 🥳✨"""
                                         cur = conn.cursor()
                                         cur.execute("DELETE FROM orcamentos WHERE id=%s AND empresa_id=%s", (int(orc_id), int(emp_id)))
                                         conn.commit()
-                                        conn.close()
+                                        devolver_conexao(conn)
                                         st.success("Orçamento excluído do sistema!")
+                                        limpar_cache()
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"Erro ao remover orçamento: {e}")
@@ -2659,8 +2862,6 @@ Feliz aniversário! 🥳✨"""
 
                     if arquivo_pdf:
                         if st.button("🔍 Processar PDF do Pedido", type="primary"):
-                            import pdfplumber
-                            import re
                             
                             try:
                                 texto_extraido = ""
@@ -2708,10 +2909,10 @@ Feliz aniversário! 🥳✨"""
                         
                     # Busca todos os produtos e fornecedores cadastrados para os seletores
                     query_prods = "SELECT id, referencia, nome FROM produtos WHERE empresa_id = %s ORDER BY nome"
-                    df_produtos = carregar_dados(query_prods, (emp_id,))
+                    df_produtos = carregar_dados_cached(query_prods, (emp_id,))
                     
                     query_forn = "SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome"
-                    df_fornecedores = carregar_dados(query_forn, (emp_id,))
+                    df_fornecedores = carregar_dados_cached(query_forn, (emp_id,))
                     
                     col_form, col_resumo = st.columns([2, 1.5], gap="large")
                     
@@ -2732,10 +2933,11 @@ Feliz aniversário! 🥳✨"""
                                     if not prod_selecionado:
                                         st.warning("⚠️ Selecione um produto na lista.")
                                     else:
-                                        ref_oficial = df_produtos[df_produtos['nome'] == prod_selecionado].iloc[0]['referencia']
+                                        prod_row = df_produtos[df_produtos['nome'] == prod_selecionado].iloc[0]
                                         
                                         st.session_state['carrinho_compra'].append({
-                                            "Código": ref_oficial,
+                                            "id": int(prod_row['id']),           # ID direto — nunca é nulo
+                                            "Código": prod_row['referencia'],
                                             "Produto": prod_selecionado,
                                             "Quantidade": int(qtd_input),
                                             "Preço Un. (R$)": float(custo_input)
@@ -2822,22 +3024,31 @@ Feliz aniversário! 🥳✨"""
                                             v_nome = str(item['Produto']).strip()
                                             v_qtd = int(item['Quantidade'])
                                             v_valor = float(item['Preço Un. (R$)'])
+                                            prod_id_direto = item.get('id')  # presente para produtos já cadastrados
                                             
                                             cur.execute("""
                                                 INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
                                                 VALUES (%s, %s, %s, %s, %s)
                                             """, (compra_id, v_cod, v_nome, v_qtd, v_valor))
                                             
-                                            cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
-                                            prod_existe = cur.fetchone()
-                                            
-                                            if prod_existe:
-                                                cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
-                                            else:
+                                            if prod_id_direto:
+                                                # Produto já cadastrado: atualiza diretamente pelo ID (nunca falha)
                                                 cur.execute("""
-                                                    INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
-                                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                                """, (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
+                                                    UPDATE produtos 
+                                                    SET quantidade = quantidade + %s, preco_custo = %s 
+                                                    WHERE id = %s
+                                                """, (v_qtd, v_valor, prod_id_direto))
+                                            else:
+                                                # Produto novo: verifica por referência antes de inserir
+                                                cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
+                                                prod_existe = cur.fetchone()
+                                                if prod_existe:
+                                                    cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
+                                                else:
+                                                    cur.execute("""
+                                                        INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
+                                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                                    """, (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
                                                 
                                             itens_salvos += 1
                                             
@@ -2863,15 +3074,16 @@ Feliz aniversário! 🥳✨"""
                                                 """, (compra_id, id_forn_salvar, i, qtd_parcelas, valor_parcela, venc_texto, emp_id))
                                         
                                         conn.commit()
-                                        conn.close()
+                                        devolver_conexao(conn)
                                         
                                         st.success(f"🎉 Sucesso! A NF {numero_nota} foi registrada. {itens_salvos} itens entraram no estoque e o financeiro foi atualizado.")
                                         st.session_state['carrinho_compra'] = []
+                                        limpar_cache()
                                         st.rerun()
                                         
                                     except Exception as e:
                                         st.error(f"Erro ao salvar no banco: {e}")
-                                        if 'conn' in locals(): conn.rollback(); conn.close()
+                                        if 'conn' in locals(): conn.rollback(); devolver_conexao(conn)
                             
                             if st.button("🗑️ Limpar Carrinho", use_container_width=True):
                                 st.session_state['carrinho_compra'] = []
@@ -2896,7 +3108,7 @@ Feliz aniversário! 🥳✨"""
                     WHERE c.empresa_id = %s AND c.data_entrada BETWEEN %s AND %s
                     ORDER BY c.data_entrada DESC
                 """
-                df_historico = carregar_dados(query_compras, (emp_id, data_ini, data_fim))
+                df_historico = carregar_dados_cached(query_compras, (emp_id, data_ini, data_fim))
                 
                 if not df_historico.empty:
                     st.markdown("### 🔍 Selecione uma Entrada para Ver os Itens")
@@ -2921,7 +3133,7 @@ Feliz aniversário! 🥳✨"""
                             FROM itens_compra 
                             WHERE compra_id = %s
                         """
-                        df_itens_compra = carregar_dados(query_itens, (int(compra_selecionada_id),))
+                        df_itens_compra = carregar_dados_cached(query_itens, (int(compra_selecionada_id),))
                         
                         st.markdown("#### 🛒 Itens desta Entrada")
                         st.dataframe(df_itens_compra, use_container_width=True, hide_index=True)
@@ -2960,14 +3172,15 @@ Feliz aniversário! 🥳✨"""
                                 cur.execute("DELETE FROM compras WHERE id = %s", (int(compra_selecionada_id),))
                                 
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 
                                 st.success(f"✅ Sucesso! A Entrada {dados_compra['numero_pedido']} e suas respectivas parcelas financeiras foram completamente removidas do sistema.")
+                                limpar_cache()
                                 st.rerun()
                                 
                             except Exception as e:
                                 st.error(f"Erro ao processar estorno no banco de dados: {e}")
-                                if 'conn' in locals(): conn.rollback(); conn.close()
+                                if 'conn' in locals(): conn.rollback(); devolver_conexao(conn)
                 else:
                     st.warning("Nenhuma nota de entrada processada neste período.")   
                     
@@ -2985,7 +3198,7 @@ Feliz aniversário! 🥳✨"""
                     st.session_state['troca_entrada'] = []
 
                 # 1. SELEÇÃO DA CONSULTORA (Filtra apenas tipo = 'T')
-                df_consultoras = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s AND tipo='T' ORDER BY nome", (emp_id,))
+                df_consultoras = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s AND tipo='T' ORDER BY nome", (emp_id,))
                 
                 if not df_consultoras.empty:
                     lista_consultoras = df_consultoras['nome'].tolist()
@@ -2995,7 +3208,7 @@ Feliz aniversário! 🥳✨"""
                     st.markdown("---")
                     
                     # Carrega catálogo de produtos para os lançamentos
-                    df_produtos = carregar_dados("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                    df_produtos = carregar_dados_cached("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                     
                     if not df_produtos.empty:
                         df_produtos['display'] = df_produtos.apply(lambda x: f"{x['nome']} | R$ {x['valor']:.2f} (Estoque: {int(x['quantidade'])})", axis=1)
@@ -3115,16 +3328,17 @@ Feliz aniversário! 🥳✨"""
                                         cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id=%s", (item['qtd'], item['id']))
                                 
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 
                                 st.session_state['troca_saida'] = []
                                 st.session_state['troca_entrada'] = []
                                 st.success(f"Troca Nº {id_troca_gerada} enviada para o Standby! Estoque físico atualizado.")
+                                limpar_cache()
                                 st.rerun()
                                 
                             except Exception as e:
                                 st.error(f"Erro ao processar transação: {e}")
-                                if 'conn' in locals(): conn.close()
+                                if 'conn' in locals(): devolver_conexao(conn)
 
                     # ==========================================
                     # VISÃO APP: ACOMPANHAMENTO DE TROCAS EM STANDBY
@@ -3132,7 +3346,7 @@ Feliz aniversário! 🥳✨"""
                     st.markdown("---")
                     st.subheader("📱 Visão App: Trocas em Standby (Abertas)")
                     
-                    df_trocas_abertas = carregar_dados("""
+                    df_trocas_abertas = carregar_dados_cached("""
                         SELECT t.id, t.data_movimentacao, c.nome AS consultora, t.total_saida, t.total_entrada, t.cliente_id
                         FROM trocas t 
                         JOIN clientes c ON t.cliente_id = c.id 
@@ -3151,7 +3365,7 @@ Feliz aniversário! 🥳✨"""
                                 st.caption(f"📅 Aberta em: {data_t}")
                                 
                                 with st.expander("🔍 Ver Detalhes e Finalizar Acerto", expanded=False):
-                                    df_itens_t = carregar_dados("""
+                                    df_itens_t = carregar_dados_cached("""
                                         SELECT ti.quantidade, ti.valor_unitario, ti.sentido, p.nome 
                                         FROM trocas_itens ti 
                                         JOIN produtos p ON ti.produto_id = p.id 
@@ -3201,12 +3415,13 @@ Feliz aniversário! 🥳✨"""
                                                 
                                             cur.execute("UPDATE trocas SET status_financeiro = %s, diferenca = %s WHERE id = %s", (status_fin, dif, id_t))
                                             conn.commit()
-                                            conn.close()
+                                            devolver_conexao(conn)
                                             st.success(f"Troca Nº {id_t} finalizada e resolvida financeiramente!")
+                                            limpar_cache()
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Erro ao finalizar: {e}")
-                                            if 'conn' in locals(): conn.close()
+                                            if 'conn' in locals(): devolver_conexao(conn)
                     else:
                         st.info("Não há nenhuma movimentação de troca em standby no momento.")
                         
@@ -3227,8 +3442,6 @@ Feliz aniversário! 🥳✨"""
                 # SUB-ABA 1: VISUALIZAR AGENDA (TIMELINE COM FILTROS AVANÇADOS)
                 # ---------------------------------------------------------
                 with aba_ver_agenda:
-                    from datetime import date, timedelta
-                    import datetime
                     hoje = date.today()
                     
                     st.markdown("**🔍 Filtros de Busca:**")
@@ -3239,8 +3452,8 @@ Feliz aniversário! 🥳✨"""
                     dt_fim = c_dt2.date_input("📅 Até:", value=hoje + timedelta(days=7), format="DD/MM/YYYY")
                     
                     # Busca as listas de clientes e colaboradoras no banco para preencher os seletores
-                    df_cli_filtro = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
-                    df_col_filtro = carregar_dados("SELECT id, nome FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                    df_cli_filtro = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                    df_col_filtro = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                     
                     lista_clientes = ["Todos"] + df_cli_filtro['nome'].tolist() if not df_cli_filtro.empty else ["Todos"]
                     lista_colaboradoras = ["Todos"] + df_col_filtro['nome'].tolist() if not df_col_filtro.empty else ["Todos"]
@@ -3270,7 +3483,7 @@ Feliz aniversário! 🥳✨"""
                           AND a.data_agendamento <= %s
                         ORDER BY a.data_agendamento ASC, a.hora_inicio ASC
                     """
-                    df_compromissos = carregar_dados(query_agenda, (emp_id, dt_inicio, dt_fim))
+                    df_compromissos = carregar_dados_cached(query_agenda, (emp_id, dt_inicio, dt_fim))
                     
                     # MÁGICA DOS NOVOS FILTROS: Corta o DataFrame se você tiver selecionado alguém específico
                     if not df_compromissos.empty:
@@ -3326,8 +3539,9 @@ Feliz aniversário! 🥳✨"""
                                                     cur = conn.cursor()
                                                     cur.execute("UPDATE agendamentos SET status = 'Concluído' WHERE id = %s", (id_agendamento,))
                                                     conn.commit()
-                                                    conn.close()
+                                                    devolver_conexao(conn)
                                                     st.success("Atendimento concluído!")
+                                                    limpar_cache()
                                                     st.rerun()
                                                 except Exception as e:
                                                     st.error(f"Erro: {e}")
@@ -3338,8 +3552,9 @@ Feliz aniversário! 🥳✨"""
                                                     cur = conn.cursor()
                                                     cur.execute("UPDATE agendamentos SET status = 'Cancelado' WHERE id = %s", (id_agendamento,))
                                                     conn.commit()
-                                                    conn.close()
+                                                    devolver_conexao(conn)
                                                     st.warning("Agendamento cancelado.")
+                                                    limpar_cache()
                                                     st.rerun()
                                                 except Exception as e:
                                                     st.error(f"Erro: {e}")
@@ -3355,8 +3570,9 @@ Feliz aniversário! 🥳✨"""
                                                 cur = conn.cursor()
                                                 cur.execute("DELETE FROM agendamentos WHERE id = %s AND empresa_id = %s", (id_agendamento, emp_id))
                                                 conn.commit()
-                                                conn.close()
+                                                devolver_conexao(conn)
                                                 st.success("Agendamento excluído!")
+                                                limpar_cache()
                                                 st.rerun()
                                             except Exception as e:
                                                 st.error(f"Erro: {e}")
@@ -3370,9 +3586,9 @@ Feliz aniversário! 🥳✨"""
                     st.markdown("### 📝 Agendar Novo Serviço")
                     
                     # Carrega as listas necessárias. 
-                    df_cli_ag = carregar_dados("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
-                    df_col_ag = carregar_dados("SELECT id, nome FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
-                    df_ser_ag = carregar_dados("SELECT id, nome, valor, COALESCE(tempo_minutos, 30) AS tempo_estimado FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+                    df_cli_ag = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                    df_col_ag = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                    df_ser_ag = carregar_dados_cached("SELECT id, nome, valor, COALESCE(tempo_minutos, 30) AS tempo_estimado FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
                     
                     if not df_cli_ag.empty and not df_col_ag.empty and not df_ser_ag.empty:
                         
@@ -3441,21 +3657,22 @@ Feliz aniversário! 🥳✨"""
                                         
                                         if conflito:
                                             st.error(f"⚠️ **Conflito de Agenda!** A profissional selecionada já possui um compromisso marcado para o dia {data_escolhida.strftime('%d/%m/%Y')} exatamente às {hora_escolhida}.")
-                                            conn.close()
+                                            devolver_conexao(conn)
                                         else:
                                             cur.execute("""
                                                 INSERT INTO agendamentos (empresa_id, cliente_id, colaboradora_id, servico_id, data_agendamento, hora_inicio, observacao)
                                                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                                             """, (emp_id, id_cli_ag, id_col_ag, id_ser_ag, data_escolhida, hora_escolhida, obs_ag))
                                             conn.commit()
-                                            conn.close()
+                                            devolver_conexao(conn)
                                             
                                             st.success("🎯 Horário reservado com sucesso!")
+                                            limpar_cache()
                                             st.rerun()
                                             
                                     except Exception as e:
                                         st.error(f"Erro ao salvar agendamento: {e}")
-                                        if 'conn' in locals(): conn.close()
+                                        if 'conn' in locals(): devolver_conexao(conn)
                             else:
                                 st.info("👆 Selecione o procedimento que a cliente deseja para que o sistema monte a grade de horários compatível com o tempo de duração.")
                     else:
@@ -3486,7 +3703,7 @@ Feliz aniversário! 🥳✨"""
         with tab_rec:
             st.markdown("### 💰 Controle de Parcelas")
             # Adicionado c.telefone na consulta para puxarmos o número do WhatsApp
-            df_financeiro = carregar_dados("""
+            df_financeiro = carregar_dados_cached("""
                 SELECT cr.id AS "ID Parcela", cr.venda_codigo AS "Nº Venda", c.nome AS "Cliente", c.telefone AS "Telefone",
                        cr.num_parcela AS "Parcela", cr.total_parcelas AS "De",
                        cr.valor_parcela AS "Valor (R$)", cr.data_vencimento AS "Vencimento", cr.status AS "Status"
@@ -3576,18 +3793,19 @@ Feliz aniversário! 🥳✨"""
                                             """, (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
                                             
                                             conn.commit()
-                                            conn.close()
+                                            devolver_conexao(conn)
                                             
                                             # Limpa completamente a memória de controle após o sucesso
                                             st.session_state['venda_editando'] = None
                                             st.session_state['abrir_expander_recebimento'] = False
                                             
                                             st.success("Pagamento registrado com sucesso!")
+                                            limpar_cache()
                                             st.rerun()
                                             
                                         except Exception as e:
                                             st.error(f"Erro ao salvar no banco: {e}")
-                                            if 'conn' in locals(): conn.close()
+                                            if 'conn' in locals(): devolver_conexao(conn)
                             
                             # Botão extra para caso você queira fechar o painel sem baixar nada
                             st.markdown("---")
@@ -3603,7 +3821,6 @@ Feliz aniversário! 🥳✨"""
                 # --- NOVO EXPANDER DE LEMBRETE DO WHATSAPP ---
                 with st.expander("📲 Enviar Lembrete via WhatsApp", expanded=False):
                     if not df_p.empty:
-                        import urllib.parse
                         
                         op_lembrete = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
                         lembrete_sel = st.selectbox("Selecione a parcela para enviar lembrete:", options=op_lembrete, key="sel_lembrete")
@@ -3652,7 +3869,7 @@ Feliz aniversário! 🥳✨"""
                     if 'venda_editando' in st.session_state:
                         v_id = st.session_state['venda_editando']
         
-                        df_parc = carregar_dados("SELECT * FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
+                        df_parc = carregar_dados_cached("SELECT * FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
         
                         if not df_parc.empty:
                             total_original = float(df_parc['valor_parcela'].sum())
@@ -3660,7 +3877,6 @@ Feliz aniversário! 🥳✨"""
             
                             with st.form(f"f_reajuste_{v_id}"):
                                 novos_dados = {}
-                                import datetime
                 
                                 for index, row in df_parc.iterrows():
                                     st.write(f"**Parcela {row['num_parcela']} de {row['total_parcelas']}** - Status: {row['status']}")
@@ -3669,7 +3885,7 @@ Feliz aniversário! 🥳✨"""
                                     try:
                                         data_atual = datetime.datetime.strptime(row['data_vencimento'], "%d/%m/%Y").date()
                                     except:
-                                        data_atual = datetime.date.today() # Proteção anti-erro
+                                        data_atual = date.today() # Proteção anti-erro
                                         
                                     # Coloca o Valor e a Data lado a lado
                                     col_val, col_dat = st.columns(2)
@@ -3712,10 +3928,11 @@ Feliz aniversário! 🥳✨"""
                                                 (dados['valor'], dados['data'], parcela_id, emp_id)
                                             )
                                         conn.commit()
-                                        conn.close()
+                                        devolver_conexao(conn)
                         
                                         st.success("✅ Valores e datas reajustados com sucesso!")
                                         del st.session_state['venda_editando']
+                                        limpar_cache()
                                         st.rerun()
                         else:
                             st.warning("Nenhuma parcela encontrada para esta venda.")
@@ -3724,7 +3941,7 @@ Feliz aniversário! 🥳✨"""
             st.subheader("📋 Relatório de Parcelas e Boletos")
             
             # 1. Busca os dados no banco e cria a variável df_receber_geral
-            df_receber_geral = carregar_dados("""
+            df_receber_geral = carregar_dados_cached("""
                 SELECT cr.venda_codigo AS "Nº Venda",
                        c.nome AS "Cliente",
                        cr.num_parcela AS "Parcela",
@@ -3739,8 +3956,7 @@ Feliz aniversário! 🥳✨"""
             """, (emp_id,))
             
             if not df_receber_geral.empty:
-                import datetime
-                hoje = datetime.date.today()
+                hoje = date.today()
                 
                 # Cria uma coluna de data real (oculta) para a matemática de atrasos funcionar
                 df_receber_geral['Data_Venc_Obj'] = pd.to_datetime(df_receber_geral['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
@@ -3796,7 +4012,7 @@ Feliz aniversário! 🥳✨"""
             st.markdown("### 🔴 Controle de Compromissos e Despesas")
             
             # 1. Carrega todas as contas a pagar ordenando nativamente pelo texto YYYY-MM-DD
-            df_pagar_geral = carregar_dados("""
+            df_pagar_geral = carregar_dados_cached("""
                 SELECT cp.id AS "ID", f.nome AS "Fornecedor", cp.num_parcela AS "Parcela", 
                        cp.total_parcelas AS "De", cp.valor_parcela AS "Valor (R$)", 
                        cp.data_vencimento AS "Vencimento", cp.status AS "Status", cp.data_pagamento AS "Data Pagto"
@@ -3807,7 +4023,7 @@ Feliz aniversário! 🥳✨"""
             """, (emp_id,))
             
             # 2. Carrega a lista de fornecedores para os formulários de cadastro/edição
-            df_forn_select = carregar_dados("SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome", (emp_id,))
+            df_forn_select = carregar_dados_cached("SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome", (emp_id,))
             
             hoje = date.today()
             
@@ -3855,8 +4071,9 @@ Feliz aniversário! 🥳✨"""
                                 # Salva como YYYY-MM-DD
                                 conn.cursor().execute("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%Y-%m-%d"), id_desp_baixa, emp_id))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("Despesa baixada com sucesso no fluxo financeiro!")
+                                limpar_cache()
                                 st.rerun()
                     else:
                         st.success("🎉 Não há nenhuma conta a pagar pendente! Tudo quitado.")
@@ -3887,8 +4104,9 @@ Feliz aniversário! 🥳✨"""
                                 """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%Y-%m-%d"), emp_id))
                             
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success(f"Despesa com {tot_parc_manual} parcela(s) lançada com sucesso!")
+                            limpar_cache()
                             st.rerun()
                 else:
                     st.warning("⚠️ Cadastre pelo menos um Fornecedor na aba anterior antes de lançar despesas manuais.")
@@ -3933,8 +4151,9 @@ Feliz aniversário! 🥳✨"""
                                     WHERE id = %s AND empresa_id = %s
                                 """, (float(novo_v_desp), novo_venc_desp.strftime("%Y-%m-%d"), novo_pagto_desp_val, id_desp_crud, emp_id))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("Lançamento atualizado com sucesso!")
+                                limpar_cache()
                                 st.rerun()
                                 
                     # Sub-Formulário de Exclusão (Delete)
@@ -3947,8 +4166,9 @@ Feliz aniversário! 🥳✨"""
                                 conn = conectar_banco()
                                 conn.cursor().execute("DELETE FROM contas_pagar WHERE id = %s AND empresa_id = %s", (id_desp_crud, emp_id))
                                 conn.commit()
-                                conn.close()
+                                devolver_conexao(conn)
                                 st.success("Despesa removida com sucesso!")
+                                limpar_cache()
                                 st.rerun()
                 else:
                     st.info("Nenhuma despesa disponível para alteração.")
@@ -4003,7 +4223,7 @@ Feliz aniversário! 🥳✨"""
                 WHERE cp.empresa_id = %s AND cp.status = 'Pago'
             """
             
-            df_fluxo = carregar_dados(query_fluxo, (emp_id, emp_id))
+            df_fluxo = carregar_dados_cached(query_fluxo, (emp_id, emp_id))
             
             if not df_fluxo.empty:
                 df_fluxo = df_fluxo.dropna(subset=['data_movimento'])
@@ -4064,11 +4284,270 @@ Feliz aniversário! 🥳✨"""
                             'valor': 'Valor'
                         }, inplace=True)
                         
-                        st.dataframe(df_extrato, use_container_width=True, hide_index=True)                        
+                        st.dataframe(df_extrato, use_container_width=True, hide_index=True)
+
                     else:
                         st.warning("Não há movimentações financeiras concluídas (pagas/recebidas) no período selecionado.")
+
             else:
                 st.info("Ainda não há dados de contas pagas ou recebidas para gerar o fluxo de caixa.")
+
+            # ==========================================
+            # FECHAMENTO DE CAIXA DO DIA
+            # ==========================================
+            st.markdown("---")
+            st.subheader("🔒 Fechamento de Caixa")
+
+            data_fechamento = st.date_input(
+                "Selecione o dia para fechar o caixa:",
+                value=date.today(),
+                format="DD/MM/YYYY",
+                key="data_fechamento_caixa"
+            )
+
+            if st.button("📊 Gerar Fechamento", type="primary"):
+                data_str = data_fechamento.strftime('%d/%m/%Y')
+
+                df_entradas_dia = carregar_dados("""
+                    SELECT 
+                        v.codigo_venda,
+                        c.nome AS cliente,
+                        p.nome AS produto,
+                        p.tipo,
+                        v.valor_total,
+                        v.forma_pagamento
+                    FROM vendas v
+                    JOIN clientes c ON c.id = v.cliente_id
+                    JOIN produtos p ON p.id = v.produto_id
+                    WHERE v.empresa_id = %s AND v.data_venda = %s
+                    ORDER BY v.codigo_venda
+                """, (emp_id, data_str))
+
+                df_recebimentos_dia = carregar_dados("""
+                    SELECT 
+                        cr.venda_codigo,
+                        c.nome AS cliente,
+                        cr.valor_parcela,
+                        cr.num_parcela,
+                        cr.total_parcelas,
+                        cr.data_pagamento
+                    FROM contas_receber cr
+                    JOIN clientes c ON c.id = cr.cliente_id
+                    WHERE cr.empresa_id = %s 
+                      AND cr.status = 'Pago'
+                      AND cr.data_pagamento = %s
+                    ORDER BY cr.venda_codigo
+                """, (emp_id, data_str))
+
+                df_saidas_dia = carregar_dados("""
+                    SELECT 
+                        f.nome AS fornecedor,
+                        cp.valor_parcela,
+                        cp.num_parcela,
+                        cp.total_parcelas,
+                        cp.data_pagamento
+                    FROM contas_pagar cp
+                    JOIN fornecedores f ON f.id = cp.fornecedor_id
+                    WHERE cp.empresa_id = %s 
+                      AND cp.status = 'Pago'
+                      AND cp.data_pagamento = %s
+                    ORDER BY f.nome
+                """, (emp_id, data_str))
+
+                # Salva no session_state para persistir após clique no PDF
+                st.session_state['fechamento_data_str']      = data_str
+                st.session_state['fechamento_entradas']      = df_entradas_dia
+                st.session_state['fechamento_recebimentos']  = df_recebimentos_dia
+                st.session_state['fechamento_saidas']        = df_saidas_dia
+
+            # Exibe o fechamento se já foi gerado
+            if 'fechamento_data_str' in st.session_state:
+                data_str        = st.session_state['fechamento_data_str']
+                df_entradas_dia = st.session_state['fechamento_entradas']
+                df_recebimentos_dia = st.session_state['fechamento_recebimentos']
+                df_saidas_dia   = st.session_state['fechamento_saidas']
+
+                total_vendas   = float(df_entradas_dia['valor_total'].sum()) if not df_entradas_dia.empty else 0.0
+                total_recebido = float(df_recebimentos_dia['valor_parcela'].sum()) if not df_recebimentos_dia.empty else 0.0
+                total_saidas   = float(df_saidas_dia['valor_parcela'].sum()) if not df_saidas_dia.empty else 0.0
+                saldo_liquido  = total_recebido - total_saidas
+
+                formas_pagamento = {}
+                if not df_entradas_dia.empty:
+                    for forma, grupo in df_entradas_dia.groupby('forma_pagamento'):
+                        formas_pagamento[forma] = float(grupo['valor_total'].sum())
+
+                st.markdown(f"### 📅 Fechamento do dia {data_str}")
+                st.markdown("---")
+
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("🛒 Vendas do Dia",    f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col2.metric("💰 Total Recebido",   f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col3.metric("📤 Total de Saídas",  f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col4.metric("💵 Saldo Líquido",    f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                            delta=f"{'positivo' if saldo_liquido >= 0 else 'negativo'}")
+
+                if formas_pagamento:
+                    st.markdown("#### 💳 Entradas por Forma de Pagamento")
+                    cols_fp = st.columns(len(formas_pagamento))
+                    for idx, (forma, valor) in enumerate(formas_pagamento.items()):
+                        cols_fp[idx].metric(forma, f"R$ {valor:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+
+                col_ent, col_sai = st.columns(2)
+
+                with col_ent:
+                    st.markdown("#### 📋 Vendas e Serviços")
+                    if not df_entradas_dia.empty:
+                        tipos = {'P': '🛍️', 'S': '✨'}
+                        for _, row in df_entradas_dia.iterrows():
+                            icone_tipo = tipos.get(row['tipo'], '▫️')
+                            st.markdown(f"{icone_tipo} **{row['cliente']}** — {row['produto']}")
+                            st.caption(f"R$ {float(row['valor_total']):,.2f} | {row['forma_pagamento']}".replace(",","X").replace(".",",").replace("X","."))
+                    else:
+                        st.info("Nenhuma venda neste dia.")
+
+                with col_sai:
+                    st.markdown("#### 📤 Saídas do Dia")
+                    if not df_saidas_dia.empty:
+                        for _, row in df_saidas_dia.iterrows():
+                            st.markdown(f"🔴 **{row['fornecedor']}** — Parc {row['num_parcela']}/{row['total_parcelas']}")
+                            st.caption(f"R$ {float(row['valor_parcela']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                    else:
+                        st.info("Nenhuma saída neste dia.")
+
+                st.markdown("---")
+
+                # Geração do PDF em memória (sempre disponível após gerar fechamento)
+                from reportlab.lib.pagesizes import A4
+                from reportlab.lib import colors
+                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.units import cm
+                import io
+
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4,
+                                        rightMargin=2*cm, leftMargin=2*cm,
+                                        topMargin=2*cm, bottomMargin=2*cm)
+                styles = getSampleStyleSheet()
+                elementos = []
+
+                titulo_style = ParagraphStyle('titulo', parent=styles['Title'], fontSize=16, spaceAfter=6)
+                sub_style    = ParagraphStyle('sub', parent=styles['Normal'], fontSize=10, textColor=colors.grey, spaceAfter=20)
+                bold_style   = ParagraphStyle('bold', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', spaceAfter=6)
+
+                elementos.append(Paragraph("Fechamento de Caixa", titulo_style))
+                elementos.append(Paragraph(f"Data: {data_str}", sub_style))
+                elementos.append(Spacer(1, 0.3*cm))
+
+                elementos.append(Paragraph("Resumo Geral", bold_style))
+                dados_resumo = [
+                    ["Descrição", "Valor"],
+                    ["Total de Vendas do Dia",    f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                    ["Total Recebido (Parcelas)",  f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                    ["Total de Saídas",            f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                    ["Saldo Líquido",              f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                ]
+                t_resumo = Table(dados_resumo, colWidths=[11*cm, 5*cm])
+                t_resumo.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,-1), 10),
+                    ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                    ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                    ('TEXTCOLOR', (0,-1), (-1,-1), colors.HexColor('#00703c') if saldo_liquido >= 0 else colors.red),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                    ('TOPPADDING', (0,0), (-1,-1), 6),
+                ]))
+                elementos.append(t_resumo)
+                elementos.append(Spacer(1, 0.5*cm))
+
+                if formas_pagamento:
+                    elementos.append(Paragraph("Entradas por Forma de Pagamento", bold_style))
+                    dados_fp = [["Forma de Pagamento", "Total"]]
+                    for forma, valor in formas_pagamento.items():
+                        dados_fp.append([forma, f"R$ {valor:,.2f}".replace(",","X").replace(".",",").replace("X",".")])
+                    t_fp = Table(dados_fp, colWidths=[11*cm, 5*cm])
+                    t_fp.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 10),
+                        ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                        ('TOPPADDING', (0,0), (-1,-1), 6),
+                    ]))
+                    elementos.append(t_fp)
+                    elementos.append(Spacer(1, 0.5*cm))
+
+                if not df_entradas_dia.empty:
+                    elementos.append(Paragraph("Vendas e Serviços do Dia", bold_style))
+                    dados_v = [["Cliente", "Produto/Serviço", "Forma Pgto", "Valor"]]
+                    for _, row in df_entradas_dia.iterrows():
+                        dados_v.append([
+                            str(row['cliente']),
+                            str(row['produto']),
+                            str(row['forma_pagamento']),
+                            f"R$ {float(row['valor_total']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+                        ])
+                    t_v = Table(dados_v, colWidths=[5*cm, 5*cm, 3*cm, 3*cm])
+                    t_v.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 9),
+                        ('ALIGN', (3,0), (3,-1), 'RIGHT'),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                        ('TOPPADDING', (0,0), (-1,-1), 5),
+                    ]))
+                    elementos.append(t_v)
+                    elementos.append(Spacer(1, 0.5*cm))
+
+                if not df_saidas_dia.empty:
+                    elementos.append(Paragraph("Saídas do Dia", bold_style))
+                    dados_s = [["Fornecedor", "Parcela", "Valor"]]
+                    for _, row in df_saidas_dia.iterrows():
+                        dados_s.append([
+                            str(row['fornecedor']),
+                            f"{row['num_parcela']}/{row['total_parcelas']}",
+                            f"R$ {float(row['valor_parcela']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+                        ])
+                    t_s = Table(dados_s, colWidths=[9*cm, 3*cm, 4*cm])
+                    t_s.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#8a2a2a')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 9),
+                        ('ALIGN', (2,0), (2,-1), 'RIGHT'),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fff0f0')]),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                        ('TOPPADDING', (0,0), (-1,-1), 5),
+                    ]))
+                    elementos.append(t_s)
+
+                doc.build(elementos)
+                buffer.seek(0)
+
+                st.download_button(
+                    label="⬇️ Baixar PDF do Fechamento",
+                    data=buffer,
+                    file_name=f"fechamento_caixa_{data_fechamento.strftime('%d-%m-%Y')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+
+                if st.button("🔄 Novo Fechamento", use_container_width=True):
+                    for k in ['fechamento_data_str', 'fechamento_entradas', 'fechamento_recebimentos', 'fechamento_saidas']:
+                        if k in st.session_state: del st.session_state[k]
+                    st.rerun()
                 
     # ==========================================================
     # MÓDULO 5: CRM (COM FILTRO DINÂMICO DE ENVIO)
@@ -4115,7 +4594,7 @@ Feliz aniversário! 🥳✨"""
             ORDER BY dias_passados ASC
         """
         
-        df_crm = carregar_dados(query_crm, (emp_id,))
+        df_crm = carregar_dados_cached(query_crm, (emp_id,))
         
         # 2. Inicializando as listas vazias
         df_2_dias = pd.DataFrame()
@@ -4148,7 +4627,18 @@ Feliz aniversário! 🥳✨"""
                 tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
                 if len(tel_limpo) >= 10:
                     if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
-                    link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(mensagem_padrao)}"
+                    
+                    # Mensagem editável antes do envio
+                    key_msg = f"msg_{tipo_contato}_{row['codigo_venda']}"
+                    msg_editada = st.text_area(
+                        "✏️ Editar mensagem antes de enviar:",
+                        value=mensagem_padrao,
+                        height=100,
+                        key=key_msg,
+                        label_visibility="collapsed"
+                    )
+                    
+                    link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg_editada)}"
                     
                     # Layout Lado a Lado (Link e Ação de Conclusão)
                     col_wpp, col_done = st.columns(2)
@@ -4164,9 +4654,10 @@ Feliz aniversário! 🥳✨"""
                                 VALUES (%s, %s, %s)
                             """, (int(row['codigo_venda']), tipo_contato, emp_id))
                             conn.commit()
-                            conn.close()
+                            devolver_conexao(conn)
                             st.success("Registrado!")
                             time.sleep(0.4)
+                            limpar_cache()
                             st.rerun()
                 else:
                     st.warning("⚠️ Telefone mal formatado.")
