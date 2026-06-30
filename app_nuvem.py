@@ -883,7 +883,7 @@ Mais do que celebrar uma data, queremos celebrar você e agradecer por fazer par
 Aproveite cada momento do seu dia, receba todo o carinho que merece e celebre muito!
 
 Feliz aniversário! 🥳✨"""
-                            return f"https://api.whatsapp.com/send?phone={num}&text={quote(msg)}"
+                            return f"https://api.whatsapp.com/send?phone={num}&text={urllib.parse.quote(msg)}"
                         return None
                     
                     df_nivers['Ação'] = df_nivers.apply(lambda row: gerar_link_wpp(row['telefone'], row['nome']), axis=1)
