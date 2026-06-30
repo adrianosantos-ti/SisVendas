@@ -1,15 +1,15 @@
 import os
-import time
+import sys
 import re
 import json
 import base64
 import calendar
-import datetime
 import urllib.parse
+import time as time_module  # renomeado para não conflitar com datetime.time
 
 # Força o servidor inteiro a rodar no fuso correto
 os.environ['TZ'] = 'America/Fortaleza'
-time.tzset()
+time_module.tzset()
 
 import streamlit as st
 import psycopg2
@@ -18,7 +18,7 @@ import plotly.express as px
 import pdfplumber
 import pytz
 import xml.etree.ElementTree as ET
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, time, timedelta
 from PIL import Image
 
 hoje = date.today()
@@ -3613,16 +3613,16 @@ Feliz aniversário! 🥳✨"""
                                 if duracao <= 0: duracao = 30 # Proteção extra
                                 
                                 # Define o horário de funcionamento (Ex: 08:00 às 20:00)
-                                hora_abertura = datetime.time(8, 0)
-                                hora_fechamento = datetime.time(20, 0)
+                                hora_abertura = time(8, 0)
+                                hora_fechamento = time(20, 0)
                                 
-                                dt_atual = datetime.datetime.combine(data_escolhida, hora_abertura)
-                                dt_limite = datetime.datetime.combine(data_escolhida, hora_fechamento)
+                                dt_atual = datetime.combine(data_escolhida, hora_abertura)
+                                dt_limite = datetime.combine(data_escolhida, hora_fechamento)
                                 
                                 lista_horarios = []
                                 while dt_atual <= dt_limite:
                                     lista_horarios.append(dt_atual.strftime("%H:%M"))
-                                    dt_atual += datetime.timedelta(minutes=duracao)
+                                    dt_atual += timedelta(minutes=duracao)
                                 
                                 hora_escolhida = c_hora.selectbox("⏰ Horários Sequenciais Livres:", options=lista_horarios, index=None, placeholder="Selecione o horário de início...")
                                 
@@ -3883,7 +3883,7 @@ Feliz aniversário! 🥳✨"""
                                     
                                     # Converte a data string do banco (DD/MM/YYYY) para objeto date do Python
                                     try:
-                                        data_atual = datetime.datetime.strptime(row['data_vencimento'], "%d/%m/%Y").date()
+                                        data_atual = datetime.strptime(row['data_vencimento'], "%d/%m/%Y").date()
                                     except:
                                         data_atual = date.today() # Proteção anti-erro
                                         
@@ -4656,7 +4656,7 @@ Feliz aniversário! 🥳✨"""
                             conn.commit()
                             devolver_conexao(conn)
                             st.success("Registrado!")
-                            time.sleep(0.4)
+                            time_module.sleep(0.4)
                             limpar_cache()
                             st.rerun()
                 else:
