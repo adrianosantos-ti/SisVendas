@@ -2407,13 +2407,14 @@ Feliz aniversário! 🥳✨"""
                             st.rerun()
 
                 # --- EXPANDER: EDITAR FORMA DE PAGAMENTO ---
+                # Fica FORA do bloco condicional para aparecer sempre
                 st.markdown("---")
                 with st.expander("✏️ Corrigir Forma de Pagamento de uma Venda"):
                     st.caption("Busque a venda pelo número ou cliente, altere a forma de pagamento e as parcelas serão recriadas.")
 
                     col_busca1, col_busca2 = st.columns(2)
-                    busca_cod  = col_busca1.number_input("Nº da Venda:", min_value=0, step=1, value=0, key="edit_fp_cod")
-                    busca_cli  = col_busca2.text_input("Ou busque pelo nome do cliente:", key="edit_fp_cli")
+                    busca_cod = col_busca1.number_input("Nº da Venda:", min_value=0, step=1, value=0, key="edit_fp_cod")
+                    busca_cli = col_busca2.text_input("Ou busque pelo nome do cliente:", key="edit_fp_cli")
 
                     if st.button("🔍 Buscar Venda", key="btn_buscar_venda_fp"):
                         if busca_cod > 0:
@@ -2457,7 +2458,6 @@ Feliz aniversário! 🥳✨"""
                     if 'edit_fp_resultado' in st.session_state:
                         df_res = st.session_state['edit_fp_resultado']
 
-                        # Monta opções de seleção
                         opcoes = df_res.apply(
                             lambda r: f"Venda Nº {int(r['codigo_venda'])} — {r['cliente']} — R$ {float(r['total']):,.2f} — {r['forma_pagamento']}".replace(",","X").replace(".",",").replace("X","."),
                             axis=1
@@ -2484,7 +2484,6 @@ Feliz aniversário! 🥳✨"""
                         )
                         novas_parcelas = col_parc.number_input("Número de Parcelas:", min_value=1, max_value=24, value=1, step=1, key="edit_fp_parc")
 
-                        # Datas de vencimento
                         datas_novas = []
                         if novas_parcelas > 1:
                             st.markdown("📅 **Datas de Vencimento das Novas Parcelas:**")
@@ -2502,20 +2501,17 @@ Feliz aniversário! 🥳✨"""
                                 conn = conectar_banco()
                                 cur = conn.cursor()
 
-                                # 1. Atualiza forma de pagamento e parcelas em TODAS as linhas da venda
                                 cur.execute("""
                                     UPDATE vendas 
                                     SET forma_pagamento = %s, qtd_parcelas = %s
                                     WHERE codigo_venda = %s AND empresa_id = %s
                                 """, (nova_forma, int(novas_parcelas), cod_venda, emp_id))
 
-                                # 2. Remove TODAS as parcelas antigas (pagas e pendentes)
                                 cur.execute("""
                                     DELETE FROM contas_receber 
                                     WHERE venda_codigo = %s AND empresa_id = %s
                                 """, (cod_venda, emp_id))
 
-                                # 3. Recria as parcelas do zero
                                 val_parcela = float(total_venda / novas_parcelas)
                                 for i, dt_venc in enumerate(datas_novas, start=1):
                                     status_p = 'Pago' if novas_parcelas == 1 and nova_forma != 'Crediário' else 'Pendente'
@@ -2530,7 +2526,6 @@ Feliz aniversário! 🥳✨"""
                                 cur.close()
                                 conn.commit()
                                 devolver_conexao(conn)
-
                                 st.success(f"✅ Venda Nº {cod_venda} atualizada! Forma: {nova_forma} | {novas_parcelas}x de R$ {val_parcela:,.2f}".replace(",","X").replace(".",",").replace("X","."))
                                 limpar_cache()
                                 st.session_state.pop('edit_fp_resultado', None)
