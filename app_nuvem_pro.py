@@ -3826,7 +3826,7 @@ Feliz aniversário! 🥳✨"""
         st.markdown("### 💰 Gestão Financeira")
         
         # --- MUDANÇA: Adicionamos a aba_fluxo_caixa aqui na lista de abas ---
-        tab_rec, tab_pag, aba_fluxo_caixa = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)", "💸 Fluxo de Caixa"])
+        tab_rec, tab_pag, aba_fluxo_caixa, aba_comissoes = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)", "💸 Fluxo de Caixa", "🏆 Comissões"])
         
         # --- CONTAS A RECEBER 100% RESTAURADO ---
         with tab_rec:
@@ -4677,6 +4677,200 @@ Feliz aniversário! 🥳✨"""
                     for k in ['fechamento_data_str', 'fechamento_entradas', 'fechamento_recebimentos', 'fechamento_saidas']:
                         if k in st.session_state: del st.session_state[k]
                     st.rerun()
+
+        # ==========================================
+        # ABA: COMISSÕES
+        # ==========================================
+        with aba_comissoes:
+            st.subheader("🏆 Relatório de Comissões")
+
+            col_ini, col_fim = st.columns(2)
+            hoje = date.today()
+            d_ini_com = col_ini.date_input("Data Inicial:", value=hoje.replace(day=1), format="DD/MM/YYYY", key="com_ini")
+            d_fim_com = col_fim.date_input("Data Final:", value=hoje, format="DD/MM/YYYY", key="com_fim")
+
+            # Seletor de colaborador
+            df_colab_com = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s ORDER BY nome", (emp_id,))
+            opcoes_colab = ["👥 Todos os Colaboradores"] + df_colab_com['nome'].tolist() if not df_colab_com.empty else ["👥 Todos os Colaboradores"]
+            filtro_colab = st.selectbox("Colaborador:", opcoes_colab, key="com_colab")
+
+            if st.button("📊 Gerar Relatório de Comissões", type="primary"):
+                # Monta filtro de colaborador
+                if filtro_colab != "👥 Todos os Colaboradores":
+                    colab_id_filtro = int(df_colab_com[df_colab_com['nome'] == filtro_colab].iloc[0]['id'])
+                    filtro_sql = "AND v.colaborador_id = %s"
+                    params_com = (emp_id, d_ini_com.strftime('%Y-%m-%d'), d_fim_com.strftime('%Y-%m-%d'), colab_id_filtro)
+                else:
+                    filtro_sql = ""
+                    params_com = (emp_id, d_ini_com.strftime('%Y-%m-%d'), d_fim_com.strftime('%Y-%m-%d'))
+
+                df_com = carregar_dados(f"""
+                    SELECT
+                        col.nome AS colaborador,
+                        p.nome AS servico,
+                        p.comissao_percentual,
+                        v.valor_total,
+                        ROUND((v.valor_total * p.comissao_percentual / 100)::numeric, 2) AS valor_comissao,
+                        v.data_venda,
+                        c.nome AS cliente
+                    FROM vendas v
+                    JOIN produtos p ON p.id = v.produto_id
+                    JOIN colaboradores col ON col.id = v.colaborador_id
+                    JOIN clientes c ON c.id = v.cliente_id
+                    WHERE v.empresa_id = %s
+                      AND p.tipo = 'S'
+                      AND v.colaborador_id IS NOT NULL
+                      AND TO_DATE(v.data_venda, 'DD/MM/YYYY') BETWEEN %s AND %s
+                      {filtro_sql}
+                    ORDER BY col.nome, v.data_venda
+                """, params_com)
+
+                if df_com.empty:
+                    st.info("Nenhum serviço com comissão encontrado no período.")
+                else:
+                    st.session_state['com_df']        = df_com
+                    st.session_state['com_ini_val']   = d_ini_com
+                    st.session_state['com_fim_val']   = d_fim_com
+
+            if 'com_df' in st.session_state:
+                df_com    = st.session_state['com_df']
+                d_ini_com = st.session_state['com_ini_val']
+                d_fim_com = st.session_state['com_fim_val']
+
+                # --- RESUMO POR COLABORADOR ---
+                st.markdown(f"#### 📅 Período: {d_ini_com.strftime('%d/%m/%Y')} a {d_fim_com.strftime('%d/%m/%Y')}")
+                st.markdown("---")
+
+                resumo = df_com.groupby('colaborador').agg(
+                    atendimentos=('servico', 'count'),
+                    total_servicos=('valor_total', 'sum'),
+                    total_comissao=('valor_comissao', 'sum')
+                ).reset_index().sort_values('total_comissao', ascending=False)
+
+                total_geral_com = float(resumo['total_comissao'].sum())
+                total_geral_serv = float(resumo['total_servicos'].sum())
+
+                # Métricas gerais
+                col1, col2, col3 = st.columns(3)
+                col1.metric("👥 Colaboradores", len(resumo))
+                col2.metric("💇 Total em Serviços", f"R$ {total_geral_serv:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col3.metric("💰 Total em Comissões", f"R$ {total_geral_com:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+
+                st.markdown("---")
+                st.markdown("#### 👤 Resumo por Colaborador")
+
+                for _, row in resumo.iterrows():
+                    with st.container(border=True):
+                        col_a, col_b, col_c, col_d = st.columns([3, 2, 2, 2])
+                        col_a.markdown(f"**{row['colaborador']}**")
+                        col_b.metric("Atendimentos", int(row['atendimentos']))
+                        col_c.metric("Total Produzido", f"R$ {float(row['total_servicos']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                        col_d.metric("💰 Comissão", f"R$ {float(row['total_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
+
+                        # Detalhamento dos serviços do colaborador
+                        df_det = df_com[df_com['colaborador'] == row['colaborador']]
+                        with st.expander(f"Ver detalhes dos {int(row['atendimentos'])} atendimentos"):
+                            for _, srv in df_det.iterrows():
+                                st.markdown(f"▫️ **{srv['data_venda']}** — {srv['cliente']} — {srv['servico']}")
+                                st.caption(f"Valor: R$ {float(srv['valor_total']):,.2f} | {float(srv['comissao_percentual'])}% = R$ {float(srv['valor_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
+
+                # --- EXPORTAR PDF ---
+                st.markdown("---")
+                from reportlab.lib.pagesizes import A4
+                from reportlab.lib import colors
+                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.units import cm
+                import io
+
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4,
+                                        rightMargin=2*cm, leftMargin=2*cm,
+                                        topMargin=2*cm, bottomMargin=2*cm)
+                styles = getSampleStyleSheet()
+                elementos = []
+
+                titulo_style = ParagraphStyle('titulo', parent=styles['Title'], fontSize=16, spaceAfter=6)
+                sub_style    = ParagraphStyle('sub', parent=styles['Normal'], fontSize=10, textColor=colors.grey, spaceAfter=16)
+                bold_style   = ParagraphStyle('bold', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', spaceAfter=6)
+
+                elementos.append(Paragraph("Relatório de Comissões", titulo_style))
+                elementos.append(Paragraph(f"Período: {d_ini_com.strftime('%d/%m/%Y')} a {d_fim_com.strftime('%d/%m/%Y')}", sub_style))
+                elementos.append(Spacer(1, 0.3*cm))
+
+                # Resumo geral
+                elementos.append(Paragraph("Resumo por Colaborador", bold_style))
+                dados_res = [["Colaborador", "Atendimentos", "Total Serviços", "Comissão"]]
+                for _, row in resumo.iterrows():
+                    dados_res.append([
+                        str(row['colaborador']),
+                        str(int(row['atendimentos'])),
+                        f"R$ {float(row['total_servicos']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                        f"R$ {float(row['total_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                    ])
+                # Linha de total
+                dados_res.append([
+                    "TOTAL GERAL", str(int(resumo['atendimentos'].sum())),
+                    f"R$ {total_geral_serv:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                    f"R$ {total_geral_com:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                ])
+
+                t_res = Table(dados_res, colWidths=[6*cm, 3*cm, 4*cm, 3*cm])
+                t_res.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,-1), 10),
+                    ('ALIGN', (1,0), (-1,-1), 'CENTER'),
+                    ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#f0f0f0')]),
+                    ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#2d2d6b')),
+                    ('TEXTCOLOR', (0,-1), (-1,-1), colors.white),
+                    ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                    ('TOPPADDING', (0,0), (-1,-1), 6),
+                ]))
+                elementos.append(t_res)
+                elementos.append(Spacer(1, 0.6*cm))
+
+                # Detalhamento por colaborador
+                for colab in resumo['colaborador'].tolist():
+                    elementos.append(Paragraph(f"Detalhamento — {colab}", bold_style))
+                    df_det = df_com[df_com['colaborador'] == colab]
+                    dados_det = [["Data", "Cliente", "Serviço", "%", "Valor", "Comissão"]]
+                    for _, srv in df_det.iterrows():
+                        dados_det.append([
+                            str(srv['data_venda']),
+                            str(srv['cliente']),
+                            str(srv['servico']),
+                            f"{float(srv['comissao_percentual'])}%",
+                            f"R$ {float(srv['valor_total']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                            f"R$ {float(srv['valor_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                        ])
+                    t_det = Table(dados_det, colWidths=[2.5*cm, 4*cm, 3.5*cm, 1.5*cm, 2.5*cm, 2.5*cm])
+                    t_det.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6a6a9a')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 8),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f5f5ff')]),
+                        ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                        ('TOPPADDING', (0,0), (-1,-1), 4),
+                    ]))
+                    elementos.append(t_det)
+                    elementos.append(Spacer(1, 0.4*cm))
+
+                doc.build(elementos)
+                buffer.seek(0)
+
+                st.download_button(
+                    label="⬇️ Baixar PDF do Relatório de Comissões",
+                    data=buffer,
+                    file_name=f"comissoes_{d_ini_com.strftime('%d-%m-%Y')}_a_{d_fim_com.strftime('%d-%m-%Y')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
                 
     # ==========================================================
     # MÓDULO 5: CRM (COM FILTRO DINÂMICO DE ENVIO)
