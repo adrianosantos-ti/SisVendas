@@ -2404,7 +2404,141 @@ Feliz aniversário! 🥳✨"""
                             if 'zap_msg' in st.session_state: del st.session_state['zap_msg']
                             if 'zap_codigo' in st.session_state: del st.session_state['zap_codigo']
                             if 'zap_total' in st.session_state: del st.session_state['zap_total']
-                            st.rerun()        
+                            st.rerun()
+
+                # --- EXPANDER: EDITAR FORMA DE PAGAMENTO ---
+                st.markdown("---")
+                with st.expander("✏️ Corrigir Forma de Pagamento de uma Venda"):
+                    st.caption("Busque a venda pelo número ou cliente, altere a forma de pagamento e as parcelas serão recriadas.")
+
+                    col_busca1, col_busca2 = st.columns(2)
+                    busca_cod  = col_busca1.number_input("Nº da Venda:", min_value=0, step=1, value=0, key="edit_fp_cod")
+                    busca_cli  = col_busca2.text_input("Ou busque pelo nome do cliente:", key="edit_fp_cli")
+
+                    if st.button("🔍 Buscar Venda", key="btn_buscar_venda_fp"):
+                        if busca_cod > 0:
+                            df_busca = carregar_dados("""
+                                SELECT v.codigo_venda, c.nome AS cliente, 
+                                       SUM(v.valor_total) AS total,
+                                       MAX(v.forma_pagamento) AS forma_pagamento,
+                                       MAX(v.qtd_parcelas) AS qtd_parcelas,
+                                       MAX(v.data_venda) AS data_venda,
+                                       MAX(v.cliente_id) AS cliente_id
+                                FROM vendas v
+                                JOIN clientes c ON c.id = v.cliente_id
+                                WHERE v.empresa_id = %s AND v.codigo_venda = %s
+                                GROUP BY v.codigo_venda, c.nome
+                            """, (emp_id, int(busca_cod)))
+                        elif busca_cli:
+                            df_busca = carregar_dados("""
+                                SELECT v.codigo_venda, c.nome AS cliente,
+                                       SUM(v.valor_total) AS total,
+                                       MAX(v.forma_pagamento) AS forma_pagamento,
+                                       MAX(v.qtd_parcelas) AS qtd_parcelas,
+                                       MAX(v.data_venda) AS data_venda,
+                                       MAX(v.cliente_id) AS cliente_id
+                                FROM vendas v
+                                JOIN clientes c ON c.id = v.cliente_id
+                                WHERE v.empresa_id = %s AND c.nome ILIKE %s
+                                GROUP BY v.codigo_venda, c.nome
+                                ORDER BY v.codigo_venda DESC
+                                LIMIT 10
+                            """, (emp_id, f"%{busca_cli}%"))
+                        else:
+                            st.warning("Informe o número da venda ou o nome do cliente.")
+                            df_busca = pd.DataFrame()
+
+                        if not df_busca.empty:
+                            st.session_state['edit_fp_resultado'] = df_busca
+                        else:
+                            st.warning("Nenhuma venda encontrada.")
+                            st.session_state.pop('edit_fp_resultado', None)
+
+                    if 'edit_fp_resultado' in st.session_state:
+                        df_res = st.session_state['edit_fp_resultado']
+
+                        # Monta opções de seleção
+                        opcoes = df_res.apply(
+                            lambda r: f"Venda Nº {int(r['codigo_venda'])} — {r['cliente']} — R$ {float(r['total']):,.2f} — {r['forma_pagamento']}".replace(",","X").replace(".",",").replace("X","."),
+                            axis=1
+                        ).tolist()
+
+                        sel = st.selectbox("Selecione a venda:", opcoes, key="edit_fp_sel")
+                        idx_sel = opcoes.index(sel)
+                        venda_sel = df_res.iloc[idx_sel]
+
+                        total_venda    = float(venda_sel['total'])
+                        forma_atual    = str(venda_sel['forma_pagamento'])
+                        cod_venda      = int(venda_sel['codigo_venda'])
+                        cli_id_venda   = int(venda_sel['cliente_id'])
+                        data_venda_str = str(venda_sel['data_venda'])
+
+                        st.info(f"💰 Total da venda: **R$ {total_venda:,.2f}** | Forma atual: **{forma_atual}**".replace(",","X").replace(".",",").replace("X","."))
+
+                        col_fp, col_parc = st.columns(2)
+                        nova_forma = col_fp.selectbox(
+                            "Nova Forma de Pagamento:",
+                            ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"],
+                            index=["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"].index(forma_atual) if forma_atual in ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"] else 0,
+                            key="edit_fp_nova"
+                        )
+                        novas_parcelas = col_parc.number_input("Número de Parcelas:", min_value=1, max_value=24, value=1, step=1, key="edit_fp_parc")
+
+                        # Datas de vencimento
+                        datas_novas = []
+                        if novas_parcelas > 1:
+                            st.markdown("📅 **Datas de Vencimento das Novas Parcelas:**")
+                            cols_dt = st.columns(min(int(novas_parcelas), 4))
+                            for i in range(1, int(novas_parcelas) + 1):
+                                sugerido = date.today() + timedelta(days=30 * (i - 1))
+                                with cols_dt[(i-1) % min(int(novas_parcelas), 4)]:
+                                    dt = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"edit_fp_dt_{cod_venda}_{i}")
+                                    datas_novas.append(dt)
+                        else:
+                            datas_novas.append(date.today())
+
+                        if st.button("💾 Salvar Alteração", type="primary", use_container_width=True, key="btn_salvar_fp"):
+                            try:
+                                conn = conectar_banco()
+                                cur = conn.cursor()
+
+                                # 1. Atualiza forma de pagamento e parcelas em TODAS as linhas da venda
+                                cur.execute("""
+                                    UPDATE vendas 
+                                    SET forma_pagamento = %s, qtd_parcelas = %s
+                                    WHERE codigo_venda = %s AND empresa_id = %s
+                                """, (nova_forma, int(novas_parcelas), cod_venda, emp_id))
+
+                                # 2. Remove TODAS as parcelas antigas (pagas e pendentes)
+                                cur.execute("""
+                                    DELETE FROM contas_receber 
+                                    WHERE venda_codigo = %s AND empresa_id = %s
+                                """, (cod_venda, emp_id))
+
+                                # 3. Recria as parcelas do zero
+                                val_parcela = float(total_venda / novas_parcelas)
+                                for i, dt_venc in enumerate(datas_novas, start=1):
+                                    status_p = 'Pago' if novas_parcelas == 1 and nova_forma != 'Crediário' else 'Pendente'
+                                    data_pag  = data_venda_str if status_p == 'Pago' else None
+                                    cur.execute("""
+                                        INSERT INTO contas_receber 
+                                        (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    """, (cod_venda, cli_id_venda, i, int(novas_parcelas), val_parcela,
+                                          dt_venc.strftime("%d/%m/%Y"), status_p, data_pag, emp_id))
+
+                                cur.close()
+                                conn.commit()
+                                devolver_conexao(conn)
+
+                                st.success(f"✅ Venda Nº {cod_venda} atualizada! Forma: {nova_forma} | {novas_parcelas}x de R$ {val_parcela:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                                limpar_cache()
+                                st.session_state.pop('edit_fp_resultado', None)
+                                st.rerun()
+
+                            except Exception as e:
+                                st.error(f"Erro ao atualizar: {e}")
+                                if 'conn' in locals(): devolver_conexao(conn)        
 
         # Inicializa o carrinho de serviços se não existir
         if 'carrinho_servicos' not in st.session_state:
