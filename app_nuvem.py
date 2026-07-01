@@ -4713,14 +4713,14 @@ Feliz aniversário! 🥳✨"""
                 if df_com.empty:
                     st.info("Nenhum serviço com comissão encontrado no período.")
                 else:
-                    st.session_state['com_df']   = df_com
-                    st.session_state['com_ini']  = d_ini_com
-                    st.session_state['com_fim']  = d_fim_com
+                    st.session_state['com_df']        = df_com
+                    st.session_state['com_ini_val']   = d_ini_com
+                    st.session_state['com_fim_val']   = d_fim_com
 
             if 'com_df' in st.session_state:
                 df_com    = st.session_state['com_df']
-                d_ini_com = st.session_state['com_ini']
-                d_fim_com = st.session_state['com_fim']
+                d_ini_com = st.session_state['com_ini_val']
+                d_fim_com = st.session_state['com_fim_val']
 
                 # --- RESUMO POR COLABORADOR ---
                 st.markdown(f"#### 📅 Período: {d_ini_com.strftime('%d/%m/%Y')} a {d_fim_com.strftime('%d/%m/%Y')}")
