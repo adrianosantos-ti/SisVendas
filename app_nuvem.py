@@ -4689,8 +4689,22 @@ Feliz aniversário! 🥳✨"""
             d_ini_com = col_ini.date_input("Data Inicial:", value=hoje.replace(day=1), format="DD/MM/YYYY", key="com_ini")
             d_fim_com = col_fim.date_input("Data Final:", value=hoje, format="DD/MM/YYYY", key="com_fim")
 
+            # Seletor de colaborador
+            df_colab_com = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s ORDER BY nome", (emp_id,))
+            opcoes_colab = ["👥 Todos os Colaboradores"] + df_colab_com['nome'].tolist() if not df_colab_com.empty else ["👥 Todos os Colaboradores"]
+            filtro_colab = st.selectbox("Colaborador:", opcoes_colab, key="com_colab")
+
             if st.button("📊 Gerar Relatório de Comissões", type="primary"):
-                df_com = carregar_dados("""
+                # Monta filtro de colaborador
+                if filtro_colab != "👥 Todos os Colaboradores":
+                    colab_id_filtro = int(df_colab_com[df_colab_com['nome'] == filtro_colab].iloc[0]['id'])
+                    filtro_sql = "AND v.colaborador_id = %s"
+                    params_com = (emp_id, d_ini_com.strftime('%Y-%m-%d'), d_fim_com.strftime('%Y-%m-%d'), colab_id_filtro)
+                else:
+                    filtro_sql = ""
+                    params_com = (emp_id, d_ini_com.strftime('%Y-%m-%d'), d_fim_com.strftime('%Y-%m-%d'))
+
+                df_com = carregar_dados(f"""
                     SELECT
                         col.nome AS colaborador,
                         p.nome AS servico,
@@ -4707,8 +4721,9 @@ Feliz aniversário! 🥳✨"""
                       AND p.tipo = 'S'
                       AND v.colaborador_id IS NOT NULL
                       AND TO_DATE(v.data_venda, 'DD/MM/YYYY') BETWEEN %s AND %s
+                      {filtro_sql}
                     ORDER BY col.nome, v.data_venda
-                """, (emp_id, d_ini_com.strftime('%Y-%m-%d'), d_fim_com.strftime('%Y-%m-%d')))
+                """, params_com)
 
                 if df_com.empty:
                     st.info("Nenhum serviço com comissão encontrado no período.")
