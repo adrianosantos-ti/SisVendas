@@ -2113,6 +2113,19 @@ Feliz aniversário! 🥳✨"""
                         lambda x: f"{x['nome']} - Estoque: {int(x['quantidade'])}", axis=1
                     )
                 
+                    # NOVO: Cria um contador de reset se ele não existir
+                    if 'reset_prod' not in st.session_state:
+                        st.session_state['reset_prod'] = 0
+                
+                    # NOVO: Adiciona o contador no final do nome da key
+                    prod_display = st.selectbox(
+                        "🔍 Pesquise o Produto (Digite o nome):", 
+                        options=df_pro['display_pesquisa'].tolist(), 
+                        index=None, 
+                        placeholder="Digite ou selecione um produto...", 
+                        key=f"busca_produto_pdv_{st.session_state['reset_prod']}"
+                    )
+                
                     # CORREÇÃO 1: Adicionada a key="busca_produto_pdv" para podermos limpá-la via session_state
                     prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto...", key="busca_produto_pdv")
                 
@@ -2152,8 +2165,9 @@ Feliz aniversário! 🥳✨"""
                                         'tipo': 'P',
                                         'colab_id': None
                                     })
-                                    # CORREÇÃO 1: Limpa o selectbox de produto para o próximo item
-                                    st.session_state['busca_produto_pdv'] = None 
+                                    
+                                    # CORREÇÃO: Força o selectbox a se recriar limpo!
+                                    st.session_state['reset_prod'] += 1 
                                     st.rerun()
                                 else:
                                     st.error("Estoque insuficiente!")
