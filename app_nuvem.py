@@ -2113,7 +2113,8 @@ Feliz aniversário! 🥳✨"""
                         lambda x: f"{x['nome']} - Estoque: {int(x['quantidade'])}", axis=1
                     )
                 
-                    prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto...")
+                    # CORREÇÃO 1: Adicionada a key="busca_produto_pdv" para podermos limpá-la via session_state
+                    prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto...", key="busca_produto_pdv")
                 
                     if cliente_pdv and f_pag and prod_display:
                         p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
@@ -2151,6 +2152,8 @@ Feliz aniversário! 🥳✨"""
                                         'tipo': 'P',
                                         'colab_id': None
                                     })
+                                    # CORREÇÃO 1: Limpa o selectbox de produto para o próximo item
+                                    st.session_state['busca_produto_pdv'] = None 
                                     st.rerun()
                                 else:
                                     st.error("Estoque insuficiente!")
@@ -2161,13 +2164,11 @@ Feliz aniversário! 🥳✨"""
                     if st.session_state['carrinho']:
                         st.markdown("### 🛍️ Itens no Carrinho")
                         
-                        # Adicionado gap="small" para aproximar horizontalmente e verticalmente
                         col_c1, col_c2, col_c3, col_c4, col_vazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
                         col_c1.markdown("**Item**")
                         col_c2.markdown("**Qtd**")
                         col_c3.markdown("**Subtotal**")
                         
-                        # CORREÇÃO CRÍTICA: Linha fina com margem de apenas 4px acima e 8px abaixo
                         st.markdown("<hr style='margin: 4px 0px 8px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
                         
                         total_pdv = 0.0
@@ -2244,16 +2245,13 @@ Feliz aniversário! 🥳✨"""
                                 cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
                             
                                 for it in st.session_state['carrinho']:
-                                    # Inserindo o colaborador_id na tabela de vendas
                                     cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                                (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), it['colab_id']))
                                 
-                                    # Baixa de estoque APENAS para produtos comerciais
                                     if it['tipo'] == 'P':
                                         cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
                             
-                                # Inserção no Financeiro / Contas a Receber
                                 if f_pag == "Crediário" and valor_entrada > 0:
                                     cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -2285,6 +2283,10 @@ Feliz aniversário! 🥳✨"""
                                 lista_produtos_msg = ""
                                 for it in st.session_state['carrinho']:
                                     lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                                    # CORREÇÃO 2A: Inclui a linha de desconto no recibo da venda se houver desconto
+                                    if float(it.get('desc', 0)) > 0:
+                                        desc_total_item = float(it['desc']) * int(it['qtd'])
+                                        lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
                             
                                 msg = f"Olá, {cliente_pdv}! 🌸\n\n"
                                 msg += f"Aqui está o resumo do seu pedido do dia *{data_v}*:\n\n"
@@ -2351,6 +2353,10 @@ Feliz aniversário! 🥳✨"""
                             lista_produtos_msg = ""
                             for it in st.session_state['carrinho']:
                                 lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                                # CORREÇÃO 2B: Inclui a linha de desconto no recibo de orçamento se houver desconto
+                                if float(it.get('desc', 0)) > 0:
+                                    desc_total_item = float(it['desc']) * int(it['qtd'])
+                                    lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
                         
                             msg = f"Olá, {cliente_pdv}! 🌸\n\n"
                             msg += f"Segue a simulação do seu *ORÇAMENTO* feito hoje ({date.today().strftime('%d/%m/%Y')}):\n\n"
