@@ -2124,11 +2124,8 @@ Feliz aniversário! 🥳✨"""
                         index=None, 
                         placeholder="Digite ou selecione um produto...", 
                         key=f"busca_produto_pdv_{st.session_state['reset_prod']}"
-                    )
-                
-                    # CORREÇÃO 1: Adicionada a key="busca_produto_pdv" para podermos limpá-la via session_state
-                    prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto...", key="busca_produto_pdv")
-                
+                    )       
+                    
                     if cliente_pdv and f_pag and prod_display:
                         p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
                         estoque_atual = int(p_info['quantidade'])
