@@ -5,7 +5,7 @@ import json
 import base64
 import calendar
 import urllib.parse
-import time as time_module  # renomeado para não conflitar com datetime.time
+import time as time_module
 
 # Força o servidor inteiro a rodar no fuso correto
 os.environ['TZ'] = 'America/Fortaleza'
@@ -13,27 +13,40 @@ time_module.tzset()
 
 import streamlit as st
 import psycopg2
+from psycopg2 import pool
 import pandas as pd
 import plotly.express as px
 import pdfplumber
 import pytz
-import xml.etree.ElementTree as ET
 from datetime import datetime, date, time, timedelta
 from PIL import Image
 
-hoje = date.today()
+# ==========================================
+# 1. OTIMIZAÇÃO DE LEITURA DE IMAGENS (CACHE)
+# ==========================================
+@st.cache_data(show_spinner=False)
+def carregar_imagem(caminho):
+    if os.path.exists(caminho):
+        return Image.open(caminho)
+    return None
 
-# 1. Forçamos a leitura da imagem (use o nome exato do seu arquivo PNG)
-icone = Image.open("logo.png") 
+@st.cache_data(show_spinner=False)
+def get_base64_image(caminho_imagem):
+    if os.path.exists(caminho_imagem):
+        with open(caminho_imagem, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    return ""
+
+icone = carregar_imagem("logo.png") 
 
 # 2. Configuração da página - DEVE SER O PRIMEIRO COMANDO STREAMLIT
 st.set_page_config(
-    page_title="Apprimory - Inteligência para Gestão", # Deixei mais curto para ficar elegante na aba
+    page_title="Apprimory - Inteligência para Gestão",
     page_icon=icone,
     layout="wide"
 )
 
-# Código para esconder o "Running indicator" (bonequinho correndo)
+# Código para esconder o "Running indicator"
 st.markdown(
     """
     <style>
@@ -46,27 +59,27 @@ st.markdown(
 )
 
 # ==========================================
-# CONFIGURAÇÃO DE BANCO DE DADOS (NUVEM)
+# 2. OTIMIZAÇÃO DE BANCO DE DADOS (POOLING)
 # ==========================================
 if 'carrinho' not in st.session_state:
     st.session_state['carrinho'] = []
 
 DATABASE_URL = st.secrets["DATABASE_URL"]
 
-# ==========================================
-# CONEXÃO AO BANCO
-# Usa uma conexão por execução com reconexão
-# automática. Simples, robusto e compatível
-# com o PgBouncer do Supabase (porta 6543).
-# ==========================================
+@st.cache_resource(show_spinner=False)
+def get_connection_pool():
+    # Cria um pool de 1 a 10 conexões reaproveitáveis
+    return psycopg2.pool.SimpleConnectionPool(1, 10, DATABASE_URL)
+
 def conectar_banco():
-    return psycopg2.connect(DATABASE_URL)
+    return get_connection_pool().getconn()
 
 def devolver_conexao(conn):
-    try:
-        conn.close()
-    except Exception:
-        pass
+    if conn:
+        try:
+            get_connection_pool().putconn(conn)
+        except Exception:
+            pass
 
 def carregar_dados(query, params=None):
     conn = conectar_banco()
@@ -90,11 +103,6 @@ def executar_escrita(operacoes):
     """
     Executa operações de escrita no banco de forma segura.
     Garante commit ou rollback e fechamento da conexão.
-    
-    Uso:
-        def minhas_operacoes(cur):
-            cur.execute("UPDATE ...", (params,))
-        executar_escrita(minhas_operacoes)
     """
     conn = conectar_banco()
     try:
@@ -118,7 +126,7 @@ def carregar_dados_cached(query, params=None):
 
 def limpar_cache():
     st.cache_data.clear()
-
+    
 # ==========================================
 # PAINEL DE AVALIAÇÕES (visível no sistema)
 # ==========================================
