@@ -801,10 +801,31 @@ else:
                 st.plotly_chart(fig_linha, use_container_width=True)
                 
                 c1, c2 = st.columns(2)
+                
+                # 1. Agrupa os dados e pega os top 5
                 df_top = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False).head(5).sort_values('quantidade', ascending=True)
-                df_top['produto_curto'] = df_top['produto'].apply(lambda x: (str(x)[:22] + '...') if len(str(x)) > 22 else str(x))
-                fig_top = px.bar(df_top, x='quantidade', y='produto', orientation='h', text='quantidade', color_discrete_sequence=['#0068c9'], title="Top 5 Produtos Mais Vendidos")
-                fig_top.update_yaxes(tickmode='array', tickvals=df_top['produto'], ticktext=df_top['produto_curto'])
+                
+                # 2. Cria o gráfico usando o nome completo diretamente no eixo Y
+                fig_top = px.bar(
+                    df_top, 
+                    x='quantidade', 
+                    y='produto', 
+                    orientation='h', 
+                    text='quantidade', 
+                    color_discrete_sequence=['#0068c9'], 
+                    title="Top 5 Produtos Mais Vendidos"
+                )
+                
+                # 3. Deixa a barra mais fina (ex: 50% do espaço)
+                fig_top.update_traces(width=0.5) 
+                
+                # 4. Ajusta o layout para acomodar nomes longos sem cortar a tela
+                fig_top.update_layout(
+                    yaxis_title="", # Remove a palavra "produto" que ficava sobrando na lateral
+                    xaxis_title="Quantidade Vendida",
+                    yaxis=dict(automargin=True) # A mágica que empurra o gráfico para a direita se o nome for gigante
+                )
+                
                 c1.plotly_chart(fig_top, use_container_width=True)
                 
                 fig_cat = px.pie(df_dash.groupby('categoria')['valor_total'].sum().reset_index(), values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria", color_discrete_sequence=px.colors.qualitative.Bold)
