@@ -2416,6 +2416,71 @@ Feliz aniversário! 🥳✨"""
                                     st.error(f"Erro no banco: {e}")
                                     if 'conn' in locals(): devolver_conexao(conn)
 
+                        # --- AÇÃO: ORÇAMENTO ---
+                        if c2_orcamento.button("📋 Salvar Orçamento", use_container_width=True):
+                            try:
+                                carrinho_texto = json.dumps(st.session_state['carrinho'])
+                                conn = conectar_banco()
+                                cur = conn.cursor()
+                                data_hoje_str = date.today().strftime('%d/%m/%Y')
+                                
+                                cur.execute("""INSERT INTO orcamentos (empresa_id, cliente_nome, data_orcamento, valor_total, carrinho_json) 
+                                               VALUES (%s,%s,%s,%s,%s)""", 
+                                            (int(emp_id), cliente_pdv, data_hoje_str, float(total_pdv), carrinho_texto))
+                                conn.commit()
+                                devolver_conexao(conn)
+                            except Exception as e:
+                                st.error(f"Erro ao salvar orçamento: {e}")
+                                
+                            cur_cli = carregar_dados_cached("SELECT telefone FROM clientes WHERE nome=%s AND empresa_id=%s", (cliente_pdv, emp_id))
+                            tel_cli = cur_cli.iloc[0]['telefone'] if not cur_cli.empty else None
+                        
+                            lista_produtos_msg = ""
+                            for it in st.session_state['carrinho']:
+                                lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                                # CORREÇÃO 2B: Inclui a linha de desconto no recibo de orçamento se houver desconto
+                                if float(it.get('desc', 0)) > 0:
+                                    desc_total_item = float(it['desc']) * int(it['qtd'])
+                                    lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
+                        
+                            msg = f"Olá, {cliente_pdv}! 🌸\n\n"
+                            msg += f"Segue a simulação do seu *ORÇAMENTO* feito hoje ({date.today().strftime('%d/%m/%Y')}):\n\n"
+                            msg += f"*Itens Solicitados:*\n{lista_produtos_msg}\n"
+                            msg += f"💰 *Valor Total Estimado:* R$ {total_pdv:.2f}\n".replace('.', ',')
+                        
+                            if qtd_parcelas > 1:
+                                msg += "\n🗓️ *Simulação de Parcelamento:*\n"
+                                if f_pag == "Crediário" and valor_entrada > 0:
+                                    msg += f"▪️ Entrada sugerida: R$ {valor_entrada:.2f}\n".replace('.', ',')
+                                    v_rest_calc = valor_restante / (qtd_parcelas - 1)
+                                    for i in range(2, int(qtd_parcelas) + 1):
+                                        msg += f"▪️ {i}ª Parcela: R$ {v_rest_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
+                                else:
+                                    v_parc_calc = total_pdv / qtd_parcelas
+                                    for i in range(1, int(qtd_parcelas) + 1):
+                                        msg += f"▪️ {i}ª Parcela: R$ {v_parc_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
+                            else:
+                                msg += f"💳 *Meio de pagamento simulado:* {f_pag}\n"
+                        
+                            msg += "\n*Este orçamento é válido por 5 dias.* Tem interesse em fechar o pedido? ✨"
+                        
+                            if tel_cli:
+                                tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
+                                if len(tel_limpo) >= 10:
+                                    if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
+                                    st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                    st.session_state['zap_msg'] = msg
+                                    st.session_state['zap_codigo'] = "ORÇAMENTO EM ABERTO"
+                                    st.session_state['zap_total'] = total_pdv
+                        
+                            # 🔄 Volta para a tela inicial
+                            st.session_state['modo_pdv'] = False
+                            st.rerun()
+
+                        if c3_limpar.button("🗑️ Limpar Carrinho", use_container_width=True): 
+                            st.session_state['carrinho'] = []
+                            st.rerun()
+
                 # ==========================================================
                 # TELA 2: HISTÓRICO RECENTE E OPERAÇÕES (TELA PRINCIPAL)
                 # ==========================================================
