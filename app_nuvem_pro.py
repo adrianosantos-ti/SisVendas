@@ -2537,21 +2537,76 @@ Feliz aniversário! 🥳✨"""
 
                             with st.expander("📲 Re-enviar Recibo via WhatsApp"):
                                 v_sel_zap = st.selectbox("Selecione a venda para gerar o recibo:", options=sorted(list(set(df_ops['Nº Venda'].tolist())), reverse=True), key="s_zap")
+                                
                                 if v_sel_zap:
-                                    df_venda_zap = carregar_dados_cached("SELECT v.codigo_venda, c.telefone, c.nome, v.valor_total, v.data_venda, v.forma_pagamento FROM vendas v JOIN clientes c ON v.cliente_id = c.id WHERE v.codigo_venda = %s AND v.empresa_id = %s LIMIT 1", (int(v_sel_zap), emp_id))
-                                    if not df_venda_zap.empty:
-                                        info_z = df_venda_zap.iloc[0]
-                                        tel_z = info_z['telefone']
-                                        if tel_z:
-                                            tel_l = ''.join(filter(str.isdigit, str(tel_z)))
-                                            if len(tel_l) >= 10:
-                                                if not tel_l.startswith('55'): tel_l = '55' + tel_l
-                                                msg_z = f"Olá, {info_z['nome'].split()[0]}! 🌸\nSegue a segunda via do recibo do seu pedido Nº {info_z['codigo_venda']} no valor de R$ {info_z['valor_total']:.2f}."
-                                                st.link_button("🟢 Gerar Link do WhatsApp", f"https://wa.me/{tel_l}?text={urllib.parse.quote(msg_z)}", use_container_width=True)
+                                    if st.button("Gerar Recibo Detalhado", use_container_width=True):
+                                        # 1. Puxa o cabeçalho da venda
+                                        df_venda_zap = carregar_dados_cached("SELECT codigo_venda, data_venda, valor_total, forma_pagamento, qtd_parcelas, valor_entrada, valor_restante, cliente_id FROM vendas WHERE codigo_venda = %s AND empresa_id = %s LIMIT 1", (int(v_sel_zap), emp_id))
+                                        
+                                        if not df_venda_zap.empty:
+                                            info_v = df_venda_zap.iloc[0]
+                                            c_id = info_v['cliente_id']
+                                            
+                                            # 2. Puxa os dados do cliente
+                                            df_cli_zap = carregar_dados_cached("SELECT nome, telefone FROM clientes WHERE id = %s", (int(c_id),))
+                                            nome_cli = df_cli_zap.iloc[0]['nome'].split()[0] if not df_cli_zap.empty else "Cliente"
+                                            tel_cli = df_cli_zap.iloc[0]['telefone'] if not df_cli_zap.empty else None
+                                            
+                                            # 3. Puxa os itens da venda para recriar a lista
+                                            df_itens = carregar_dados_cached("SELECT v.quantidade, p.nome, v.valor_unitario, v.desconto FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.codigo_venda = %s AND v.empresa_id = %s", (int(v_sel_zap), emp_id))
+                                            
+                                            lista_produtos_msg = ""
+                                            for _, it in df_itens.iterrows():
+                                                qtd_it = int(it['quantidade'])
+                                                unit_it = float(it['valor_unitario'])
+                                                desc_it = float(it['desconto'])
+                                                
+                                                lista_produtos_msg += f"▫️ {qtd_it}x {it['nome']} (R$ {unit_it:.2f})\n".replace('.', ',')
+                                                if desc_it > 0:
+                                                    desc_total_item = desc_it * qtd_it
+                                                    lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
+                                            
+                                            # 4. Monta a mensagem idêntica à original
+                                            msg_z = f"Olá, {nome_cli}! 🌸\n\n"
+                                            msg_z += f"Aqui está o resumo do seu pedido do dia *{info_v['data_venda']}* (Segunda Via):\n\n"
+                                            msg_z += f"🧾 *Pedido Confirmado Nº {info_v['codigo_venda']}*\n\n"
+                                            msg_z += f"*Itens:*\n{lista_produtos_msg}\n"
+                                            msg_z += f"💰 *Valor Total:* R$ {float(info_v['valor_total']):.2f}\n".replace('.', ',')
+                                            
+                                            qtd_p = int(info_v['qtd_parcelas']) if pd.notna(info_v['qtd_parcelas']) else 1
+                                            f_pag_z = info_v['forma_pagamento']
+                                            v_ent = float(info_v['valor_entrada']) if pd.notna(info_v['valor_entrada']) else 0.0
+                                            
+                                            # 5. Lógica de Parcelas Puxando do Contas a Receber
+                                            if qtd_p > 1 or (f_pag_z == "Crediário" and v_ent > 0):
+                                                msg_z += "\n📅 *Datas de Vencimento:*\n"
+                                                
+                                                df_parc = carregar_dados_cached("SELECT num_parcela, valor_parcela, data_vencimento FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s ORDER BY num_parcela", (int(v_sel_zap), emp_id))
+                                                
+                                                if not df_parc.empty:
+                                                    if f_pag_z == "Crediário" and v_ent > 0:
+                                                        ent_row = df_parc.iloc[0]
+                                                        msg_z += f"▪️ Entrada: R$ {float(ent_row['valor_parcela']):.2f} (Paga em {ent_row['data_vencimento']})\n".replace('.', ',')
+                                                        for _, p_row in df_parc.iloc[1:].iterrows():
+                                                            msg_z += f"▪️ {int(p_row['num_parcela'])}ª Parcela: R$ {float(p_row['valor_parcela']):.2f} -> {p_row['data_vencimento']}\n".replace('.', ',')
+                                                    else:
+                                                        for _, p_row in df_parc.iterrows():
+                                                            msg_z += f"▪️ {int(p_row['num_parcela'])}ª Parcela: R$ {float(p_row['valor_parcela']):.2f} -> {p_row['data_vencimento']}\n".replace('.', ',')
                                             else:
-                                                st.warning("Telefone inválido no cadastro.")
-                                        else:
-                                            st.warning("Cliente sem telefone.")
+                                                msg_z += f"💳 *Forma de Pagto:* {f_pag_z}\n"
+                                                
+                                            msg_z += "\n\nMuito obrigada pela preferência! ✨"
+                                            
+                                            # 6. Gera o Link
+                                            if tel_cli:
+                                                tel_l = ''.join(filter(str.isdigit, str(tel_cli)))
+                                                if len(tel_l) >= 10:
+                                                    if not tel_l.startswith('55'): tel_l = '55' + tel_l
+                                                    st.link_button("🟢 Gerar Link do WhatsApp", f"https://wa.me/{tel_l}?text={urllib.parse.quote(msg_z)}", use_container_width=True)
+                                                else:
+                                                    st.warning("Telefone inválido no cadastro.")
+                                            else:
+                                                st.warning("Cliente sem telefone cadastrado.")
 
                         with col_op2:
                             with st.expander("❌ Cancelar / Estornar um Item"):
