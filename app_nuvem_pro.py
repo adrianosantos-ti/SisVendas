@@ -3905,9 +3905,75 @@ Feliz aniversário! 🥳✨"""
             """,
             unsafe_allow_html=True
         )
+        
+        # ==========================================
+        # ⚡ MODO EXPRESSO (ATALHO DA VISÃO APP)
+        # ==========================================
+        abrir_recebimento = st.session_state.get('abrir_expander_recebimento', False)
+        venda_id_alvo = st.session_state.get('venda_editando', None)
+
+        if abrir_recebimento and venda_id_alvo:
+            st.markdown("### ⚡ Recebimento Expresso")
+            st.info(f"Você acessou o atalho rápido para faturar a Venda Nº {venda_id_alvo}.")
+
+            # 1. Query cirúrgica e levíssima: Puxa SÓ as parcelas desta venda
+            query_rapida = """
+                SELECT cr.id AS "ID Parcela", c.nome AS "Cliente",
+                       cr.num_parcela AS "Parcela", cr.total_parcelas AS "De",
+                       cr.valor_parcela AS "Valor (R$)", cr.data_vencimento AS "Vencimento", cr.status AS "Status"
+                FROM contas_receber cr
+                JOIN clientes c ON cr.cliente_id = c.id
+                WHERE cr.empresa_id = %s AND cr.venda_codigo = %s
+                ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') ASC
+            """
+            df_expresso = carregar_dados_cached(query_rapida, (emp_id, int(venda_id_alvo)))
+
+            if not df_expresso.empty:
+                df_pendentes = df_expresso[df_expresso['Status'] == 'Pendente']
+                
+                if not df_pendentes.empty:
+                    data_pag_real = st.date_input("📅 Data do Recebimento:", value=date.today(), format="DD/MM/YYYY")
+                    
+                    for _, row in df_pendentes.iterrows():
+                        idx_b = row['ID Parcela']
+                        num_parc = row['Parcela']
+                        valor_parc = row['Valor (R$)']
+
+                        with st.container(border=True):
+                            st.markdown(f"👤 **{row['Cliente']}** — Parc. **{num_parc}/{row['De']}**")
+                            st.markdown(f"💰 **Valor:** R$ {valor_parc:.2f} &nbsp; | &nbsp; 📅 **Venc:** {row['Vencimento']}".replace('.', ','))
+
+                            if st.button(f"✅ Confirmar Baixa da Parcela {num_parc}", key=f"btn_exp_{idx_b}", use_container_width=True, type="primary"):
+                                try:
+                                    conn = conectar_banco()
+                                    conn.cursor().execute("UPDATE contas_receber SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
+                                    conn.commit()
+                                    devolver_conexao(conn)
+
+                                    st.session_state['venda_editando'] = None
+                                    st.session_state['abrir_expander_recebimento'] = False
+                                    limpar_cache()
+                                    st.success("✅ Pagamento registrado com sucesso!")
+                                    time_module.sleep(0.5)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro: {e}")
+                                    if 'conn' in locals(): devolver_conexao(conn)
+                else:
+                    st.success("✅ Todas as parcelas desta venda já estão pagas!")
+            
+            st.markdown("---")
+            if st.button("⬅️ Cancelar e Voltar ao Financeiro Completo", use_container_width=True):
+                st.session_state['venda_editando'] = None
+                st.session_state['abrir_expander_recebimento'] = False
+                st.rerun()
+
+            # 2. A MÁGICA: Interrompe o carregamento do resto do sistema aqui!
+            st.stop()
+
+
         st.markdown("### 💰 Gestão Financeira")
         
-        # --- MUDANÇA: Adicionamos a aba_fluxo_caixa aqui na lista de abas ---
         tab_rec, tab_pag, aba_fluxo_caixa, aba_comissoes = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)", "💸 Fluxo de Caixa", "🏆 Comissões"])
         
         # --- CONTAS A RECEBER 100% RESTAURADO ---
