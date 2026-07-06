@@ -2113,8 +2113,19 @@ Feliz aniversário! 🥳✨"""
                         lambda x: f"{x['nome']} - Estoque: {int(x['quantidade'])}", axis=1
                     )
                 
-                    prod_display = st.selectbox("🔍 Pesquise o Produto (Digite o nome):", options=df_pro['display_pesquisa'].tolist(), index=None, placeholder="Digite ou selecione um produto...")
+                    # NOVO: Cria um contador de reset se ele não existir
+                    if 'reset_prod' not in st.session_state:
+                        st.session_state['reset_prod'] = 0
                 
+                    # NOVO: Adiciona o contador no final do nome da key
+                    prod_display = st.selectbox(
+                        "🔍 Pesquise o Produto (Digite o nome):", 
+                        options=df_pro['display_pesquisa'].tolist(), 
+                        index=None, 
+                        placeholder="Digite ou selecione um produto...", 
+                        key=f"busca_produto_pdv_{st.session_state['reset_prod']}"
+                    )       
+                    
                     if cliente_pdv and f_pag and prod_display:
                         p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
                         estoque_atual = int(p_info['quantidade'])
@@ -2151,6 +2162,9 @@ Feliz aniversário! 🥳✨"""
                                         'tipo': 'P',
                                         'colab_id': None
                                     })
+                                    
+                                    # CORREÇÃO: Força o selectbox a se recriar limpo!
+                                    st.session_state['reset_prod'] += 1 
                                     st.rerun()
                                 else:
                                     st.error("Estoque insuficiente!")
@@ -2161,13 +2175,11 @@ Feliz aniversário! 🥳✨"""
                     if st.session_state['carrinho']:
                         st.markdown("### 🛍️ Itens no Carrinho")
                         
-                        # Adicionado gap="small" para aproximar horizontalmente e verticalmente
                         col_c1, col_c2, col_c3, col_c4, col_vazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
                         col_c1.markdown("**Item**")
                         col_c2.markdown("**Qtd**")
                         col_c3.markdown("**Subtotal**")
                         
-                        # CORREÇÃO CRÍTICA: Linha fina com margem de apenas 4px acima e 8px abaixo
                         st.markdown("<hr style='margin: 4px 0px 8px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
                         
                         total_pdv = 0.0
@@ -2188,6 +2200,20 @@ Feliz aniversário! 🥳✨"""
                         st.header(f"Total Atual: R$ {total_pdv:.2f}".replace('.', ','))
                     
                         st.markdown("---")
+
+                        # --- TAXA DA OPERADORA (Débito/Crédito) ---
+                        taxa_op_perc  = 0.0
+                        taxa_op_rs    = 0.0
+                        valor_liquido = total_pdv
+
+                        if f_pag in ["Crédito", "Débito"]:
+                            st.markdown("💳 **Taxa da Operadora de Cartão**")
+                            col_tx1, col_tx2 = st.columns(2)
+                            taxa_op_perc = col_tx1.number_input("Taxa Operadora (%):", min_value=0.0, max_value=100.0, step=0.1, format="%.2f", key="taxa_op_perc")
+                            taxa_op_rs   = col_tx2.number_input("Taxa Operadora (R$):", min_value=0.0, step=0.10, format="%.2f", key="taxa_op_rs")
+                            taxa_valor   = total_pdv * (taxa_op_perc / 100.0) if taxa_op_perc > 0 else taxa_op_rs
+                            valor_liquido = total_pdv - taxa_valor
+                            st.info(f"💰 Bruto: R$ {total_pdv:,.2f} | Taxa: R$ {taxa_valor:,.2f} | **Líquido: R$ {valor_liquido:,.2f}**".replace(",","X").replace(".",",").replace("X","."))
                     
                         # --- CONFIGURAÇÃO DE ENTRADA ---
                         valor_entrada = 0.0
@@ -2244,17 +2270,27 @@ Feliz aniversário! 🥳✨"""
                                 cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
                             
                                 for it in st.session_state['carrinho']:
-                                    # Inserindo o colaborador_id na tabela de vendas
                                     cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                                (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), it['colab_id']))
                                 
-                                    # Baixa de estoque APENAS para produtos comerciais
                                     if it['tipo'] == 'P':
                                         cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
                             
-                                # Inserção no Financeiro / Contas a Receber
-                                if f_pag == "Crediário" and valor_entrada > 0:
+                                # --- INSERÇÃO NO CONTAS A RECEBER ---
+                                if f_pag in ["Débito", "Crédito"]:
+                                    # D+1: lança como Pago com data_pagamento = data_venda + 1 dia e valor líquido
+                                    data_pag_cartao = (data_venda_input + timedelta(days=1)).strftime("%d/%m/%Y")
+                                    val_parc_liq = float(valor_liquido / qtd_parcelas)
+                                    for i in range(1, int(qtd_parcelas) + 1):
+                                        dt_venc = datas_parcelas[i-1]
+                                        cur.execute("""INSERT INTO contas_receber 
+                                            (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id)
+                                            VALUES (%s,%s,%s,%s,%s,%s,'Pago',%s,%s)""",
+                                            (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), val_parc_liq,
+                                             dt_venc.strftime("%d/%m/%Y"), data_pag_cartao, int(emp_id)))
+
+                                elif f_pag == "Crediário" and valor_entrada > 0:
                                     cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
                                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                                (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', data_v, int(emp_id)))
@@ -2272,10 +2308,9 @@ Feliz aniversário! 🥳✨"""
                                         dt_venc = datas_parcelas[i-1]
                                         status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
                                         data_pag_val = data_v if status_venda == 'Pago' else None
-                                        
                                         cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
                                                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                   (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))                        
+                                                   (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))
                             
                                 # Mensagem do WhatsApp
                                 cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
@@ -2285,6 +2320,10 @@ Feliz aniversário! 🥳✨"""
                                 lista_produtos_msg = ""
                                 for it in st.session_state['carrinho']:
                                     lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                                    # CORREÇÃO 2A: Inclui a linha de desconto no recibo da venda se houver desconto
+                                    if float(it.get('desc', 0)) > 0:
+                                        desc_total_item = float(it['desc']) * int(it['qtd'])
+                                        lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
                             
                                 msg = f"Olá, {cliente_pdv}! 🌸\n\n"
                                 msg += f"Aqui está o resumo do seu pedido do dia *{data_v}*:\n\n"
@@ -2351,6 +2390,10 @@ Feliz aniversário! 🥳✨"""
                             lista_produtos_msg = ""
                             for it in st.session_state['carrinho']:
                                 lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                                # CORREÇÃO 2B: Inclui a linha de desconto no recibo de orçamento se houver desconto
+                                if float(it.get('desc', 0)) > 0:
+                                    desc_total_item = float(it['desc']) * int(it['qtd'])
+                                    lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
                         
                             msg = f"Olá, {cliente_pdv}! 🌸\n\n"
                             msg += f"Segue a simulação do seu *ORÇAMENTO* feito hoje ({date.today().strftime('%d/%m/%Y')}):\n\n"
