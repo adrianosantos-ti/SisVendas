@@ -777,7 +777,28 @@ else:
                 st.markdown("---")
                 
                 df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
-                st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
+                
+                # 1. Customização do gráfico com marcadores e rótulos amigáveis
+                fig_linha = px.line(
+                    df_fat_dia, 
+                    x='Data_Obj', 
+                    y='valor_total', 
+                    title="Curva de Vendas por Dia", 
+                    template="plotly_white",
+                    markers=True,  # 🟢 Cria os pontos exatos de cada venda
+                    labels={       # 🟢 Traduz os nomes dos eixos
+                        "Data_Obj": "Data da Venda", 
+                        "valor_total": "Faturamento Diário (R$)"
+                    }
+                )
+                
+                # 2. Força o eixo X a exibir apenas as datas formatadas e remove as quebras de horas
+                fig_linha.update_xaxes(
+                    tickformat="%d/%m", # Formato brasileiro (Dia/Mês)
+                    type='category'     # Trata cada dia como um bloco fechado, ignorando as horas
+                )
+                
+                st.plotly_chart(fig_linha, use_container_width=True)
                 
                 c1, c2 = st.columns(2)
                 df_top = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False).head(5).sort_values('quantidade', ascending=True)
