@@ -2635,8 +2635,16 @@ Feliz aniversário! 🥳✨"""
                                             time_module.sleep(0.5)
                                             st.rerun()
 
-                            # EXPANDER 2: CORREÇÃO FINANCEIRA (SEM FORMULÁRIO PARA EVITAR VAZAMENTO DE ABA)
-                            with st.expander("💳 Corrigir Forma de Pagamento e Recriar Parcelas"):
+                            # EXPANDER 2: CORREÇÃO FINANCEIRA
+                            # 🔧 CORREÇÃO DE VAZAMENTO DE ABA: este bloco é dinâmico (o número de
+                            # widgets muda de 1 para ~5 assim que uma venda é selecionada). Sem
+                            # @st.fragment, essa mudança dispara um rerun completo do script — e como
+                            # TODAS as abas (Serviços, Entradas, Trocas...) são recalculadas junto,
+                            # o Streamlit por vezes perde a referência de onde cada elemento deve ficar
+                            # e "derrama" conteúdo de outras abas abaixo da tela. Isolando em um
+                            # fragmento, o clique no selectbox só re-executa este pedacinho de código.
+                            @st.fragment
+                            def fragmento_corrigir_pagamento():
                                 df_vendas_fp = df_ops[['Nº Venda', 'Cliente']].drop_duplicates().sort_values(by='Nº Venda', ascending=False)
                                 opcoes_fp = df_vendas_fp.apply(lambda x: f"{x['Nº Venda']} - {x['Cliente']}", axis=1).tolist()
                                 
@@ -2709,6 +2717,9 @@ Feliz aniversário! 🥳✨"""
                                                 if 'conn' in locals(): devolver_conexao(conn)
                                     else:
                                         st.warning("Venda não encontrada.")
+
+                            with st.expander("💳 Corrigir Forma de Pagamento e Recriar Parcelas"):
+                                fragmento_corrigir_pagamento()
 
                         st.markdown("---")
                         st.markdown("#### 🕒 Histórico de Vendas Recentes")
