@@ -2635,61 +2635,69 @@ Feliz aniversário! 🥳✨"""
                                                 time_module.sleep(0.5)
                                                 st.rerun()
 
-                            # EXPANDER 2: CORREÇÃO FINANCEIRA COM REGRA D+1
+                            # EXPANDER 2: CORREÇÃO FINANCEIRA COM REGRA D+1 (AGORA COM SELETOR)
                             with st.expander("💳 Corrigir Forma de Pagamento e Recriar Parcelas"):
-                                busca_cod = st.number_input("Digite o Nº da Venda para alterar:", min_value=0, step=1, key="fp_cod")
+                                # Cria a lista combinada de Nº da Venda + Nome do Cliente
+                                df_vendas_fp = df_ops[['Nº Venda', 'Cliente']].drop_duplicates().sort_values(by='Nº Venda', ascending=False)
+                                opcoes_fp = df_vendas_fp.apply(lambda x: f"{x['Nº Venda']} - {x['Cliente']}", axis=1).tolist()
                                 
-                                if st.button("Buscar Dados da Venda", key="fp_btn") and busca_cod > 0:
-                                    df_b = carregar_dados_cached("SELECT codigo_venda, SUM(valor_total) as total, MAX(cliente_id) as cid FROM vendas WHERE empresa_id=%s AND codigo_venda=%s GROUP BY codigo_venda", (emp_id, busca_cod))
+                                v_sel_fp = st.selectbox("Selecione a venda para alterar o pagamento:", options=opcoes_fp, key="fp_sel_cod", index=None, placeholder="Escolha a venda...")
+                                
+                                if v_sel_fp:
+                                    # Extrai o código numérico do começo do texto
+                                    busca_cod = int(v_sel_fp.split(" - ")[0])
                                     
-                                    if not df_b.empty:
-                                        v_tot = df_b.iloc[0]['total']
-                                        c_id = df_b.iloc[0]['cid']
+                                    if st.button("Buscar Dados da Venda", key="fp_btn"):
+                                        df_b = carregar_dados_cached("SELECT codigo_venda, SUM(valor_total) as total, MAX(cliente_id) as cid FROM vendas WHERE empresa_id=%s AND codigo_venda=%s GROUP BY codigo_venda", (emp_id, busca_cod))
                                         
-                                        with st.form("form_update_pagamento"):
-                                            st.info(f"Venda Nº {busca_cod} encontrada! Valor Total: R$ {v_tot:.2f}".replace('.', ','))
+                                        if not df_b.empty:
+                                            v_tot = df_b.iloc[0]['total']
+                                            c_id = df_b.iloc[0]['cid']
                                             
-                                            n_fp = st.selectbox("Nova Forma de Pagamento", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], key="fp_sel")
-                                            n_p = st.number_input("Novo Número de Parcelas", min_value=1, max_value=24, value=1, key="fp_parc")
-                                            
-                                            if st.form_submit_button("Salvar Nova Condição Financeira", type="primary"):
-                                                try:
-                                                    conn = conectar_banco()
-                                                    cur = conn.cursor()
-                                                    
-                                                    cur.execute("UPDATE vendas SET forma_pagamento=%s, qtd_parcelas=%s WHERE codigo_venda=%s AND empresa_id=%s", (n_fp, n_p, busca_cod, emp_id))
-                                                    cur.execute("DELETE FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s", (busca_cod, emp_id))
-                                                    
-                                                    for i in range(1, int(n_p) + 1):
-                                                        dt_venc = (date.today() + timedelta(days=30*(i-1))).strftime("%d/%m/%Y")
+                                            with st.form("form_update_pagamento"):
+                                                st.info(f"Venda Nº {busca_cod} encontrada! Valor Total: R$ {v_tot:.2f}".replace('.', ','))
+                                                
+                                                n_fp = st.selectbox("Nova Forma de Pagamento", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], key="fp_sel_nova")
+                                                n_p = st.number_input("Novo Número de Parcelas", min_value=1, max_value=24, value=1, key="fp_parc")
+                                                
+                                                if st.form_submit_button("Salvar Nova Condição Financeira", type="primary"):
+                                                    try:
+                                                        conn = conectar_banco()
+                                                        cur = conn.cursor()
                                                         
-                                                        # --- LÓGICA EXATA DE STATUS E DATA DE PAGAMENTO ---
-                                                        if n_fp in ["Crédito", "Débito"]:
-                                                            status_venda = 'Pago'
-                                                            data_pag_val = (date.today() + timedelta(days=1)).strftime("%d/%m/%Y")
-                                                        elif n_fp == "Crediário":
-                                                            status_venda = 'Pendente'
-                                                            data_pag_val = None
-                                                        else: 
-                                                            status_venda = 'Pago'
-                                                            data_pag_val = date.today().strftime("%d/%m/%Y")
+                                                        cur.execute("UPDATE vendas SET forma_pagamento=%s, qtd_parcelas=%s WHERE codigo_venda=%s AND empresa_id=%s", (n_fp, n_p, busca_cod, emp_id))
+                                                        cur.execute("DELETE FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s", (busca_cod, emp_id))
+                                                        
+                                                        for i in range(1, int(n_p) + 1):
+                                                            dt_venc = (date.today() + timedelta(days=30*(i-1))).strftime("%d/%m/%Y")
                                                             
-                                                        cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
-                                                                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""", 
-                                                                    (busca_cod, int(c_id), i, int(n_p), float(v_tot)/int(n_p), dt_venc, status_venda, data_pag_val, emp_id))
-                                                    
-                                                    conn.commit()
-                                                    devolver_conexao(conn)
-                                                    limpar_cache()
-                                                    
-                                                    st.success("Atualizado! As parcelas foram recriadas no Contas a Receber.")
-                                                    time_module.sleep(1)
-                                                    st.rerun()
-                                                except Exception as e:
-                                                    st.error(f"Erro ao atualizar: {e}")
-                                                    if 'conn' in locals(): devolver_conexao(conn)
-                                    else:
-                                        st.warning("Venda não encontrada.")
+                                                            # --- LÓGICA EXATA DE STATUS E DATA DE PAGAMENTO ---
+                                                            if n_fp in ["Crédito", "Débito"]:
+                                                                status_venda = 'Pago'
+                                                                data_pag_val = (date.today() + timedelta(days=1)).strftime("%d/%m/%Y")
+                                                            elif n_fp == "Crediário":
+                                                                status_venda = 'Pendente'
+                                                                data_pag_val = None
+                                                            else: 
+                                                                status_venda = 'Pago'
+                                                                data_pag_val = date.today().strftime("%d/%m/%Y")
+                                                                
+                                                            cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""", 
+                                                                        (busca_cod, int(c_id), i, int(n_p), float(v_tot)/int(n_p), dt_venc, status_venda, data_pag_val, emp_id))
+                                                        
+                                                        conn.commit()
+                                                        devolver_conexao(conn)
+                                                        limpar_cache()
+                                                        
+                                                        st.success("Atualizado! As parcelas foram recriadas no Contas a Receber.")
+                                                        time_module.sleep(1)
+                                                        st.rerun()
+                                                    except Exception as e:
+                                                        st.error(f"Erro ao atualizar: {e}")
+                                                        if 'conn' in locals(): devolver_conexao(conn)
+                                        else:
+                                            st.warning("Venda não encontrada.")
 
                         st.markdown("---")
                         st.markdown("#### 🕒 Histórico de Vendas Recentes")
