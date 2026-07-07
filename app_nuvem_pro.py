@@ -2517,113 +2517,121 @@ Feliz aniversário! 🥳✨"""
                     if not df_ops.empty:
                         st.markdown("#### 🛠️ Ferramentas de Manutenção")
                         
-                        col_op1, col_op2 = st.columns(2)
-                        
-                        with col_op1:
-                            with st.expander("✏️ Editar Valor Final de um Item"):
-                                opcoes_edit = df_ops.apply(lambda x: f"Venda {x['Nº Venda']} (Item ID {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
-                                v_sel = st.selectbox("Selecione o item para corrigir:", options=opcoes_edit, key="s_ed")
-                                if v_sel:
-                                    v_id = int(v_sel.split("Item ID ")[1].split(")")[0])
-                                    with st.form("form_update_simples"):
-                                        novo_total = st.number_input("Novo Valor Total deste Item (R$)", min_value=0.0)
-                                        if st.form_submit_button("Salvar Correção"):
-                                            conn = conectar_banco()
-                                            conn.cursor().execute("UPDATE vendas SET valor_total=%s WHERE id=%s", (novo_total, v_id))
-                                            conn.commit()
-                                            devolver_conexao(conn)
-                                            limpar_cache()
-                                            st.rerun()
+                        # ==========================================
+                        # 1. EDITAR ITEM
+                        # ==========================================
+                        with st.expander("✏️ Editar Valor Final de um Item"):
+                            opcoes_edit = df_ops.apply(lambda x: f"Venda {x['Nº Venda']} (Item ID {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+                            v_sel_edit = st.selectbox("Selecione o item para corrigir:", options=opcoes_edit, key="s_ed", index=None, placeholder="Escolha o item...")
+                            
+                            if v_sel_edit:
+                                v_id = int(v_sel_edit.split("Item ID ")[1].split(")")[0])
+                                novo_total = st.number_input("Novo Valor Total deste Item (R$)", min_value=0.0, key="novo_tot_ed")
+                                
+                                if st.button("Salvar Correção", key="btn_salvar_ed", type="primary"):
+                                    try:
+                                        conn = conectar_banco()
+                                        conn.cursor().execute("UPDATE vendas SET valor_total=%s WHERE id=%s", (novo_total, v_id))
+                                        conn.commit()
+                                        devolver_conexao(conn)
+                                        limpar_cache()
+                                        st.success("Valor atualizado com sucesso!")
+                                        time_module.sleep(0.5)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Erro no banco: {e}")
+                                        if 'conn' in locals(): devolver_conexao(conn)
 
-                            with st.expander("📲 Re-enviar Recibo via WhatsApp"):
-                                # 1. Cria uma lista combinando o Nº da Venda com o Nome do Cliente
-                                df_recibos = df_ops[['Nº Venda', 'Cliente']].drop_duplicates().sort_values(by='Nº Venda', ascending=False)
-                                opcoes_recibo = df_recibos.apply(lambda x: f"{x['Nº Venda']} - {x['Cliente']}", axis=1).tolist()
+                        # ==========================================
+                        # 2. SEGUNDA VIA WHATSAPP
+                        # ==========================================
+                        with st.expander("📲 Re-enviar Recibo via WhatsApp"):
+                            df_recibos = df_ops[['Nº Venda', 'Cliente']].drop_duplicates().sort_values(by='Nº Venda', ascending=False)
+                            opcoes_recibo = df_recibos.apply(lambda x: f"{x['Nº Venda']} - {x['Cliente']}", axis=1).tolist()
+                            v_sel_zap_formatado = st.selectbox("Selecione a venda para gerar o recibo:", options=opcoes_recibo, key="s_zap", index=None, placeholder="Escolha a venda...")
+                            
+                            if v_sel_zap_formatado:
+                                codigo_venda_selecionada = int(v_sel_zap_formatado.split(" - ")[0])
                                 
-                                v_sel_zap_formatado = st.selectbox("Selecione a venda para gerar o recibo:", options=opcoes_recibo, key="s_zap")
-                                
-                                if v_sel_zap_formatado:
-                                    # 2. Extrai apenas o número da venda que está no começo do texto (ex: "69 - Maria" vira 69)
-                                    codigo_venda_selecionada = int(v_sel_zap_formatado.split(" - ")[0])
+                                if st.button("Gerar Recibo Detalhado", use_container_width=True, key="btn_gerar_zap"):
+                                    df_venda_zap = carregar_dados_cached("SELECT codigo_venda, data_venda, valor_total, forma_pagamento, qtd_parcelas, valor_entrada, valor_restante, cliente_id FROM vendas WHERE codigo_venda = %s AND empresa_id = %s LIMIT 1", (codigo_venda_selecionada, emp_id))
                                     
-                                    if st.button("Gerar Recibo Detalhado", use_container_width=True):
-                                        # 3. Puxa os dados usando o código extraído
-                                        df_venda_zap = carregar_dados_cached("SELECT codigo_venda, data_venda, valor_total, forma_pagamento, qtd_parcelas, valor_entrada, valor_restante, cliente_id FROM vendas WHERE codigo_venda = %s AND empresa_id = %s LIMIT 1", (codigo_venda_selecionada, emp_id))
+                                    if not df_venda_zap.empty:
+                                        info_v = df_venda_zap.iloc[0]
+                                        c_id = info_v['cliente_id']
                                         
-                                        if not df_venda_zap.empty:
-                                            info_v = df_venda_zap.iloc[0]
-                                            c_id = info_v['cliente_id']
+                                        df_cli_zap = carregar_dados_cached("SELECT nome, telefone FROM clientes WHERE id = %s", (int(c_id),))
+                                        nome_cli = df_cli_zap.iloc[0]['nome'].split()[0] if not df_cli_zap.empty else "Cliente"
+                                        tel_cli = df_cli_zap.iloc[0]['telefone'] if not df_cli_zap.empty else None
+                                        
+                                        df_itens = carregar_dados_cached("SELECT v.quantidade, p.nome, v.valor_unitario, v.desconto FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.codigo_venda = %s AND v.empresa_id = %s", (codigo_venda_selecionada, emp_id))
+                                        
+                                        lista_produtos_msg = ""
+                                        for _, it in df_itens.iterrows():
+                                            qtd_it = int(it['quantidade'])
+                                            unit_it = float(it['valor_unitario'])
+                                            desc_it = float(it['desconto'])
                                             
-                                            df_cli_zap = carregar_dados_cached("SELECT nome, telefone FROM clientes WHERE id = %s", (int(c_id),))
-                                            nome_cli = df_cli_zap.iloc[0]['nome'].split()[0] if not df_cli_zap.empty else "Cliente"
-                                            tel_cli = df_cli_zap.iloc[0]['telefone'] if not df_cli_zap.empty else None
+                                            lista_produtos_msg += f"▫️ {qtd_it}x {it['nome']} (R$ {unit_it:.2f})\n".replace('.', ',')
+                                            if desc_it > 0:
+                                                desc_total_item = desc_it * qtd_it
+                                                lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
+                                        
+                                        msg_z = f"Olá, {nome_cli}! 🌸\n\n"
+                                        msg_z += f"Aqui está o resumo do seu pedido do dia *{info_v['data_venda']}* (Segunda Via):\n\n"
+                                        msg_z += f"🧾 *Pedido Confirmado Nº {info_v['codigo_venda']}*\n\n"
+                                        msg_z += f"*Itens:*\n{lista_produtos_msg}\n"
+                                        msg_z += f"💰 *Valor Total:* R$ {float(info_v['valor_total']):.2f}\n".replace('.', ',')
+                                        
+                                        qtd_p = int(info_v['qtd_parcelas']) if pd.notna(info_v['qtd_parcelas']) else 1
+                                        f_pag_z = info_v['forma_pagamento']
+                                        v_ent = float(info_v['valor_entrada']) if pd.notna(info_v['valor_entrada']) else 0.0
+                                        
+                                        if qtd_p > 1 or (f_pag_z == "Crediário" and v_ent > 0):
+                                            msg_z += "\n📅 *Datas de Vencimento:*\n"
+                                            df_parc = carregar_dados_cached("SELECT num_parcela, valor_parcela, data_vencimento FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s ORDER BY num_parcela", (codigo_venda_selecionada, emp_id))
                                             
-                                            df_itens = carregar_dados_cached("SELECT v.quantidade, p.nome, v.valor_unitario, v.desconto FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.codigo_venda = %s AND v.empresa_id = %s", (codigo_venda_selecionada, emp_id))
-                                            
-                                            lista_produtos_msg = ""
-                                            for _, it in df_itens.iterrows():
-                                                qtd_it = int(it['quantidade'])
-                                                unit_it = float(it['valor_unitario'])
-                                                desc_it = float(it['desconto'])
-                                                
-                                                lista_produtos_msg += f"▫️ {qtd_it}x {it['nome']} (R$ {unit_it:.2f})\n".replace('.', ',')
-                                                if desc_it > 0:
-                                                    desc_total_item = desc_it * qtd_it
-                                                    lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
-                                            
-                                            msg_z = f"Olá, {nome_cli}! 🌸\n\n"
-                                            msg_z += f"Aqui está o resumo do seu pedido do dia *{info_v['data_venda']}* (Segunda Via):\n\n"
-                                            msg_z += f"🧾 *Pedido Confirmado Nº {info_v['codigo_venda']}*\n\n"
-                                            msg_z += f"*Itens:*\n{lista_produtos_msg}\n"
-                                            msg_z += f"💰 *Valor Total:* R$ {float(info_v['valor_total']):.2f}\n".replace('.', ',')
-                                            
-                                            qtd_p = int(info_v['qtd_parcelas']) if pd.notna(info_v['qtd_parcelas']) else 1
-                                            f_pag_z = info_v['forma_pagamento']
-                                            v_ent = float(info_v['valor_entrada']) if pd.notna(info_v['valor_entrada']) else 0.0
-                                            
-                                            if qtd_p > 1 or (f_pag_z == "Crediário" and v_ent > 0):
-                                                msg_z += "\n📅 *Datas de Vencimento:*\n"
-                                                
-                                                df_parc = carregar_dados_cached("SELECT num_parcela, valor_parcela, data_vencimento FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s ORDER BY num_parcela", (codigo_venda_selecionada, emp_id))
-                                                
-                                                if not df_parc.empty:
-                                                    if f_pag_z == "Crediário" and v_ent > 0:
-                                                        ent_row = df_parc.iloc[0]
-                                                        msg_z += f"▪️ Entrada: R$ {float(ent_row['valor_parcela']):.2f} (Paga em {ent_row['data_vencimento']})\n".replace('.', ',')
-                                                        for _, p_row in df_parc.iloc[1:].iterrows():
-                                                            msg_z += f"▪️ {int(p_row['num_parcela'])}ª Parcela: R$ {float(p_row['valor_parcela']):.2f} -> {p_row['data_vencimento']}\n".replace('.', ',')
-                                                    else:
-                                                        for _, p_row in df_parc.iterrows():
-                                                            msg_z += f"▪️ {int(p_row['num_parcela'])}ª Parcela: R$ {float(p_row['valor_parcela']):.2f} -> {p_row['data_vencimento']}\n".replace('.', ',')
-                                            else:
-                                                msg_z += f"💳 *Forma de Pagto:* {f_pag_z}\n"
-                                                
-                                            msg_z += "\n\nMuito obrigada pela preferência! ✨"
-                                            
-                                            if tel_cli:
-                                                tel_l = ''.join(filter(str.isdigit, str(tel_cli)))
-                                                if len(tel_l) >= 10:
-                                                    if not tel_l.startswith('55'): tel_l = '55' + tel_l
-                                                    st.link_button("🟢 Gerar Link do WhatsApp", f"https://wa.me/{tel_l}?text={urllib.parse.quote(msg_z)}", use_container_width=True)
+                                            if not df_parc.empty:
+                                                if f_pag_z == "Crediário" and v_ent > 0:
+                                                    ent_row = df_parc.iloc[0]
+                                                    msg_z += f"▪️ Entrada: R$ {float(ent_row['valor_parcela']):.2f} (Paga em {ent_row['data_vencimento']})\n".replace('.', ',')
+                                                    for _, p_row in df_parc.iloc[1:].iterrows():
+                                                        msg_z += f"▪️ {int(p_row['num_parcela'])}ª Parcela: R$ {float(p_row['valor_parcela']):.2f} -> {p_row['data_vencimento']}\n".replace('.', ',')
                                                 else:
-                                                    st.warning("Telefone inválido no cadastro.")
+                                                    for _, p_row in df_parc.iterrows():
+                                                        msg_z += f"▪️ {int(p_row['num_parcela'])}ª Parcela: R$ {float(p_row['valor_parcela']):.2f} -> {p_row['data_vencimento']}\n".replace('.', ',')
+                                        else:
+                                            msg_z += f"💳 *Forma de Pagto:* {f_pag_z}\n"
+                                            
+                                        msg_z += "\n\nMuito obrigada pela preferência! ✨"
+                                        
+                                        if tel_cli:
+                                            tel_l = ''.join(filter(str.isdigit, str(tel_cli)))
+                                            if len(tel_l) >= 10:
+                                                if not tel_l.startswith('55'): tel_l = '55' + tel_l
+                                                st.link_button("🟢 Gerar Link do WhatsApp", f"https://wa.me/{tel_l}?text={urllib.parse.quote(msg_z)}", use_container_width=True)
                                             else:
-                                                st.warning("Cliente sem telefone cadastrado.")
+                                                st.warning("Telefone inválido no cadastro.")
+                                        else:
+                                            st.warning("Cliente sem telefone cadastrado.")
 
-                        with col_op2:
-                            # EXPANDER 1: ESTORNO (SEM FORMULÁRIO PARA EVITAR VAZAMENTO DE ABA)
-                            with st.expander("❌ Cancelar / Estornar um Item"):
-                                opcoes_del = df_ops.apply(lambda x: f"Venda {x['Nº Venda']} (Item ID {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
-                                v_del = st.selectbox("Selecione o item para DEVOLVER ao estoque:", options=opcoes_del, key="s_del", index=None)
-                                
-                                if v_del:
-                                    st.warning("Atenção: Esta ação devolverá o produto ao estoque e excluirá o registro de venda deste item.")
-                                    if st.button("🚨 Confirmar Estorno", type="primary", key="btn_estorno_item"):
+                        # ==========================================
+                        # 3. ESTORNO
+                        # ==========================================
+                        with st.expander("❌ Cancelar / Estornar um Item"):
+                            opcoes_del = df_ops.apply(lambda x: f"Venda {x['Nº Venda']} (Item ID {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
+                            v_del = st.selectbox("Selecione o item para DEVOLVER ao estoque:", options=opcoes_del, key="s_del", index=None, placeholder="Escolha o item...")
+                            
+                            if v_del:
+                                st.warning("Atenção: Esta ação devolverá o produto ao estoque e excluirá o registro de venda deste item.")
+                                if st.button("🚨 Confirmar Estorno", type="primary", key="btn_estorno_item"):
+                                    try:
                                         v_id_del = int(v_del.split("Item ID ")[1].split(")")[0])
                                         conn = conectar_banco()
                                         cur = conn.cursor()
                                         cur.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id = %s", (v_id_del,))
                                         info = cur.fetchone()
+                                        
                                         if info:
                                             cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (info[1], info[0]))
                                             cur.execute("DELETE FROM vendas WHERE id = %s", (v_id_del,))
@@ -2634,92 +2642,77 @@ Feliz aniversário! 🥳✨"""
                                             st.success("Estorno realizado com sucesso!")
                                             time_module.sleep(0.5)
                                             st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Erro: {e}")
+                                        if 'conn' in locals(): devolver_conexao(conn)
 
-                            # EXPANDER 2: CORREÇÃO FINANCEIRA
-                            # 🔧 CORREÇÃO DE VAZAMENTO DE ABA: este bloco é dinâmico (o número de
-                            # widgets muda de 1 para ~5 assim que uma venda é selecionada). Sem
-                            # @st.fragment, essa mudança dispara um rerun completo do script — e como
-                            # TODAS as abas (Serviços, Entradas, Trocas...) são recalculadas junto,
-                            # o Streamlit por vezes perde a referência de onde cada elemento deve ficar
-                            # e "derrama" conteúdo de outras abas abaixo da tela. Isolando em um
-                            # fragmento, o clique no selectbox só re-executa este pedacinho de código.
-                            @st.fragment
-                            def fragmento_corrigir_pagamento():
-                                df_vendas_fp = df_ops[['Nº Venda', 'Cliente']].drop_duplicates().sort_values(by='Nº Venda', ascending=False)
-                                opcoes_fp = df_vendas_fp.apply(lambda x: f"{x['Nº Venda']} - {x['Cliente']}", axis=1).tolist()
+                        # ==========================================
+                        # 4. CORREÇÃO FINANCEIRA
+                        # ==========================================
+                        with st.expander("💳 Corrigir Forma de Pagamento e Recriar Parcelas"):
+                            df_vendas_fp = df_ops[['Nº Venda', 'Cliente']].drop_duplicates().sort_values(by='Nº Venda', ascending=False)
+                            opcoes_fp = df_vendas_fp.apply(lambda x: f"{x['Nº Venda']} - {x['Cliente']}", axis=1).tolist()
+                            v_sel_fp = st.selectbox("Selecione a venda para alterar o pagamento:", options=opcoes_fp, key="fp_sel_cod", index=None, placeholder="Escolha a venda...")
+                            
+                            if v_sel_fp:
+                                busca_cod = int(v_sel_fp.split(" - ")[0])
+                                df_b = carregar_dados_cached("""
+                                    SELECT codigo_venda, SUM(valor_total) as total, MAX(cliente_id) as cid, 
+                                           MAX(forma_pagamento) as fpag_atual, MAX(qtd_parcelas) as qparc_atual 
+                                    FROM vendas WHERE empresa_id=%s AND codigo_venda=%s GROUP BY codigo_venda
+                                """, (emp_id, busca_cod))
                                 
-                                v_sel_fp = st.selectbox("Selecione a venda para alterar o pagamento:", options=opcoes_fp, key="fp_sel_cod", index=None, placeholder="Escolha a venda...")
-                                
-                                if v_sel_fp:
-                                    busca_cod = int(v_sel_fp.split(" - ")[0])
+                                if not df_b.empty:
+                                    v_tot = df_b.iloc[0]['total']
+                                    c_id = df_b.iloc[0]['cid']
+                                    fpag_atual = df_b.iloc[0]['fpag_atual']
+                                    qparc_atual = int(df_b.iloc[0]['qparc_atual']) if pd.notna(df_b.iloc[0]['qparc_atual']) else 1
                                     
-                                    df_b = carregar_dados_cached("""
-                                        SELECT codigo_venda, 
-                                               SUM(valor_total) as total, 
-                                               MAX(cliente_id) as cid,
-                                               MAX(forma_pagamento) as fpag_atual,
-                                               MAX(qtd_parcelas) as qparc_atual
-                                        FROM vendas 
-                                        WHERE empresa_id=%s AND codigo_venda=%s 
-                                        GROUP BY codigo_venda
-                                    """, (emp_id, busca_cod))
+                                    lista_pagamentos = ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"]
+                                    idx_pag = lista_pagamentos.index(fpag_atual) if fpag_atual in lista_pagamentos else 0
                                     
-                                    if not df_b.empty:
-                                        v_tot = df_b.iloc[0]['total']
-                                        c_id = df_b.iloc[0]['cid']
-                                        fpag_atual = df_b.iloc[0]['fpag_atual']
-                                        qparc_atual = int(df_b.iloc[0]['qparc_atual']) if pd.notna(df_b.iloc[0]['qparc_atual']) else 1
-                                        
-                                        lista_pagamentos = ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"]
-                                        idx_pag = lista_pagamentos.index(fpag_atual) if fpag_atual in lista_pagamentos else 0
-                                        
-                                        st.info(f"Venda Nº {busca_cod} encontrada! Valor Total: R$ {v_tot:.2f}".replace('.', ','))
-                                        st.markdown(f"**Condição Atual Registrada:** {fpag_atual} em {qparc_atual}x")
-                                        st.markdown("---")
-                                        
-                                        n_fp = st.selectbox("Nova Forma de Pagamento", lista_pagamentos, index=idx_pag, key="fp_sel_nova")
-                                        n_p = st.number_input("Novo Número de Parcelas", min_value=1, max_value=24, value=qparc_atual, key="fp_parc")
-                                        
-                                        if st.button("Salvar Nova Condição Financeira", type="primary", key="btn_salvar_fp"):
-                                            try:
-                                                conn = conectar_banco()
-                                                cur = conn.cursor()
+                                    st.info(f"Venda Nº {busca_cod} encontrada! Valor Total: R$ {v_tot:.2f}".replace('.', ','))
+                                    st.markdown(f"**Condição Atual Registrada:** {fpag_atual} em {qparc_atual}x")
+                                    st.markdown("---")
+                                    
+                                    n_fp = st.selectbox("Nova Forma de Pagamento", lista_pagamentos, index=idx_pag, key="fp_sel_nova")
+                                    n_p = st.number_input("Novo Número de Parcelas", min_value=1, max_value=24, value=qparc_atual, key="fp_parc")
+                                    
+                                    if st.button("Salvar Nova Condição Financeira", type="primary", key="btn_salvar_fp"):
+                                        try:
+                                            conn = conectar_banco()
+                                            cur = conn.cursor()
+                                            
+                                            cur.execute("UPDATE vendas SET forma_pagamento=%s, qtd_parcelas=%s WHERE codigo_venda=%s AND empresa_id=%s", (n_fp, n_p, busca_cod, emp_id))
+                                            cur.execute("DELETE FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s", (busca_cod, emp_id))
+                                            
+                                            for i in range(1, int(n_p) + 1):
+                                                dt_venc = (date.today() + timedelta(days=30*(i-1))).strftime("%d/%m/%Y")
                                                 
-                                                cur.execute("UPDATE vendas SET forma_pagamento=%s, qtd_parcelas=%s WHERE codigo_venda=%s AND empresa_id=%s", (n_fp, n_p, busca_cod, emp_id))
-                                                cur.execute("DELETE FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s", (busca_cod, emp_id))
-                                                
-                                                for i in range(1, int(n_p) + 1):
-                                                    dt_venc = (date.today() + timedelta(days=30*(i-1))).strftime("%d/%m/%Y")
+                                                if n_fp in ["Crédito", "Débito"]:
+                                                    status_venda = 'Pago'
+                                                    data_pag_val = (date.today() + timedelta(days=1)).strftime("%d/%m/%Y")
+                                                elif n_fp == "Crediário":
+                                                    status_venda = 'Pendente'
+                                                    data_pag_val = None
+                                                else: 
+                                                    status_venda = 'Pago'
+                                                    data_pag_val = date.today().strftime("%d/%m/%Y")
                                                     
-                                                    if n_fp in ["Crédito", "Débito"]:
-                                                        status_venda = 'Pago'
-                                                        data_pag_val = (date.today() + timedelta(days=1)).strftime("%d/%m/%Y")
-                                                    elif n_fp == "Crediário":
-                                                        status_venda = 'Pendente'
-                                                        data_pag_val = None
-                                                    else: 
-                                                        status_venda = 'Pago'
-                                                        data_pag_val = date.today().strftime("%d/%m/%Y")
-                                                        
-                                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
-                                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""", 
-                                                                (busca_cod, int(c_id), i, int(n_p), float(v_tot)/int(n_p), dt_venc, status_venda, data_pag_val, emp_id))
-                                                
-                                                conn.commit()
-                                                devolver_conexao(conn)
-                                                limpar_cache()
-                                                
-                                                st.success("Atualizado! As parcelas foram recriadas no Contas a Receber.")
-                                                time_module.sleep(1)
-                                                st.rerun()
-                                            except Exception as e:
-                                                st.error(f"Erro ao atualizar: {e}")
-                                                if 'conn' in locals(): devolver_conexao(conn)
-                                    else:
-                                        st.warning("Venda não encontrada.")
-
-                            with st.expander("💳 Corrigir Forma de Pagamento e Recriar Parcelas"):
-                                fragmento_corrigir_pagamento()
+                                                cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""", 
+                                                            (busca_cod, int(c_id), i, int(n_p), float(v_tot)/int(n_p), dt_venc, status_venda, data_pag_val, emp_id))
+                                            
+                                            conn.commit()
+                                            devolver_conexao(conn)
+                                            limpar_cache()
+                                            
+                                            st.success("Atualizado! As parcelas foram recriadas no Contas a Receber.")
+                                            time_module.sleep(1)
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Erro ao atualizar: {e}")
+                                            if 'conn' in locals(): devolver_conexao(conn)
 
                         st.markdown("---")
                         st.markdown("#### 🕒 Histórico de Vendas Recentes")
