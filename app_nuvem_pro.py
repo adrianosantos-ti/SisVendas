@@ -46,20 +46,15 @@ st.markdown(
 )
 
 # ==========================================
-# CONFIGURAÇÃO DE BANCO DE DADOS (NUVEM)
+# 2. CONEXÃO AO BANCO (Via PgBouncer do Supabase)
 # ==========================================
 if 'carrinho' not in st.session_state:
     st.session_state['carrinho'] = []
 
 DATABASE_URL = st.secrets["DATABASE_URL"]
 
-# ==========================================
-# CONEXÃO AO BANCO
-# Usa uma conexão por execução com reconexão
-# automática. Simples, robusto e compatível
-# com o PgBouncer do Supabase (porta 6543).
-# ==========================================
 def conectar_banco():
+    # Deixa a responsabilidade do pool para a porta 6543 do Supabase
     return psycopg2.connect(DATABASE_URL)
 
 def devolver_conexao(conn):
@@ -87,15 +82,6 @@ def carregar_dados(query, params=None):
         devolver_conexao(conn)
 
 def executar_escrita(operacoes):
-    """
-    Executa operações de escrita no banco de forma segura.
-    Garante commit ou rollback e fechamento da conexão.
-    
-    Uso:
-        def minhas_operacoes(cur):
-            cur.execute("UPDATE ...", (params,))
-        executar_escrita(minhas_operacoes)
-    """
     conn = conectar_banco()
     try:
         cur = conn.cursor()
@@ -107,18 +93,13 @@ def executar_escrita(operacoes):
     finally:
         devolver_conexao(conn)
 
-# ==========================================
-# CACHE DE LEITURA (reduz chamadas ao banco)
-# TTL de 60s: dados ficam em memória por 1 min.
-# Use limpar_cache() após qualquer INSERT/UPDATE/DELETE.
-# ==========================================
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar_dados_cached(query, params=None):
     return carregar_dados(query, params)
 
 def limpar_cache():
     st.cache_data.clear()
-
+    
 # ==========================================
 # PAINEL DE AVALIAÇÕES (visível no sistema)
 # ==========================================
