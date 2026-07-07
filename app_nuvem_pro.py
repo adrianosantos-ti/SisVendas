@@ -2536,24 +2536,29 @@ Feliz aniversário! 🥳✨"""
                                             st.rerun()
 
                             with st.expander("📲 Re-enviar Recibo via WhatsApp"):
-                                v_sel_zap = st.selectbox("Selecione a venda para gerar o recibo:", options=sorted(list(set(df_ops['Nº Venda'].tolist())), reverse=True), key="s_zap")
+                                # 1. Cria uma lista combinando o Nº da Venda com o Nome do Cliente
+                                df_recibos = df_ops[['Nº Venda', 'Cliente']].drop_duplicates().sort_values(by='Nº Venda', ascending=False)
+                                opcoes_recibo = df_recibos.apply(lambda x: f"{x['Nº Venda']} - {x['Cliente']}", axis=1).tolist()
                                 
-                                if v_sel_zap:
+                                v_sel_zap_formatado = st.selectbox("Selecione a venda para gerar o recibo:", options=opcoes_recibo, key="s_zap")
+                                
+                                if v_sel_zap_formatado:
+                                    # 2. Extrai apenas o número da venda que está no começo do texto (ex: "69 - Maria" vira 69)
+                                    codigo_venda_selecionada = int(v_sel_zap_formatado.split(" - ")[0])
+                                    
                                     if st.button("Gerar Recibo Detalhado", use_container_width=True):
-                                        # 1. Puxa o cabeçalho da venda
-                                        df_venda_zap = carregar_dados_cached("SELECT codigo_venda, data_venda, valor_total, forma_pagamento, qtd_parcelas, valor_entrada, valor_restante, cliente_id FROM vendas WHERE codigo_venda = %s AND empresa_id = %s LIMIT 1", (int(v_sel_zap), emp_id))
+                                        # 3. Puxa os dados usando o código extraído
+                                        df_venda_zap = carregar_dados_cached("SELECT codigo_venda, data_venda, valor_total, forma_pagamento, qtd_parcelas, valor_entrada, valor_restante, cliente_id FROM vendas WHERE codigo_venda = %s AND empresa_id = %s LIMIT 1", (codigo_venda_selecionada, emp_id))
                                         
                                         if not df_venda_zap.empty:
                                             info_v = df_venda_zap.iloc[0]
                                             c_id = info_v['cliente_id']
                                             
-                                            # 2. Puxa os dados do cliente
                                             df_cli_zap = carregar_dados_cached("SELECT nome, telefone FROM clientes WHERE id = %s", (int(c_id),))
                                             nome_cli = df_cli_zap.iloc[0]['nome'].split()[0] if not df_cli_zap.empty else "Cliente"
                                             tel_cli = df_cli_zap.iloc[0]['telefone'] if not df_cli_zap.empty else None
                                             
-                                            # 3. Puxa os itens da venda para recriar a lista
-                                            df_itens = carregar_dados_cached("SELECT v.quantidade, p.nome, v.valor_unitario, v.desconto FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.codigo_venda = %s AND v.empresa_id = %s", (int(v_sel_zap), emp_id))
+                                            df_itens = carregar_dados_cached("SELECT v.quantidade, p.nome, v.valor_unitario, v.desconto FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.codigo_venda = %s AND v.empresa_id = %s", (codigo_venda_selecionada, emp_id))
                                             
                                             lista_produtos_msg = ""
                                             for _, it in df_itens.iterrows():
@@ -2566,7 +2571,6 @@ Feliz aniversário! 🥳✨"""
                                                     desc_total_item = desc_it * qtd_it
                                                     lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
                                             
-                                            # 4. Monta a mensagem idêntica à original
                                             msg_z = f"Olá, {nome_cli}! 🌸\n\n"
                                             msg_z += f"Aqui está o resumo do seu pedido do dia *{info_v['data_venda']}* (Segunda Via):\n\n"
                                             msg_z += f"🧾 *Pedido Confirmado Nº {info_v['codigo_venda']}*\n\n"
@@ -2577,11 +2581,10 @@ Feliz aniversário! 🥳✨"""
                                             f_pag_z = info_v['forma_pagamento']
                                             v_ent = float(info_v['valor_entrada']) if pd.notna(info_v['valor_entrada']) else 0.0
                                             
-                                            # 5. Lógica de Parcelas Puxando do Contas a Receber
                                             if qtd_p > 1 or (f_pag_z == "Crediário" and v_ent > 0):
                                                 msg_z += "\n📅 *Datas de Vencimento:*\n"
                                                 
-                                                df_parc = carregar_dados_cached("SELECT num_parcela, valor_parcela, data_vencimento FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s ORDER BY num_parcela", (int(v_sel_zap), emp_id))
+                                                df_parc = carregar_dados_cached("SELECT num_parcela, valor_parcela, data_vencimento FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s ORDER BY num_parcela", (codigo_venda_selecionada, emp_id))
                                                 
                                                 if not df_parc.empty:
                                                     if f_pag_z == "Crediário" and v_ent > 0:
@@ -2597,7 +2600,6 @@ Feliz aniversário! 🥳✨"""
                                                 
                                             msg_z += "\n\nMuito obrigada pela preferência! ✨"
                                             
-                                            # 6. Gera o Link
                                             if tel_cli:
                                                 tel_l = ''.join(filter(str.isdigit, str(tel_cli)))
                                                 if len(tel_l) >= 10:
