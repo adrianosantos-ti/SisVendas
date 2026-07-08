@@ -319,47 +319,51 @@ if not st.session_state['logado']:
             senha_input = st.text_input("Senha", type="password")
             
             if st.button("Entrar no Sistema", type="primary", use_container_width=True):
-                conn = conectar_banco()
-                cursor = conn.cursor()
-                cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
-                usuario = cursor.fetchone()
-                # ==========================================
-                # CORREÇÃO NO BLOCO DE LOGIN
-                # ==========================================
-                if usuario:
-                    st.session_state['logado'] = True
-                    st.session_state['usuario_id'] = usuario[0]
-                    st.session_state['usuario_nome'] = usuario[1]
-                    st.session_state['perfil'] = usuario[2]
-                    st.session_state['empresa_id'] = usuario[3]
-    
-                    perfil_usuario = usuario[2]
-                    id_usuario_logado = usuario[0]
+                conn = None
+                try:
+                    conn = conectar_banco()
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
+                    usuario = cursor.fetchone()
+                    # ==========================================
+                    # CORREÇÃO NO BLOCO DE LOGIN
+                    # ==========================================
+                    if usuario:
+                        st.session_state['logado'] = True
+                        st.session_state['usuario_id'] = usuario[0]
+                        st.session_state['usuario_nome'] = usuario[1]
+                        st.session_state['perfil'] = usuario[2]
+                        st.session_state['empresa_id'] = usuario[3]
 
-                    if perfil_usuario in ['admin', 'master']:
-                        # Se for admin/master, puxa todas as chaves existentes no sistema
-                        cursor.execute("SELECT chave FROM modulos")
-                        resultado = cursor.fetchall()
-                        # 🌟 ADICIONADO .strip() AQUI PARA LIMPAR ESPAÇOS OCULTOS
-                        st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
+                        perfil_usuario = usuario[2]
+                        id_usuario_logado = usuario[0]
+
+                        if perfil_usuario in ['admin', 'master']:
+                            # Se for admin/master, puxa todas as chaves existentes no sistema
+                            cursor.execute("SELECT chave FROM modulos")
+                            resultado = cursor.fetchall()
+                            # 🌟 ADICIONADO .strip() AQUI PARA LIMPAR ESPAÇOS OCULTOS
+                            st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
+                        else:
+                            # Se for usuário comum, cruza com a tabela de permissões
+                            cursor.execute("""
+                                SELECT m.chave 
+                                FROM permissoes_acesso p
+                                JOIN modulos m ON p.modulo_id = m.id
+                                WHERE p.usuario_id = %s
+                            """, (id_usuario_logado,))
+                            resultado = cursor.fetchall()
+                            # 🌟 ADICIONADO .strip() AQUI TAMBÉM
+                            st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
+
+                        # Agora sim, com tudo salvo na memória, recarregamos a tela
+                        st.rerun()
                     else:
-                        # Se for usuário comum, cruza com a tabela de permissões
-                        cursor.execute("""
-                            SELECT m.chave 
-                            FROM permissoes_acesso p
-                            JOIN modulos m ON p.modulo_id = m.id
-                            WHERE p.usuario_id = %s
-                        """, (id_usuario_logado,))
-                        resultado = cursor.fetchall()
-                        # 🌟 ADICIONADO .strip() AQUI TAMBÉM
-                        st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
-
-                    # Agora sim, com tudo salvo na memória, fechamos o banco e recarregamos a tela
+                        st.error("❌ Usuário ou senha incorretos.")
+                except Exception as e:
+                    st.error(f"Erro ao tentar entrar no sistema: {e}")
+                finally:
                     devolver_conexao(conn)
-                    st.rerun()
-                else:
-                    devolver_conexao(conn)
-                    st.error("❌ Usuário ou senha incorretos.")
 
 # --- PAINEL DO ADMINISTRADOR MASTER ---
 elif st.session_state['perfil'] == 'master':
@@ -380,13 +384,10 @@ elif st.session_state['perfil'] == 'master':
             logo_emp = st.text_input("URL da Logomarca (Opcional)", placeholder="Ex: https://github.com/.../logo.png?raw=true")
             
             if st.form_submit_button("Salvar"):
-                conn = conectar_banco()
-                conn.cursor().execute(
+                executar_comando(
                     "INSERT INTO empresas (nome, cnpj, logo_url) VALUES (%s, %s, %s)", 
                     (nome_emp, cnpj_emp, logo_emp)
                 )
-                conn.commit()
-                devolver_conexao(conn)
                 st.success(f"Empresa '{nome_emp}' cadastrada!")
                 limpar_cache()
                 st.rerun()
@@ -419,13 +420,10 @@ elif st.session_state['perfil'] == 'master':
                         e_logo = st.text_input("URL da Logomarca", value=val_logo, placeholder="Ex: https://github.com/.../logo.png?raw=true")
                         
                         if st.form_submit_button("💾 Salvar Alterações"):
-                            conn = conectar_banco()
-                            conn.cursor().execute(
+                            executar_comando(
                                 "UPDATE empresas SET nome=%s, cnpj=%s, logo_url=%s WHERE id=%s", 
                                 (e_nome, e_cnpj, e_logo, int(emp_selecionada))
                             )
-                            conn.commit()
-                            devolver_conexao(conn)
                             
                             st.success("✅ Cadastro da empresa atualizado com sucesso!")
                             limpar_cache()
@@ -459,13 +457,10 @@ elif st.session_state['perfil'] == 'master':
             perfil_usu = st.selectbox("Perfil de Acesso", ["comum", "admin"], help="Admins têm acesso a todas as telas automaticamente. Comuns precisam de permissões específicas.")
             
             if st.form_submit_button("Criar"):
-                conn = conectar_banco()
-                conn.cursor().execute(
+                executar_comando(
                     "INSERT INTO usuarios (nome, login, senha, empresa_id, perfil) VALUES (%s,%s,%s,%s,%s)", 
                     (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu], perfil_usu)
                 )
-                conn.commit()
-                devolver_conexao(conn)
                 st.success(f"Usuário '{nome_usu}' criado com sucesso! Agora configure as permissões dele na aba abaixo.")
                 limpar_cache()
                 st.rerun()
@@ -521,22 +516,19 @@ elif st.session_state['perfil'] == 'master':
                                     selecoes[mod['id']] = st.checkbox(f"TELA: {mod['nome']}", value=tem_acesso)
                                 
                                 if st.form_submit_button("💾 Salvar Permissões"):
-                                    conn = conectar_banco()
-                                    cursor = conn.cursor()
-                                    
-                                    # Limpa as permissões antigas do usuário para regravar do zero
-                                    cursor.execute("DELETE FROM permissoes_acesso WHERE usuario_id = %s", (int(usu_perm_sel),))
-                                    
-                                    # Grava apenas os checkboxes marcados
-                                    for mod_id, esta_marcado in selecoes.items():
-                                        if esta_marcado:
-                                            cursor.execute(
-                                                "INSERT INTO permissoes_acesso (usuario_id, modulo_id) VALUES (%s, %s)", 
-                                                (int(usu_perm_sel), int(mod_id))
-                                            )
-                                    
-                                    conn.commit()
-                                    devolver_conexao(conn)
+                                    def _salvar_permissoes(cur):
+                                        # Limpa as permissões antigas do usuário para regravar do zero
+                                        cur.execute("DELETE FROM permissoes_acesso WHERE usuario_id = %s", (int(usu_perm_sel),))
+
+                                        # Grava apenas os checkboxes marcados
+                                        for mod_id, esta_marcado in selecoes.items():
+                                            if esta_marcado:
+                                                cur.execute(
+                                                    "INSERT INTO permissoes_acesso (usuario_id, modulo_id) VALUES (%s, %s)", 
+                                                    (int(usu_perm_sel), int(mod_id))
+                                                )
+
+                                    executar_escrita(_salvar_permissoes)
                                     st.success(f"Permissões de {linha_usu['nome']} atualizadas com sucesso!")
             else:
                 st.info("Cadastre um usuário primeiro.")
@@ -560,13 +552,10 @@ elif st.session_state['perfil'] == 'master':
                             e_emp = st.selectbox("Empresa", options=lista_nomes_empresas, index=idx_emp)
                             
                             if st.form_submit_button("💾 Salvar Alterações"):
-                                conn = conectar_banco()
-                                conn.cursor().execute(
+                                executar_comando(
                                     "UPDATE usuarios SET nome=%s, login=%s, empresa_id=%s, perfil=%s WHERE id=%s", 
                                     (e_nome, e_login, dict_empresas[e_emp], e_perfil, int(usu_ed_sel))
                                 )
-                                conn.commit()
-                                devolver_conexao(conn)
                                 st.success("✅ Usuário atualizado com sucesso!")
                                 limpar_cache()
                                 st.rerun()
@@ -578,10 +567,7 @@ elif st.session_state['perfil'] == 'master':
                     with st.form("f_exclui_usuario"):
                         st.warning("⚠️ O acesso será apagado permanentemente.")
                         if st.form_submit_button("🚨 Confirmar Exclusão"):
-                            conn = conectar_banco()
-                            conn.cursor().execute("DELETE FROM usuarios WHERE id=%s", (int(usu_del_sel),))
-                            conn.commit()
-                            devolver_conexao(conn)
+                            executar_comando("DELETE FROM usuarios WHERE id=%s", (int(usu_del_sel),))
                             st.success("🗑️ Usuário excluído!")
                             limpar_cache()
                             st.rerun()
@@ -598,10 +584,7 @@ elif st.session_state['perfil'] == 'master':
             usu_sel = st.selectbox("Selecione o Usuário", options=list(dict_todos_usu.keys()))
             nova_sen = st.text_input("Nova Senha", type="password")
             if st.button("Confirmar Alteração"):
-                conn = conectar_banco()
-                conn.cursor().execute("UPDATE usuarios SET senha = %s WHERE id = %s", (nova_sen, dict_todos_usu[usu_sel]))
-                conn.commit()
-                devolver_conexao(conn)
+                executar_comando("UPDATE usuarios SET senha = %s WHERE id = %s", (nova_sen, dict_todos_usu[usu_sel]))
                 st.success("Senha alterada!")
         else:
             st.info("Nenhum usuário para resetar a senha.")
