@@ -3879,824 +3879,783 @@ Feliz aniversário! 🥳✨"""
             unsafe_allow_html=True
         )
         
-        # ==========================================
-        # ⚡ MODO EXPRESSO (ATALHO DA VISÃO APP)
-        # ==========================================
-        abrir_recebimento = st.session_state.get('abrir_expander_recebimento', False)
-        venda_id_alvo = st.session_state.get('venda_editando', None)
-
-        if abrir_recebimento and venda_id_alvo:
-            st.markdown("### ⚡ Recebimento Expresso")
-            #st.info(f"Você acessou o atalho rápido para faturar a Venda Nº {venda_id_alvo}.")
-
-            # 1. Query cirúrgica e levíssima: Puxa SÓ as parcelas desta venda
-            query_rapida = """
-                SELECT cr.id AS "ID Parcela", c.nome AS "Cliente",
+        st.markdown("### 💰 Gestão Financeira")
+        
+        tab_rec, tab_pag, aba_fluxo_caixa, aba_comissoes = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)", "💸 Fluxo de Caixa", "🏆 Comissões"])
+        
+        # --- CONTAS A RECEBER 100% RESTAURADO ---
+        with tab_rec:
+            st.markdown("### 💰 Controle de Parcelas")
+            # Adicionado c.telefone na consulta para puxarmos o número do WhatsApp
+            df_financeiro = carregar_dados_cached("""
+                SELECT cr.id AS "ID Parcela", cr.venda_codigo AS "Nº Venda", c.nome AS "Cliente", c.telefone AS "Telefone",
                        cr.num_parcela AS "Parcela", cr.total_parcelas AS "De",
                        cr.valor_parcela AS "Valor (R$)", cr.data_vencimento AS "Vencimento", cr.status AS "Status"
-                FROM contas_receber cr
-                JOIN clientes c ON cr.cliente_id = c.id
-                WHERE cr.empresa_id = %s AND cr.venda_codigo = %s
-                ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') ASC
-            """
-            df_expresso = carregar_dados_cached(query_rapida, (emp_id, int(venda_id_alvo)))
-
-            if not df_expresso.empty:
-                df_pendentes = df_expresso[df_expresso['Status'] == 'Pendente']
-                
-                if not df_pendentes.empty:
-                    data_pag_real = st.date_input("📅 Data do Recebimento:", value=date.today(), format="DD/MM/YYYY")
-                    
-                    for _, row in df_pendentes.iterrows():
-                        idx_b = row['ID Parcela']
-                        num_parc = row['Parcela']
-                        valor_parc = row['Valor (R$)']
-
-                        with st.container(border=True):
-                            st.markdown(f"👤 **{row['Cliente']}** — Parc. **{num_parc}/{row['De']}**")
-                            st.markdown(f"💰 **Valor:** R$ {valor_parc:.2f} &nbsp; | &nbsp; 📅 **Venc:** {row['Vencimento']}".replace('.', ','))
-
-                            if st.button(f"✅ Confirmar Baixa da Parcela {num_parc}", key=f"btn_exp_{idx_b}", use_container_width=True, type="primary"):
-                                try:
-                                    conn = conectar_banco()
-                                    conn.cursor().execute("UPDATE contas_receber SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
-                                    conn.commit()
-                                    devolver_conexao(conn)
-
-                                    st.session_state['venda_editando'] = None
-                                    st.session_state['abrir_expander_recebimento'] = False
-                                    limpar_cache()
-                                    st.success("✅ Pagamento registrado com sucesso!")
-                                    time_module.sleep(0.5)
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Erro: {e}")
-                                    if 'conn' in locals(): devolver_conexao(conn)
-                else:
-                    st.success("✅ Todas as parcelas desta venda já estão pagas!")
+                FROM contas_receber cr JOIN clientes c ON cr.cliente_id = c.id WHERE cr.empresa_id = %s ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') ASC
+            """, (emp_id,))
             
-            st.markdown("---")
-            if st.button("⬅️ Cancelar e Voltar ao Financeiro Completo", use_container_width=True):
-                st.session_state['venda_editando'] = None
-                st.session_state['abrir_expander_recebimento'] = False
-                st.rerun()
-
-        else:
-            st.markdown("### 💰 Gestão Financeira")
-            
-            tab_rec, tab_pag, aba_fluxo_caixa, aba_comissoes = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)", "💸 Fluxo de Caixa", "🏆 Comissões"])
-            
-            # --- CONTAS A RECEBER 100% RESTAURADO ---
-            with tab_rec:
-                st.markdown("### 💰 Controle de Parcelas")
-                # Adicionado c.telefone na consulta para puxarmos o número do WhatsApp
-                df_financeiro = carregar_dados_cached("""
-                    SELECT cr.id AS "ID Parcela", cr.venda_codigo AS "Nº Venda", c.nome AS "Cliente", c.telefone AS "Telefone",
-                           cr.num_parcela AS "Parcela", cr.total_parcelas AS "De",
-                           cr.valor_parcela AS "Valor (R$)", cr.data_vencimento AS "Vencimento", cr.status AS "Status"
-                    FROM contas_receber cr JOIN clientes c ON cr.cliente_id = c.id WHERE cr.empresa_id = %s ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') ASC
-                """, (emp_id,))
-                
-                if not df_financeiro.empty:
-                    df_financeiro['Data_Venc_Obj'] = pd.to_datetime(df_financeiro['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
-                    hoje = date.today()
-                    
-                    v_rec = df_financeiro[df_financeiro['Status'] == 'Pago']['Valor (R$)'].sum()
-                    v_pend = df_financeiro[df_financeiro['Status'] == 'Pendente']['Valor (R$)'].sum()
-                    mask_atraso = (df_financeiro['Status'] == 'Pendente') & (df_financeiro['Data_Venc_Obj'] < hoje)
-                    v_atr = df_financeiro[mask_atraso]['Valor (R$)'].sum()
-                    
-                    # --- ENVELOPAMENTO DA MATRIZ DE CARD FINANCEIRO ---
-                    # O resumo inicia compactado para abrir espaço para o painel de baixa no mobile
-                    with st.expander("📊 Ver Resumo Geral (Recebidos, No Prazo e Atrasos)", expanded=False):
-                        col_met1, col_met2, col_met3 = st.columns(3)
-                        col_met1.metric("✅ Total Já Recebido", f"R$ {v_rec:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(v_pend - v_atr):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atr:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Atenção" if v_atr > 0 else "Tudo em dia!", delta_color="inverse")
-                    
-                    #st.markdown("---")
-                    
-                    df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
-                    
-                    # --- LÓGICA DE REGISTRAR PAGAMENTO REFORMULADA (CARD LAYOUT MOBILE) ---
-                    
-                    # 1. Captura os comandos vindos lá do clique da Visão App
-                    abrir_recebimento = st.session_state.get('abrir_expander_recebimento', False)
-                    venda_id_alvo = st.session_state.get('venda_editando', None)
-                    
-                    # 2. O expander obedece ao gatilho automático de abertura
-                    with st.expander("✅ Registrar Recebimento de Parcela", expanded=abrir_recebimento):
-                        if not df_p.empty:
-                            
-                            # 3. FILTRAGEM INTELIGENTE: Descobre quais parcelas exibir
-                            if venda_id_alvo is not None:
-                                # Se veio o clique da Visão App, filtra apenas as parcelas dessa venda específica
-                                df_filtrado = df_p[df_p['Nº Venda'].astype(int) == int(venda_id_alvo)]
-                                st.markdown(f"✨ **Mostrando parcelas da Venda Nº {venda_id_alvo}**")
-                            else:
-                                # Se abriu manualmente, mostra um seletor limpo e curto apenas para escolher a Venda/Cliente
-                                df_p['venda_display'] = df_p['Nº Venda'].astype(str) + " - " + df_p['Cliente']
-                                opcoes_vendas = sorted(list(df_p['venda_display'].unique()))
-                                venda_escolhida = st.selectbox("Escolha a Venda / Cliente:", options=opcoes_vendas)
-                                cod_venda_sel = venda_escolhida.split(" - ")[0]
-                                df_filtrado = df_p[df_p['Nº Venda'].astype(int) == int(cod_venda_sel)]
-                            
-                            if not df_filtrado.empty:
-                                # Linha divisória em HTML com as margens (espaçamentos) espremidas
-                                st.markdown('<hr style="margin: 5px 0px 10px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
-                                
-                                # Campo de data único no topo do painel
-                                data_pag_real = st.date_input("📅 Data do Recebimento:", value=hoje, format="DD/MM/YYYY")
-                                
-                                # 4. RENDERIZAÇÃO DOS CARDS EXCLUSIVOS (Perfeito para leitura no celular)
-                                for _, row in df_filtrado.iterrows():
-                                    idx_b = row['ID Parcela']
-                                    num_parc = row['Parcela']
-                                    total_parc = row['De']
-                                    valor_parc = row['Valor (R$)']
-                                    venc_parc = row['Vencimento']
-                                    cliente_nome = row['Cliente']
-                                    
-                                    # Cada parcela vira um cartão visual mais compacto
-                                    with st.container(border=True):
-                                        # Linha 1: Cliente e qual é a parcela
-                                        st.markdown(f"👤 **{cliente_nome}** — Parc. **{num_parc}/{total_parc}**")
-                                        
-                                        # Linha 2: Valor e Data lado a lado com fonte em tamanho normal
-                                        valor_formatado = f"R$ {valor_parc:.2f}".replace('.', ',')
-                                        st.markdown(f"💰 **Valor:** {valor_formatado} &nbsp; | &nbsp; 📅 **Venc:** {venc_parc}")
-                                        
-                                        # Botão de ação direta
-                                        if st.button(f"✅ Confirmar Baixa da Parcela {num_parc}", key=f"btn_baixar_{idx_b}", use_container_width=True):
-                                            try:
-                                                conn = conectar_banco()
-                                                cur = conn.cursor()
-                                                
-                                                # Executa a baixa cirúrgica pelo ID único da parcela
-                                                cur.execute("""
-                                                    UPDATE contas_receber 
-                                                    SET status = 'Pago', data_pagamento = %s 
-                                                    WHERE id = %s AND empresa_id = %s
-                                                """, (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
-                                                
-                                                conn.commit()
-                                                devolver_conexao(conn)
-                                                
-                                                # Limpa completamente a memória de controle após o sucesso
-                                                st.session_state['venda_editando'] = None
-                                                st.session_state['abrir_expander_recebimento'] = False
-                                                
-                                                st.success("Pagamento registrado com sucesso!")
-                                                limpar_cache()
-                                                st.rerun()
-                                                
-                                            except Exception as e:
-                                                st.error(f"Erro ao salvar no banco: {e}")
-                                                if 'conn' in locals(): devolver_conexao(conn)
-                                
-                                # Botão extra para caso você queira fechar o painel sem baixar nada
-                                st.markdown("---")
-                                if st.button("❌ Cancelar / Fechar Seleção", use_container_width=True):
-                                    st.session_state['venda_editando'] = None
-                                    st.session_state['abrir_expander_recebimento'] = False
-                                    st.rerun()
-                            else:
-                                st.info("Nenhuma parcela pendente encontrada para este registro.")
-                        else:
-                            st.success("🎉 Nenhuma parcela pendente! Todos os clientes estão em dia.")
-                            
-                    # --- NOVO EXPANDER DE LEMBRETE DO WHATSAPP ---
-                    with st.expander("📲 Enviar Lembrete via WhatsApp", expanded=False):
-                        if not df_p.empty:
-                            
-                            op_lembrete = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
-                            lembrete_sel = st.selectbox("Selecione a parcela para enviar lembrete:", options=op_lembrete, key="sel_lembrete")
-                            
-                            if lembrete_sel:
-                                idx_l = op_lembrete.index(lembrete_sel)
-                                linha_sel = df_p.iloc[idx_l]
-                                
-                                nome_cli = linha_sel['Cliente']
-                                telefone_cli = linha_sel['Telefone']
-                                valor_parc = linha_sel['Valor (R$)']
-                                data_venc = linha_sel['Vencimento']
-                                
-                                valor_formatado = f"{valor_parc:.2f}".replace('.', ',')
-                                
-                                msg = f"Olá, {nome_cli}! 🌸 Tudo bem com você?\n\n"
-                                msg += f"Passando aqui rapidinho só para deixar um lembrete sobre a sua parcela de R$ {valor_formatado} referente aos seus produtinhos, com vencimento para o dia {data_venc}.\n\n"
-                                msg += "Qualquer dúvida ou se precisar de algo, estou à disposição! Um ótimo dia para você! ✨"
-
-                                st.text_area("Pré-visualização da Mensagem:", value=msg, height=180, disabled=True)
-
-                                if pd.notna(telefone_cli) and str(telefone_cli).strip() != "":
-                                    tel_limpo = ''.join(filter(str.isdigit, str(telefone_cli)))
-                                    if len(tel_limpo) >= 10:
-                                        if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
-                                        link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
-                                        st.link_button("🟢 Enviar Lembrete no WhatsApp", link_wpp, type="primary", use_container_width=True)
-                                    else: 
-                                        st.warning("⚠️ Telefone incompleto no cadastro (precisa ter DDD).")
-                                else: 
-                                    st.warning("⚠️ Cliente sem telefone cadastrado.")
-                        else:
-                            st.success("🎉 Nenhuma parcela pendente para cobrar!")
-                    
-                    #st.markdown("---")
-
-                    # --- LÓGICA PARA REAJUSTE DE PARCELAS E DATAS ---
-                    with st.expander("⚖️ Reajustar Valores e Datas das Parcelas"):
-                        st.markdown("Use esta opção quando precisar alterar o valor ou a data de vencimento das parcelas (o total da venda deve ser mantido).")
-        
-                        venda_ajuste = st.number_input("Digite o Nº da Venda (ex: 36)", min_value=1, step=1, key="num_ajuste_venda")
-        
-                        if st.button("Buscar Parcelas"):
-                            st.session_state['venda_editando'] = venda_ajuste
-            
-                        if 'venda_editando' in st.session_state:
-                            v_id = st.session_state['venda_editando']
-            
-                            df_parc = carregar_dados_cached("SELECT * FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
-            
-                            if not df_parc.empty:
-                                total_original = float(df_parc['valor_parcela'].sum())
-                                st.info(f"💰 **Valor Total Original da Venda:** R$ {total_original:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
-                
-                                with st.form(f"f_reajuste_{v_id}"):
-                                    novos_dados = {}
-                    
-                                    for index, row in df_parc.iterrows():
-                                        st.write(f"**Parcela {row['num_parcela']} de {row['total_parcelas']}** - Status: {row['status']}")
-                                        
-                                        # Converte a data string do banco (DD/MM/YYYY) para objeto date do Python
-                                        try:
-                                            data_atual = datetime.strptime(row['data_vencimento'], "%d/%m/%Y").date()
-                                        except:
-                                            data_atual = date.today() # Proteção anti-erro
-                                            
-                                        # Coloca o Valor e a Data lado a lado
-                                        col_val, col_dat = st.columns(2)
-                                        
-                                        novo_val = col_val.number_input(
-                                            f"Novo Valor (R$)", 
-                                            value=float(row['valor_parcela']), 
-                                            min_value=0.0, 
-                                            format="%.2f",
-                                            key=f"val_{row['id']}"
-                                        )
-                                        
-                                        nova_data = col_dat.date_input(
-                                            "Nova Data de Vencimento",
-                                            value=data_atual,
-                                            format="DD/MM/YYYY",
-                                            key=f"dat_{row['id']}"
-                                        )
-                                        
-                                        # Guarda o valor e a data formatada de volta para string
-                                        novos_dados[row['id']] = {
-                                            'valor': novo_val, 
-                                            'data': nova_data.strftime("%d/%m/%Y")
-                                        }
-                                        
-                                        st.markdown("---")
-                    
-                                    if st.form_submit_button("💾 Validar e Salvar Reajuste"):
-                                        # Soma os novos valores dentro do dicionário
-                                        soma_novas_parcelas = sum(item['valor'] for item in novos_dados.values())
-                        
-                                        if round(soma_novas_parcelas, 2) != round(total_original, 2):
-                                            st.error(f"❌ **Operação Bloqueada:** A soma das novas parcelas (R$ {soma_novas_parcelas:.2f}) é diferente do total da venda (R$ {total_original:.2f}). A diferença é de R$ {abs(total_original - soma_novas_parcelas):.2f}.")
-                                        else:
-                                            conn = conectar_banco()
-                                            for parcela_id, dados in novos_dados.items():
-                                                # Atualiza agora o valor_parcela E a data_vencimento no banco
-                                                conn.cursor().execute(
-                                                    "UPDATE contas_receber SET valor_parcela=%s, data_vencimento=%s WHERE id=%s AND empresa_id=%s", 
-                                                    (dados['valor'], dados['data'], parcela_id, emp_id)
-                                                )
-                                            conn.commit()
-                                            devolver_conexao(conn)
-                            
-                                            st.success("✅ Valores e datas reajustados com sucesso!")
-                                            del st.session_state['venda_editando']
-                                            limpar_cache()
-                                            st.rerun()
-                            else:
-                                st.warning("Nenhuma parcela encontrada para esta venda.")
-
-                # --- TABELA DE LEITURA COMPLETA (COM FILTRO DE CLIENTE E STATUS) ---
-                st.subheader("📋 Relatório de Parcelas e Boletos")
-                
-                # 1. Busca os dados no banco e cria a variável df_receber_geral
-                df_receber_geral = carregar_dados_cached("""
-                    SELECT cr.venda_codigo AS "Nº Venda",
-                           c.nome AS "Cliente",
-                           cr.num_parcela AS "Parcela",
-                           cr.total_parcelas AS "De",
-                           cr.valor_parcela AS "Valor (R$)",
-                           cr.data_vencimento AS "Vencimento",
-                           cr.status AS "Status"
-                    FROM contas_receber cr
-                    LEFT JOIN clientes c ON cr.cliente_id = c.id
-                    WHERE cr.empresa_id = %s
-                    ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') DESC
-                """, (emp_id,))
-                
-                if not df_receber_geral.empty:
-                    hoje = date.today()
-                    
-                    # Cria uma coluna de data real (oculta) para a matemática de atrasos funcionar
-                    df_receber_geral['Data_Venc_Obj'] = pd.to_datetime(df_receber_geral['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
-                    
-                    col_f1, col_f2 = st.columns([1, 2])
-                    
-                    # 2. Filtro de Cliente (Busca os nomes únicos no dataframe)
-                    lista_clientes = ["Todos os Clientes"] + sorted(df_receber_geral['Cliente'].dropna().unique().tolist())
-                    cliente_selecionado = col_f1.selectbox("🔍 Buscar por Cliente:", options=lista_clientes)
-                    
-                    # 3. Filtro de Status
-                    filtro_status_receber = col_f2.radio("Filtrar por Status da Parcela:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True, key="rad_status_receber")
-                    
-                    st.markdown("---")
-                    
-                    # 4. Aplica o filtro de cliente e calcula as métricas individuais
-                    df_view_receber = df_receber_geral.copy()
-                    
-                    if cliente_selecionado != "Todos os Clientes":
-                        df_view_receber = df_view_receber[df_view_receber['Cliente'] == cliente_selecionado]
-                        
-                        # Calcula as métricas exclusivas do cliente selecionado
-                        v_pago_cli = df_view_receber[df_view_receber['Status'] == 'Pago']['Valor (R$)'].sum()
-                        v_aberto_cli = df_view_receber[df_view_receber['Status'] == 'Pendente']['Valor (R$)'].sum()
-                        mask_atraso_cli = (df_view_receber['Status'] == 'Pendente') & (df_view_receber['Data_Venc_Obj'] < hoje)
-                        v_atraso_cli = df_view_receber[mask_atraso_cli]['Valor (R$)'].sum()
-                        v_no_prazo_cli = v_aberto_cli - v_atraso_cli
-                        
-                        st.markdown(f"**👤 Resumo Financeiro: {cliente_selecionado}**")
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("✅ Total Já Pago", f"R$ {v_pago_cli:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        c2.metric("⏳ A Pagar (No Prazo)", f"R$ {v_no_prazo_cli:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        c3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atraso_cli:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Dívida" if v_atraso_cli > 0 else "Tudo em dia!", delta_color="inverse")
-                        
-                        st.markdown("<br>", unsafe_allow_html=True)
-                    
-                    # 5. Aplica o filtro de status em cima do resultado (geral ou por cliente)
-                    if filtro_status_receber == "Pendentes":
-                        df_view_receber = df_view_receber[df_view_receber['Status'] == 'Pendente']
-                    elif filtro_status_receber == "Pagos":
-                        df_view_receber = df_view_receber[df_view_receber['Status'] == 'Pago']
-                    elif filtro_status_receber == "Atrasados":
-                        df_view_receber = df_view_receber[(df_view_receber['Status'] == 'Pendente') & (df_view_receber['Data_Venc_Obj'] < hoje)]
-                    
-                    # 6. Exibe a tabela final
-                    df_exibicao_receber = df_view_receber.drop(columns=['Data_Venc_Obj'], errors='ignore')
-                    st.dataframe(df_exibicao_receber, use_container_width=True, hide_index=True)
-                else:
-                    st.info("Nenhuma conta a receber registrada.")    
-                    
-            # --- CONTAS A PAGAR COMPLETÃO (CRUD + BAIXA) ---
-            with tab_pag:
-                st.markdown("### 🔴 Controle de Compromissos e Despesas")
-                
-                # 1. Carrega todas as contas a pagar ordenando nativamente pelo texto YYYY-MM-DD
-                df_pagar_geral = carregar_dados_cached("""
-                    SELECT cp.id AS "ID", f.nome AS "Fornecedor", cp.num_parcela AS "Parcela", 
-                           cp.total_parcelas AS "De", cp.valor_parcela AS "Valor (R$)", 
-                           cp.data_vencimento AS "Vencimento", cp.status AS "Status", cp.data_pagamento AS "Data Pagto"
-                    FROM contas_pagar cp 
-                    JOIN fornecedores f ON cp.fornecedor_id = f.id 
-                    WHERE cp.empresa_id = %s 
-                    ORDER BY cp.data_vencimento ASC
-                """, (emp_id,))
-                
-                # 2. Carrega a lista de fornecedores para os formulários de cadastro/edição
-                df_forn_select = carregar_dados_cached("SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome", (emp_id,))
-                
+            if not df_financeiro.empty:
+                df_financeiro['Data_Venc_Obj'] = pd.to_datetime(df_financeiro['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
                 hoje = date.today()
                 
-                # --- CARDS DE MÉTRICAS DO CONTAS A PAGAR ---
-                if not df_pagar_geral.empty:
-                    # O Pandas infere a data automaticamente, independente de como veio do banco
-                    df_pagar_geral['Data_Venc_Obj'] = pd.to_datetime(df_pagar_geral['Vencimento'], errors='coerce').dt.date
-                    
-                    v_pago = df_pagar_geral[df_pagar_geral['Status'] == 'Pago']['Valor (R$)'].sum()
-                    v_pend_pag = df_pagar_geral[df_pagar_geral['Status'] == 'Pendente']['Valor (R$)'].sum()
-                    mask_atraso_pag = (df_pagar_geral['Status'] == 'Pendente') & (df_pagar_geral['Data_Venc_Obj'] < hoje)
-                    v_atr_pag = df_pagar_geral[mask_atraso_pag]['Valor (R$)'].sum()
-                    
-                    col_p1, col_p2, col_p3 = st.columns(3)
-                    col_p1.metric("✅ Total Já Pago", f"R$ {v_pago:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    col_p2.metric("⏳ A Pagar (No Prazo)", f"R$ {(v_pend_pag - v_atr_pag):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    col_p3.metric("🚨 Despesas Atrasadas", f"R$ {v_atr_pag:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Alerta" if v_atr_pag > 0 else "Tudo em dia!", delta_color="inverse")
-                else:
-                    col_p1, col_p2, col_p3 = st.columns(3)
-                    col_p1.metric("✅ Total Já Pago", "R$ 0,00")
-                    col_p2.metric("⏳ A Pagar (No Prazo)", "R$ 0,00")
-                    col_p3.metric("🚨 Despesas Atrasadas", "R$ 0,00", delta="Tudo em dia!")
+                v_rec = df_financeiro[df_financeiro['Status'] == 'Pago']['Valor (R$)'].sum()
+                v_pend = df_financeiro[df_financeiro['Status'] == 'Pendente']['Valor (R$)'].sum()
+                mask_atraso = (df_financeiro['Status'] == 'Pendente') & (df_financeiro['Data_Venc_Obj'] < hoje)
+                v_atr = df_financeiro[mask_atraso]['Valor (R$)'].sum()
+                
+                # --- ENVELOPAMENTO DA MATRIZ DE CARD FINANCEIRO ---
+                # O resumo inicia compactado para abrir espaço para o painel de baixa no mobile
+                with st.expander("📊 Ver Resumo Geral (Recebidos, No Prazo e Atrasos)", expanded=False):
+                    col_met1, col_met2, col_met3 = st.columns(3)
+                    col_met1.metric("✅ Total Já Recebido", f"R$ {v_rec:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    col_met2.metric("⏳ A Receber (No Prazo)", f"R$ {(v_pend - v_atr):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    col_met3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atr:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Atenção" if v_atr > 0 else "Tudo em dia!", delta_color="inverse")
+                
+                #st.markdown("---")
+                
+                df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
+                
+                # --- LÓGICA DE REGISTRAR PAGAMENTO REFORMULADA (CARD LAYOUT MOBILE) ---
+                
+                # 1. Captura os comandos vindos lá do clique da Visão App
+                abrir_recebimento = st.session_state.get('abrir_expander_recebimento', False)
+                venda_id_alvo = st.session_state.get('venda_editando', None)
+                
+                # 2. O expander obedece ao gatilho automático de abertura
+                with st.expander("✅ Registrar Recebimento de Parcela", expanded=abrir_recebimento):
+                    if not df_p.empty:
+                        
+                        # 3. FILTRAGEM INTELIGENTE: Descobre quais parcelas exibir
+                        if venda_id_alvo is not None:
+                            # Se veio o clique da Visão App, filtra apenas as parcelas dessa venda específica
+                            df_filtrado = df_p[df_p['Nº Venda'].astype(int) == int(venda_id_alvo)]
+                            st.markdown(f"✨ **Mostrando parcelas da Venda Nº {venda_id_alvo}**")
+                        else:
+                            # Se abriu manualmente, mostra um seletor limpo e curto apenas para escolher a Venda/Cliente
+                            df_p['venda_display'] = df_p['Nº Venda'].astype(str) + " - " + df_p['Cliente']
+                            opcoes_vendas = sorted(list(df_p['venda_display'].unique()))
+                            venda_escolhida = st.selectbox("Escolha a Venda / Cliente:", options=opcoes_vendas)
+                            cod_venda_sel = venda_escolhida.split(" - ")[0]
+                            df_filtrado = df_p[df_p['Nº Venda'].astype(int) == int(cod_venda_sel)]
+                        
+                        if not df_filtrado.empty:
+                            # Linha divisória em HTML com as margens (espaçamentos) espremidas
+                            st.markdown('<hr style="margin: 5px 0px 10px 0px; border: none; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
+                            
+                            # Campo de data único no topo do painel
+                            data_pag_real = st.date_input("📅 Data do Recebimento:", value=hoje, format="DD/MM/YYYY")
+                            
+                            # 4. RENDERIZAÇÃO DOS CARDS EXCLUSIVOS (Perfeito para leitura no celular)
+                            for _, row in df_filtrado.iterrows():
+                                idx_b = row['ID Parcela']
+                                num_parc = row['Parcela']
+                                total_parc = row['De']
+                                valor_parc = row['Valor (R$)']
+                                venc_parc = row['Vencimento']
+                                cliente_nome = row['Cliente']
+                                
+                                # Cada parcela vira um cartão visual mais compacto
+                                with st.container(border=True):
+                                    # Linha 1: Cliente e qual é a parcela
+                                    st.markdown(f"👤 **{cliente_nome}** — Parc. **{num_parc}/{total_parc}**")
+                                    
+                                    # Linha 2: Valor e Data lado a lado com fonte em tamanho normal
+                                    valor_formatado = f"R$ {valor_parc:.2f}".replace('.', ',')
+                                    st.markdown(f"💰 **Valor:** {valor_formatado} &nbsp; | &nbsp; 📅 **Venc:** {venc_parc}")
+                                    
+                                    # Botão de ação direta
+                                    if st.button(f"✅ Confirmar Baixa da Parcela {num_parc}", key=f"btn_baixar_{idx_b}", use_container_width=True):
+                                        try:
+                                            conn = conectar_banco()
+                                            cur = conn.cursor()
+                                            
+                                            # Executa a baixa cirúrgica pelo ID único da parcela
+                                            cur.execute("""
+                                                UPDATE contas_receber 
+                                                SET status = 'Pago', data_pagamento = %s 
+                                                WHERE id = %s AND empresa_id = %s
+                                            """, (data_pag_real.strftime("%d/%m/%Y"), idx_b, emp_id))
+                                            
+                                            conn.commit()
+                                            devolver_conexao(conn)
+                                            
+                                            # Limpa completamente a memória de controle após o sucesso
+                                            st.session_state['venda_editando'] = None
+                                            st.session_state['abrir_expander_recebimento'] = False
+                                            
+                                            st.success("Pagamento registrado com sucesso!")
+                                            limpar_cache()
+                                            st.rerun()
+                                            
+                                        except Exception as e:
+                                            st.error(f"Erro ao salvar no banco: {e}")
+                                            if 'conn' in locals(): devolver_conexao(conn)
+                            
+                            # Botão extra para caso você queira fechar o painel sem baixar nada
+                            st.markdown("---")
+                            if st.button("❌ Cancelar / Fechar Seleção", use_container_width=True):
+                                st.session_state['venda_editando'] = None
+                                st.session_state['abrir_expander_recebimento'] = False
+                                st.rerun()
+                        else:
+                            st.info("Nenhuma parcela pendente encontrada para este registro.")
+                    else:
+                        st.success("🎉 Nenhuma parcela pendente! Todos os clientes estão em dia.")
+                        
+                # --- NOVO EXPANDER DE LEMBRETE DO WHATSAPP ---
+                with st.expander("📲 Enviar Lembrete via WhatsApp", expanded=False):
+                    if not df_p.empty:
+                        
+                        op_lembrete = df_p.apply(lambda x: f"Venda {x['Nº Venda']} | {x['Cliente']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Vencimento']}", axis=1).tolist()
+                        lembrete_sel = st.selectbox("Selecione a parcela para enviar lembrete:", options=op_lembrete, key="sel_lembrete")
+                        
+                        if lembrete_sel:
+                            idx_l = op_lembrete.index(lembrete_sel)
+                            linha_sel = df_p.iloc[idx_l]
+                            
+                            nome_cli = linha_sel['Cliente']
+                            telefone_cli = linha_sel['Telefone']
+                            valor_parc = linha_sel['Valor (R$)']
+                            data_venc = linha_sel['Vencimento']
+                            
+                            valor_formatado = f"{valor_parc:.2f}".replace('.', ',')
+                            
+                            msg = f"Olá, {nome_cli}! 🌸 Tudo bem com você?\n\n"
+                            msg += f"Passando aqui rapidinho só para deixar um lembrete sobre a sua parcela de R$ {valor_formatado} referente aos seus produtinhos, com vencimento para o dia {data_venc}.\n\n"
+                            msg += "Qualquer dúvida ou se precisar de algo, estou à disposição! Um ótimo dia para você! ✨"
 
+                            st.text_area("Pré-visualização da Mensagem:", value=msg, height=180, disabled=True)
+
+                            if pd.notna(telefone_cli) and str(telefone_cli).strip() != "":
+                                tel_limpo = ''.join(filter(str.isdigit, str(telefone_cli)))
+                                if len(tel_limpo) >= 10:
+                                    if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo 
+                                    link_wpp = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                    st.link_button("🟢 Enviar Lembrete no WhatsApp", link_wpp, type="primary", use_container_width=True)
+                                else: 
+                                    st.warning("⚠️ Telefone incompleto no cadastro (precisa ter DDD).")
+                            else: 
+                                st.warning("⚠️ Cliente sem telefone cadastrado.")
+                    else:
+                        st.success("🎉 Nenhuma parcela pendente para cobrar!")
+                
+                #st.markdown("---")
+
+                # --- LÓGICA PARA REAJUSTE DE PARCELAS E DATAS ---
+                with st.expander("⚖️ Reajustar Valores e Datas das Parcelas"):
+                    st.markdown("Use esta opção quando precisar alterar o valor ou a data de vencimento das parcelas (o total da venda deve ser mantido).")
+    
+                    venda_ajuste = st.number_input("Digite o Nº da Venda (ex: 36)", min_value=1, step=1, key="num_ajuste_venda")
+    
+                    if st.button("Buscar Parcelas"):
+                        st.session_state['venda_editando'] = venda_ajuste
+        
+                    if 'venda_editando' in st.session_state:
+                        v_id = st.session_state['venda_editando']
+        
+                        df_parc = carregar_dados_cached("SELECT * FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
+        
+                        if not df_parc.empty:
+                            total_original = float(df_parc['valor_parcela'].sum())
+                            st.info(f"💰 **Valor Total Original da Venda:** R$ {total_original:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+            
+                            with st.form(f"f_reajuste_{v_id}"):
+                                novos_dados = {}
+                
+                                for index, row in df_parc.iterrows():
+                                    st.write(f"**Parcela {row['num_parcela']} de {row['total_parcelas']}** - Status: {row['status']}")
+                                    
+                                    # Converte a data string do banco (DD/MM/YYYY) para objeto date do Python
+                                    try:
+                                        data_atual = datetime.strptime(row['data_vencimento'], "%d/%m/%Y").date()
+                                    except:
+                                        data_atual = date.today() # Proteção anti-erro
+                                        
+                                    # Coloca o Valor e a Data lado a lado
+                                    col_val, col_dat = st.columns(2)
+                                    
+                                    novo_val = col_val.number_input(
+                                        f"Novo Valor (R$)", 
+                                        value=float(row['valor_parcela']), 
+                                        min_value=0.0, 
+                                        format="%.2f",
+                                        key=f"val_{row['id']}"
+                                    )
+                                    
+                                    nova_data = col_dat.date_input(
+                                        "Nova Data de Vencimento",
+                                        value=data_atual,
+                                        format="DD/MM/YYYY",
+                                        key=f"dat_{row['id']}"
+                                    )
+                                    
+                                    # Guarda o valor e a data formatada de volta para string
+                                    novos_dados[row['id']] = {
+                                        'valor': novo_val, 
+                                        'data': nova_data.strftime("%d/%m/%Y")
+                                    }
+                                    
+                                    st.markdown("---")
+                
+                                if st.form_submit_button("💾 Validar e Salvar Reajuste"):
+                                    # Soma os novos valores dentro do dicionário
+                                    soma_novas_parcelas = sum(item['valor'] for item in novos_dados.values())
+                    
+                                    if round(soma_novas_parcelas, 2) != round(total_original, 2):
+                                        st.error(f"❌ **Operação Bloqueada:** A soma das novas parcelas (R$ {soma_novas_parcelas:.2f}) é diferente do total da venda (R$ {total_original:.2f}). A diferença é de R$ {abs(total_original - soma_novas_parcelas):.2f}.")
+                                    else:
+                                        conn = conectar_banco()
+                                        for parcela_id, dados in novos_dados.items():
+                                            # Atualiza agora o valor_parcela E a data_vencimento no banco
+                                            conn.cursor().execute(
+                                                "UPDATE contas_receber SET valor_parcela=%s, data_vencimento=%s WHERE id=%s AND empresa_id=%s", 
+                                                (dados['valor'], dados['data'], parcela_id, emp_id)
+                                            )
+                                        conn.commit()
+                                        devolver_conexao(conn)
+                        
+                                        st.success("✅ Valores e datas reajustados com sucesso!")
+                                        del st.session_state['venda_editando']
+                                        limpar_cache()
+                                        st.rerun()
+                        else:
+                            st.warning("Nenhuma parcela encontrada para esta venda.")
+
+            # --- TABELA DE LEITURA COMPLETA (COM FILTRO DE CLIENTE E STATUS) ---
+            st.subheader("📋 Relatório de Parcelas e Boletos")
+            
+            # 1. Busca os dados no banco e cria a variável df_receber_geral
+            df_receber_geral = carregar_dados_cached("""
+                SELECT cr.venda_codigo AS "Nº Venda",
+                       c.nome AS "Cliente",
+                       cr.num_parcela AS "Parcela",
+                       cr.total_parcelas AS "De",
+                       cr.valor_parcela AS "Valor (R$)",
+                       cr.data_vencimento AS "Vencimento",
+                       cr.status AS "Status"
+                FROM contas_receber cr
+                LEFT JOIN clientes c ON cr.cliente_id = c.id
+                WHERE cr.empresa_id = %s
+                ORDER BY TO_DATE(cr.data_vencimento, 'DD/MM/YYYY') DESC
+            """, (emp_id,))
+            
+            if not df_receber_geral.empty:
+                hoje = date.today()
+                
+                # Cria uma coluna de data real (oculta) para a matemática de atrasos funcionar
+                df_receber_geral['Data_Venc_Obj'] = pd.to_datetime(df_receber_geral['Vencimento'], format='%d/%m/%Y', errors='coerce').dt.date
+                
+                col_f1, col_f2 = st.columns([1, 2])
+                
+                # 2. Filtro de Cliente (Busca os nomes únicos no dataframe)
+                lista_clientes = ["Todos os Clientes"] + sorted(df_receber_geral['Cliente'].dropna().unique().tolist())
+                cliente_selecionado = col_f1.selectbox("🔍 Buscar por Cliente:", options=lista_clientes)
+                
+                # 3. Filtro de Status
+                filtro_status_receber = col_f2.radio("Filtrar por Status da Parcela:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True, key="rad_status_receber")
+                
                 st.markdown("---")
                 
-                # --- OPERAÇÃO 1: 💰 REGISTRAR PAGAMENTO (DAR BAIXA) ---
-                with st.expander("💰 Dar Baixa em Despesa (Marcar como Paga)", expanded=False):
-                    if not df_pagar_geral.empty:
-                        df_p_pendentes = df_pagar_geral[df_pagar_geral['Status'] == 'Pendente']
-                        if not df_p_pendentes.empty:
-                            with st.form("form_baixa_pagar"):
-                                # Ajuste de exibição da data para o Dropdown
-                                df_p_pendentes_view = df_p_pendentes.copy()
-                                df_p_pendentes_view['Venc_BR'] = pd.to_datetime(df_p_pendentes_view['Vencimento']).dt.strftime('%d/%m/%Y')
-                                
-                                op_baixa_p = df_p_pendentes_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Venc_BR']}", axis=1).tolist()
-                                despesa_sel = st.selectbox("Selecione a despesa que foi paga:", options=op_baixa_p)
-                                
-                                c_b1, c_b2 = st.columns([1, 2])
-                                data_pagto_real = c_b1.date_input("Data do Pagamento Efetivo", value=hoje, format="DD/MM/YYYY", key="dt_pagto_desp")
-                                
-                                if st.form_submit_button("🔴 Confirmar Pagamento", type="primary"):
-                                    id_desp_baixa = int(despesa_sel.split("ID ")[1].split(" |")[0])
-                                    conn = conectar_banco()
-                                    # Salva como YYYY-MM-DD
-                                    conn.cursor().execute("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%Y-%m-%d"), id_desp_baixa, emp_id))
-                                    conn.commit()
-                                    devolver_conexao(conn)
-                                    st.success("Despesa baixada com sucesso no fluxo financeiro!")
-                                    limpar_cache()
-                                    st.rerun()
-                        else:
-                            st.success("🎉 Não há nenhuma conta a pagar pendente! Tudo quitado.")
-                    else:
-                        st.info("Nenhum lançamento encontrado para dar baixa.")
+                # 4. Aplica o filtro de cliente e calcula as métricas individuais
+                df_view_receber = df_receber_geral.copy()
                 
-                # --- OPERAÇÃO 2: ➕ LANÇAR NOVA DESPESA MANUAL (C DO CRUD) ---
-                with st.expander("➕ Lançar Nova Despesa Manual", expanded=False):
-                    if not df_forn_select.empty:
-                        with st.form("form_novo_contas_pagar", clear_on_submit=True):
-                            forn_nome_sel = st.selectbox("Fornecedor / Origem da Despesa:", options=df_forn_select['nome'].tolist())
+                if cliente_selecionado != "Todos os Clientes":
+                    df_view_receber = df_view_receber[df_view_receber['Cliente'] == cliente_selecionado]
+                    
+                    # Calcula as métricas exclusivas do cliente selecionado
+                    v_pago_cli = df_view_receber[df_view_receber['Status'] == 'Pago']['Valor (R$)'].sum()
+                    v_aberto_cli = df_view_receber[df_view_receber['Status'] == 'Pendente']['Valor (R$)'].sum()
+                    mask_atraso_cli = (df_view_receber['Status'] == 'Pendente') & (df_view_receber['Data_Venc_Obj'] < hoje)
+                    v_atraso_cli = df_view_receber[mask_atraso_cli]['Valor (R$)'].sum()
+                    v_no_prazo_cli = v_aberto_cli - v_atraso_cli
+                    
+                    st.markdown(f"**👤 Resumo Financeiro: {cliente_selecionado}**")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("✅ Total Já Pago", f"R$ {v_pago_cli:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    c2.metric("⏳ A Pagar (No Prazo)", f"R$ {v_no_prazo_cli:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    c3.metric("🚨 Pagamentos Atrasados", f"R$ {v_atraso_cli:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Dívida" if v_atraso_cli > 0 else "Tudo em dia!", delta_color="inverse")
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                
+                # 5. Aplica o filtro de status em cima do resultado (geral ou por cliente)
+                if filtro_status_receber == "Pendentes":
+                    df_view_receber = df_view_receber[df_view_receber['Status'] == 'Pendente']
+                elif filtro_status_receber == "Pagos":
+                    df_view_receber = df_view_receber[df_view_receber['Status'] == 'Pago']
+                elif filtro_status_receber == "Atrasados":
+                    df_view_receber = df_view_receber[(df_view_receber['Status'] == 'Pendente') & (df_view_receber['Data_Venc_Obj'] < hoje)]
+                
+                # 6. Exibe a tabela final
+                df_exibicao_receber = df_view_receber.drop(columns=['Data_Venc_Obj'], errors='ignore')
+                st.dataframe(df_exibicao_receber, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma conta a receber registrada.")    
+                
+        # --- CONTAS A PAGAR COMPLETÃO (CRUD + BAIXA) ---
+        with tab_pag:
+            st.markdown("### 🔴 Controle de Compromissos e Despesas")
+            
+            # 1. Carrega todas as contas a pagar ordenando nativamente pelo texto YYYY-MM-DD
+            df_pagar_geral = carregar_dados_cached("""
+                SELECT cp.id AS "ID", f.nome AS "Fornecedor", cp.num_parcela AS "Parcela", 
+                       cp.total_parcelas AS "De", cp.valor_parcela AS "Valor (R$)", 
+                       cp.data_vencimento AS "Vencimento", cp.status AS "Status", cp.data_pagamento AS "Data Pagto"
+                FROM contas_pagar cp 
+                JOIN fornecedores f ON cp.fornecedor_id = f.id 
+                WHERE cp.empresa_id = %s 
+                ORDER BY cp.data_vencimento ASC
+            """, (emp_id,))
+            
+            # 2. Carrega a lista de fornecedores para os formulários de cadastro/edição
+            df_forn_select = carregar_dados_cached("SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome", (emp_id,))
+            
+            hoje = date.today()
+            
+            # --- CARDS DE MÉTRICAS DO CONTAS A PAGAR ---
+            if not df_pagar_geral.empty:
+                # O Pandas infere a data automaticamente, independente de como veio do banco
+                df_pagar_geral['Data_Venc_Obj'] = pd.to_datetime(df_pagar_geral['Vencimento'], errors='coerce').dt.date
+                
+                v_pago = df_pagar_geral[df_pagar_geral['Status'] == 'Pago']['Valor (R$)'].sum()
+                v_pend_pag = df_pagar_geral[df_pagar_geral['Status'] == 'Pendente']['Valor (R$)'].sum()
+                mask_atraso_pag = (df_pagar_geral['Status'] == 'Pendente') & (df_pagar_geral['Data_Venc_Obj'] < hoje)
+                v_atr_pag = df_pagar_geral[mask_atraso_pag]['Valor (R$)'].sum()
+                
+                col_p1, col_p2, col_p3 = st.columns(3)
+                col_p1.metric("✅ Total Já Pago", f"R$ {v_pago:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col_p2.metric("⏳ A Pagar (No Prazo)", f"R$ {(v_pend_pag - v_atr_pag):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col_p3.metric("🚨 Despesas Atrasadas", f"R$ {v_atr_pag:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta="- Alerta" if v_atr_pag > 0 else "Tudo em dia!", delta_color="inverse")
+            else:
+                col_p1, col_p2, col_p3 = st.columns(3)
+                col_p1.metric("✅ Total Já Pago", "R$ 0,00")
+                col_p2.metric("⏳ A Pagar (No Prazo)", "R$ 0,00")
+                col_p3.metric("🚨 Despesas Atrasadas", "R$ 0,00", delta="Tudo em dia!")
+
+            st.markdown("---")
+            
+            # --- OPERAÇÃO 1: 💰 REGISTRAR PAGAMENTO (DAR BAIXA) ---
+            with st.expander("💰 Dar Baixa em Despesa (Marcar como Paga)", expanded=False):
+                if not df_pagar_geral.empty:
+                    df_p_pendentes = df_pagar_geral[df_pagar_geral['Status'] == 'Pendente']
+                    if not df_p_pendentes.empty:
+                        with st.form("form_baixa_pagar"):
+                            # Ajuste de exibição da data para o Dropdown
+                            df_p_pendentes_view = df_p_pendentes.copy()
+                            df_p_pendentes_view['Venc_BR'] = pd.to_datetime(df_p_pendentes_view['Vencimento']).dt.strftime('%d/%m/%Y')
                             
-                            col_l1, col_l2, col_l3 = st.columns(3)
-                            valor_total_manual = col_l1.number_input("Valor por Parcela (R$):", min_value=0.01, format="%.2f")
-                            tot_parc_manual = col_l2.number_input("Total de Parcelas:", min_value=1, max_value=36, value=1, step=1)
-                            data_1_venc_manual = col_l3.date_input("Data do 1º Vencimento:", value=hoje, format="DD/MM/YYYY")
+                            op_baixa_p = df_p_pendentes_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Venc_BR']}", axis=1).tolist()
+                            despesa_sel = st.selectbox("Selecione a despesa que foi paga:", options=op_baixa_p)
                             
-                            if st.form_submit_button("💾 Salvar Lançamento"):
-                                id_forn_manual = int(df_forn_select[df_forn_select['nome'] == forn_nome_sel].iloc[0]['id'])
+                            c_b1, c_b2 = st.columns([1, 2])
+                            data_pagto_real = c_b1.date_input("Data do Pagamento Efetivo", value=hoje, format="DD/MM/YYYY", key="dt_pagto_desp")
+                            
+                            if st.form_submit_button("🔴 Confirmar Pagamento", type="primary"):
+                                id_desp_baixa = int(despesa_sel.split("ID ")[1].split(" |")[0])
                                 conn = conectar_banco()
-                                cur = conn.cursor()
-                                
-                                for i in range(1, int(tot_parc_manual) + 1):
-                                    venc_parc_manual = data_1_venc_manual + timedelta(days=30 * (i - 1))
-                                    cur.execute("""
-                                        INSERT INTO contas_pagar (fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
-                                        VALUES (%s, %s, %s, %s, %s, 'Pendente', %s)
-                                    """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%Y-%m-%d"), emp_id))
-                                
+                                # Salva como YYYY-MM-DD
+                                conn.cursor().execute("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%Y-%m-%d"), id_desp_baixa, emp_id))
                                 conn.commit()
                                 devolver_conexao(conn)
-                                st.success(f"Despesa com {tot_parc_manual} parcela(s) lançada com sucesso!")
+                                st.success("Despesa baixada com sucesso no fluxo financeiro!")
                                 limpar_cache()
                                 st.rerun()
                     else:
-                        st.warning("⚠️ Cadastre pelo menos um Fornecedor na aba anterior antes de lançar despesas manuais.")
-
-                # --- OPERAÇÃO 3: ✏️ EDITAR OU 🗑️ EXCLUIR LANÇAMENTO (U & D DO CRUD) ---
-                with st.expander("✏️ Editar ou 🗑️ Cancelar Lançamento", expanded=False):
-                    if not df_pagar_geral.empty:
-                        # Ajuste visual para edição
-                        df_edicao_view = df_pagar_geral.copy()
-                        df_edicao_view['Venc_BR'] = pd.to_datetime(df_edicao_view['Vencimento']).dt.strftime('%d/%m/%Y')
-                        op_edicao_p = df_edicao_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} [{x['Status']}]", axis=1).tolist()
+                        st.success("🎉 Não há nenhuma conta a pagar pendente! Tudo quitado.")
+                else:
+                    st.info("Nenhum lançamento encontrado para dar baixa.")
+            
+            # --- OPERAÇÃO 2: ➕ LANÇAR NOVA DESPESA MANUAL (C DO CRUD) ---
+            with st.expander("➕ Lançar Nova Despesa Manual", expanded=False):
+                if not df_forn_select.empty:
+                    with st.form("form_novo_contas_pagar", clear_on_submit=True):
+                        forn_nome_sel = st.selectbox("Fornecedor / Origem da Despesa:", options=df_forn_select['nome'].tolist())
                         
-                        desp_edicao_sel = st.selectbox("Selecione a despesa para alterar ou remover:", options=op_edicao_p, key="sel_crud_desp")
-                        id_desp_crud = int(desp_edicao_sel.split("ID ")[1].split(" |")[0])
+                        col_l1, col_l2, col_l3 = st.columns(3)
+                        valor_total_manual = col_l1.number_input("Valor por Parcela (R$):", min_value=0.01, format="%.2f")
+                        tot_parc_manual = col_l2.number_input("Total de Parcelas:", min_value=1, max_value=36, value=1, step=1)
+                        data_1_venc_manual = col_l3.date_input("Data do 1º Vencimento:", value=hoje, format="DD/MM/YYYY")
                         
-                        linha_atual_desp = df_pagar_geral[df_pagar_geral['ID'] == id_desp_crud].iloc[0]
-                        
-                        col_cr1, col_cr2 = st.columns(2)
-                        
-                        # Sub-Formulário de Edição (Update)
-                        with col_cr1:
-                            st.markdown("**✏️ Formulário de Edição**")
-                            try: date_v_form = datetime.strptime(str(linha_atual_desp['Vencimento']), "%Y-%m-%d").date()
-                            except: date_v_form = hoje
+                        if st.form_submit_button("💾 Salvar Lançamento"):
+                            id_forn_manual = int(df_forn_select[df_forn_select['nome'] == forn_nome_sel].iloc[0]['id'])
+                            conn = conectar_banco()
+                            cur = conn.cursor()
                             
-                            with st.form("form_update_despesa_individual"):
-                                novo_v_desp = st.number_input("Valor da Parcela (R$)", min_value=0.01, value=float(linha_atual_desp['Valor (R$)']), format="%.2f")
-                                novo_venc_desp = st.date_input("Data de Vencimento", value=date_v_form, format="DD/MM/YYYY")
-                                
-                                novo_pagto_desp_val = linha_atual_desp['Data Pagto']
-                                if linha_atual_desp['Status'] == 'Pago':
-                                    try: date_p_form = datetime.strptime(str(linha_atual_desp['Data Pagto']), "%Y-%m-%d").date()
-                                    except: date_p_form = hoje
-                                    dt_p_input = st.date_input("Data do Pagamento", value=date_p_form, format="DD/MM/YYYY")
-                                    novo_pagto_desp_val = dt_p_input.strftime("%Y-%m-%d")
-                                
-                                if st.form_submit_button("💾 Atualizar Dados"):
-                                    conn = conectar_banco()
-                                    conn.cursor().execute("""
-                                        UPDATE contas_pagar 
-                                        SET valor_parcela = %s, data_vencimento = %s, data_pagamento = %s 
-                                        WHERE id = %s AND empresa_id = %s
-                                    """, (float(novo_v_desp), novo_venc_desp.strftime("%Y-%m-%d"), novo_pagto_desp_val, id_desp_crud, emp_id))
-                                    conn.commit()
-                                    devolver_conexao(conn)
-                                    st.success("Lançamento atualizado com sucesso!")
-                                    limpar_cache()
-                                    st.rerun()
-                                    
-                        # Sub-Formulário de Exclusão (Delete)
-                        with col_cr2:
-                            st.markdown("**🗑️ Exclusão Definitiva**")
-                            st.warning("Atenção: A remoção deste compromisso financeiro apagará o histórico permanentemente.")
-                            with st.form("form_delete_despesa_individual"):
-                                st.write(f"Confirma a exclusão da despesa ID {id_desp_crud}?")
-                                if st.form_submit_button("🚨 Excluir Permanentemente", type="primary"):
-                                    conn = conectar_banco()
-                                    conn.cursor().execute("DELETE FROM contas_pagar WHERE id = %s AND empresa_id = %s", (id_desp_crud, emp_id))
-                                    conn.commit()
-                                    devolver_conexao(conn)
-                                    st.success("Despesa removida com sucesso!")
-                                    limpar_cache()
-                                    st.rerun()
-                    else:
-                        st.info("Nenhuma despesa disponível para alteração.")
+                            for i in range(1, int(tot_parc_manual) + 1):
+                                venc_parc_manual = data_1_venc_manual + timedelta(days=30 * (i - 1))
+                                cur.execute("""
+                                    INSERT INTO contas_pagar (fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
+                                    VALUES (%s, %s, %s, %s, %s, 'Pendente', %s)
+                                """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%Y-%m-%d"), emp_id))
+                            
+                            conn.commit()
+                            devolver_conexao(conn)
+                            st.success(f"Despesa com {tot_parc_manual} parcela(s) lançada com sucesso!")
+                            limpar_cache()
+                            st.rerun()
+                else:
+                    st.warning("⚠️ Cadastre pelo menos um Fornecedor na aba anterior antes de lançar despesas manuais.")
 
-                st.markdown("---")
-                
-                # --- TABELA DE LEITURA COMPLETA (R DO CRUD) ---
-                st.subheader("📋 Relatório Estatístico de Despesas")
+            # --- OPERAÇÃO 3: ✏️ EDITAR OU 🗑️ EXCLUIR LANÇAMENTO (U & D DO CRUD) ---
+            with st.expander("✏️ Editar ou 🗑️ Cancelar Lançamento", expanded=False):
                 if not df_pagar_geral.empty:
-                    filtro_status_pagar = st.radio("Filtrar por Status do Compromisso:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True, key="rad_status_pagar")
+                    # Ajuste visual para edição
+                    df_edicao_view = df_pagar_geral.copy()
+                    df_edicao_view['Venc_BR'] = pd.to_datetime(df_edicao_view['Vencimento']).dt.strftime('%d/%m/%Y')
+                    op_edicao_p = df_edicao_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} [{x['Status']}]", axis=1).tolist()
                     
-                    df_view_pagar = df_pagar_geral.copy()
-                    if filtro_status_pagar == "Pendentes":
-                        df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pendente']
-                    elif filtro_status_pagar == "Pagos":
-                        df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pago']
-                    elif filtro_status_pagar == "Atrasados":
-                        df_view_pagar = df_view_pagar[(df_view_pagar['Status'] == 'Pendente') & (df_view_pagar['Data_Venc_Obj'] < hoje)]
+                    desp_edicao_sel = st.selectbox("Selecione a despesa para alterar ou remover:", options=op_edicao_p, key="sel_crud_desp")
+                    id_desp_crud = int(desp_edicao_sel.split("ID ")[1].split(" |")[0])
                     
-                    # Oculta a coluna de objeto e formata as datas para DD/MM/YYYY para o usuário final
-                    df_exibicao_pagar = df_view_pagar.drop(columns=['Data_Venc_Obj'], errors='ignore')
-                    df_exibicao_pagar['Vencimento'] = pd.to_datetime(df_exibicao_pagar['Vencimento']).dt.strftime('%d/%m/%Y')
+                    linha_atual_desp = df_pagar_geral[df_pagar_geral['ID'] == id_desp_crud].iloc[0]
                     
-                    # Mascara o Data Pagto se for nulo
-                    df_exibicao_pagar['Data Pagto'] = pd.to_datetime(df_exibicao_pagar['Data Pagto']).dt.strftime('%d/%m/%Y').fillna('-')
-
-                    st.dataframe(df_exibicao_pagar, use_container_width=True, hide_index=True)
-                else:
-                    st.info("Nenhuma conta a pagar registrada.")
+                    col_cr1, col_cr2 = st.columns(2)
                     
-            # --- FLUXO DE CAIXA (NOVO BLOCO) ---
-            with aba_fluxo_caixa:
-                st.subheader("💸 Fluxo de Caixa")
-                
-                query_fluxo = """
-                    SELECT 
-                        cr.data_pagamento AS data_movimento,
-                        'Entrada' AS tipo,
-                        'Recbto Venda #' || cr.venda_codigo || ' (Parc ' || cr.num_parcela || '/' || cr.total_parcelas || ')' AS descricao,
-                        cr.valor_parcela AS valor
-                    FROM contas_receber cr
-                    WHERE cr.empresa_id = %s AND cr.status = 'Pago'
-                    
-                    UNION ALL
-                    
-                    SELECT 
-                        cp.data_pagamento AS data_movimento,
-                        'Saída' AS tipo,
-                        'Pgto Fornecedor (Parc ' || cp.num_parcela || '/' || cp.total_parcelas || ')' AS descricao,
-                        cp.valor_parcela AS valor
-                    FROM contas_pagar cp
-                    WHERE cp.empresa_id = %s AND cp.status = 'Pago'
-                """
-                
-                df_fluxo = carregar_dados_cached(query_fluxo, (emp_id, emp_id))
-                
-                if not df_fluxo.empty:
-                    df_fluxo = df_fluxo.dropna(subset=['data_movimento'])
-                    df_fluxo['Data_Obj'] = pd.to_datetime(df_fluxo['data_movimento'], format='%d/%m/%Y', errors='coerce').dt.date
-                    
-                    st.write("### 🔍 Período do Fluxo")
-                    c1, c2 = st.columns(2)
-                    hoje = date.today()
-                    d_ini = c1.date_input("Data Inicial", value=hoje.replace(day=1), format="DD/MM/YYYY", key="fluxo_ini")
-                    d_fim = c2.date_input("Data Final", value=hoje, format="DD/MM/YYYY", key="fluxo_fim")                
-                    if d_ini and d_fim:
-                        df_filtrado = df_fluxo[(df_fluxo['Data_Obj'] >= d_ini) & (df_fluxo['Data_Obj'] <= d_fim)]
+                    # Sub-Formulário de Edição (Update)
+                    with col_cr1:
+                        st.markdown("**✏️ Formulário de Edição**")
+                        try: date_v_form = datetime.strptime(str(linha_atual_desp['Vencimento']), "%Y-%m-%d").date()
+                        except: date_v_form = hoje
                         
-                        if not df_filtrado.empty:
-                            total_entradas = float(df_filtrado[df_filtrado['tipo'] == 'Entrada']['valor'].sum())
-                            total_saidas = float(df_filtrado[df_filtrado['tipo'] == 'Saída']['valor'].sum())
-                            saldo = total_entradas - total_saidas
+                        with st.form("form_update_despesa_individual"):
+                            novo_v_desp = st.number_input("Valor da Parcela (R$)", min_value=0.01, value=float(linha_atual_desp['Valor (R$)']), format="%.2f")
+                            novo_venc_desp = st.date_input("Data de Vencimento", value=date_v_form, format="DD/MM/YYYY")
                             
-                            st.write("---")
-                            col_ent, col_sai, col_sal = st.columns(3)
-                            col_ent.metric("Entradas (+)", f"R$ {total_entradas:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
-                            col_sai.metric("Saídas (-)", f"R$ {total_saidas:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
-                            col_sal.metric("Saldo do Período", f"R$ {saldo:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                            novo_pagto_desp_val = linha_atual_desp['Data Pagto']
+                            if linha_atual_desp['Status'] == 'Pago':
+                                try: date_p_form = datetime.strptime(str(linha_atual_desp['Data Pagto']), "%Y-%m-%d").date()
+                                except: date_p_form = hoje
+                                dt_p_input = st.date_input("Data do Pagamento", value=date_p_form, format="DD/MM/YYYY")
+                                novo_pagto_desp_val = dt_p_input.strftime("%Y-%m-%d")
                             
-                            st.write("---")
-                            
-                            df_grafico = df_filtrado.groupby(['Data_Obj', 'tipo'])['valor'].sum().reset_index()
-                            cores = {'Entrada': '#00b050', 'Saída': '#ff0000'}
-                            
-                            fig_fluxo = px.bar(
-                                df_grafico, 
-                                x='Data_Obj', 
-                                y='valor', 
-                                color='tipo', 
-                                barmode='group',
-                                title="Movimentação Diária",
-                                color_discrete_map=cores
-                            )
-                            st.plotly_chart(fig_fluxo, use_container_width=True)
-                            
-                            # --- TABELA DE EXTRATO DETALHADO ---
-                            st.write("### 📄 Extrato Detalhado")
-                            
-                            # 1º: Ordena os dados enquanto a coluna 'Data_Obj' ainda existe no DataFrame
-                            df_filtrado = df_filtrado.sort_values(by=['Data_Obj'], ascending=False)
-                            
-                            # 2º: Copia apenas as colunas que queremos mostrar
-                            df_extrato = df_filtrado[['data_movimento', 'tipo', 'descricao', 'valor']].copy()
-                            
-                            # Formata o valor para dinheiro
-                            df_extrato['valor'] = df_extrato['valor'].apply(lambda x: f"R$ {float(x):,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
-                            
-                            # Renomeia as colunas para ficar bonito na tela
-                            df_extrato.rename(columns={
-                                'data_movimento': 'Data',
-                                'tipo': 'Tipo',
-                                'descricao': 'Descrição',
-                                'valor': 'Valor'
-                            }, inplace=True)
-                            
-                            st.dataframe(df_extrato, use_container_width=True, hide_index=True)
-
-                        else:
-                            st.warning("Não há movimentações financeiras concluídas (pagas/recebidas) no período selecionado.")
-
+                            if st.form_submit_button("💾 Atualizar Dados"):
+                                conn = conectar_banco()
+                                conn.cursor().execute("""
+                                    UPDATE contas_pagar 
+                                    SET valor_parcela = %s, data_vencimento = %s, data_pagamento = %s 
+                                    WHERE id = %s AND empresa_id = %s
+                                """, (float(novo_v_desp), novo_venc_desp.strftime("%Y-%m-%d"), novo_pagto_desp_val, id_desp_crud, emp_id))
+                                conn.commit()
+                                devolver_conexao(conn)
+                                st.success("Lançamento atualizado com sucesso!")
+                                limpar_cache()
+                                st.rerun()
+                                
+                    # Sub-Formulário de Exclusão (Delete)
+                    with col_cr2:
+                        st.markdown("**🗑️ Exclusão Definitiva**")
+                        st.warning("Atenção: A remoção deste compromisso financeiro apagará o histórico permanentemente.")
+                        with st.form("form_delete_despesa_individual"):
+                            st.write(f"Confirma a exclusão da despesa ID {id_desp_crud}?")
+                            if st.form_submit_button("🚨 Excluir Permanentemente", type="primary"):
+                                conn = conectar_banco()
+                                conn.cursor().execute("DELETE FROM contas_pagar WHERE id = %s AND empresa_id = %s", (id_desp_crud, emp_id))
+                                conn.commit()
+                                devolver_conexao(conn)
+                                st.success("Despesa removida com sucesso!")
+                                limpar_cache()
+                                st.rerun()
                 else:
-                    st.info("Ainda não há dados de contas pagas ou recebidas para gerar o fluxo de caixa.")
+                    st.info("Nenhuma despesa disponível para alteração.")
 
-                # ==========================================
-                # FECHAMENTO DE CAIXA DO DIA
-                # ==========================================
+            st.markdown("---")
+            
+            # --- TABELA DE LEITURA COMPLETA (R DO CRUD) ---
+            st.subheader("📋 Relatório Estatístico de Despesas")
+            if not df_pagar_geral.empty:
+                filtro_status_pagar = st.radio("Filtrar por Status do Compromisso:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True, key="rad_status_pagar")
+                
+                df_view_pagar = df_pagar_geral.copy()
+                if filtro_status_pagar == "Pendentes":
+                    df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pendente']
+                elif filtro_status_pagar == "Pagos":
+                    df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pago']
+                elif filtro_status_pagar == "Atrasados":
+                    df_view_pagar = df_view_pagar[(df_view_pagar['Status'] == 'Pendente') & (df_view_pagar['Data_Venc_Obj'] < hoje)]
+                
+                # Oculta a coluna de objeto e formata as datas para DD/MM/YYYY para o usuário final
+                df_exibicao_pagar = df_view_pagar.drop(columns=['Data_Venc_Obj'], errors='ignore')
+                df_exibicao_pagar['Vencimento'] = pd.to_datetime(df_exibicao_pagar['Vencimento']).dt.strftime('%d/%m/%Y')
+                
+                # Mascara o Data Pagto se for nulo
+                df_exibicao_pagar['Data Pagto'] = pd.to_datetime(df_exibicao_pagar['Data Pagto']).dt.strftime('%d/%m/%Y').fillna('-')
+
+                st.dataframe(df_exibicao_pagar, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma conta a pagar registrada.")
+                
+        # --- FLUXO DE CAIXA (NOVO BLOCO) ---
+        with aba_fluxo_caixa:
+            st.subheader("💸 Fluxo de Caixa")
+            
+            query_fluxo = """
+                SELECT 
+                    cr.data_pagamento AS data_movimento,
+                    'Entrada' AS tipo,
+                    'Recbto Venda #' || cr.venda_codigo || ' (Parc ' || cr.num_parcela || '/' || cr.total_parcelas || ')' AS descricao,
+                    cr.valor_parcela AS valor
+                FROM contas_receber cr
+                WHERE cr.empresa_id = %s AND cr.status = 'Pago'
+                
+                UNION ALL
+                
+                SELECT 
+                    cp.data_pagamento AS data_movimento,
+                    'Saída' AS tipo,
+                    'Pgto Fornecedor (Parc ' || cp.num_parcela || '/' || cp.total_parcelas || ')' AS descricao,
+                    cp.valor_parcela AS valor
+                FROM contas_pagar cp
+                WHERE cp.empresa_id = %s AND cp.status = 'Pago'
+            """
+            
+            df_fluxo = carregar_dados_cached(query_fluxo, (emp_id, emp_id))
+            
+            if not df_fluxo.empty:
+                df_fluxo = df_fluxo.dropna(subset=['data_movimento'])
+                df_fluxo['Data_Obj'] = pd.to_datetime(df_fluxo['data_movimento'], format='%d/%m/%Y', errors='coerce').dt.date
+                
+                st.write("### 🔍 Período do Fluxo")
+                c1, c2 = st.columns(2)
+                hoje = date.today()
+                d_ini = c1.date_input("Data Inicial", value=hoje.replace(day=1), format="DD/MM/YYYY", key="fluxo_ini")
+                d_fim = c2.date_input("Data Final", value=hoje, format="DD/MM/YYYY", key="fluxo_fim")                
+                if d_ini and d_fim:
+                    df_filtrado = df_fluxo[(df_fluxo['Data_Obj'] >= d_ini) & (df_fluxo['Data_Obj'] <= d_fim)]
+                    
+                    if not df_filtrado.empty:
+                        total_entradas = float(df_filtrado[df_filtrado['tipo'] == 'Entrada']['valor'].sum())
+                        total_saidas = float(df_filtrado[df_filtrado['tipo'] == 'Saída']['valor'].sum())
+                        saldo = total_entradas - total_saidas
+                        
+                        st.write("---")
+                        col_ent, col_sai, col_sal = st.columns(3)
+                        col_ent.metric("Entradas (+)", f"R$ {total_entradas:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                        col_sai.metric("Saídas (-)", f"R$ {total_saidas:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                        col_sal.metric("Saldo do Período", f"R$ {saldo:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                        
+                        st.write("---")
+                        
+                        df_grafico = df_filtrado.groupby(['Data_Obj', 'tipo'])['valor'].sum().reset_index()
+                        cores = {'Entrada': '#00b050', 'Saída': '#ff0000'}
+                        
+                        fig_fluxo = px.bar(
+                            df_grafico, 
+                            x='Data_Obj', 
+                            y='valor', 
+                            color='tipo', 
+                            barmode='group',
+                            title="Movimentação Diária",
+                            color_discrete_map=cores
+                        )
+                        st.plotly_chart(fig_fluxo, use_container_width=True)
+                        
+                        # --- TABELA DE EXTRATO DETALHADO ---
+                        st.write("### 📄 Extrato Detalhado")
+                        
+                        # 1º: Ordena os dados enquanto a coluna 'Data_Obj' ainda existe no DataFrame
+                        df_filtrado = df_filtrado.sort_values(by=['Data_Obj'], ascending=False)
+                        
+                        # 2º: Copia apenas as colunas que queremos mostrar
+                        df_extrato = df_filtrado[['data_movimento', 'tipo', 'descricao', 'valor']].copy()
+                        
+                        # Formata o valor para dinheiro
+                        df_extrato['valor'] = df_extrato['valor'].apply(lambda x: f"R$ {float(x):,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                        
+                        # Renomeia as colunas para ficar bonito na tela
+                        df_extrato.rename(columns={
+                            'data_movimento': 'Data',
+                            'tipo': 'Tipo',
+                            'descricao': 'Descrição',
+                            'valor': 'Valor'
+                        }, inplace=True)
+                        
+                        st.dataframe(df_extrato, use_container_width=True, hide_index=True)
+
+                    else:
+                        st.warning("Não há movimentações financeiras concluídas (pagas/recebidas) no período selecionado.")
+
+            else:
+                st.info("Ainda não há dados de contas pagas ou recebidas para gerar o fluxo de caixa.")
+
+            # ==========================================
+            # FECHAMENTO DE CAIXA DO DIA
+            # ==========================================
+            st.markdown("---")
+            st.subheader("🔒 Fechamento de Caixa")
+
+            data_fechamento = st.date_input(
+                "Selecione o dia para fechar o caixa:",
+                value=date.today(),
+                format="DD/MM/YYYY",
+                key="data_fechamento_caixa"
+            )
+
+            if st.button("📊 Gerar Fechamento", type="primary"):
+                data_str = data_fechamento.strftime('%d/%m/%Y')
+
+                df_entradas_dia = carregar_dados("""
+                    SELECT 
+                        v.codigo_venda,
+                        c.nome AS cliente,
+                        p.nome AS produto,
+                        p.tipo,
+                        v.valor_total,
+                        v.forma_pagamento
+                    FROM vendas v
+                    JOIN clientes c ON c.id = v.cliente_id
+                    JOIN produtos p ON p.id = v.produto_id
+                    WHERE v.empresa_id = %s AND v.data_venda = %s
+                    ORDER BY v.codigo_venda
+                """, (emp_id, data_str))
+
+                df_recebimentos_dia = carregar_dados("""
+                    SELECT 
+                        cr.venda_codigo,
+                        c.nome AS cliente,
+                        cr.valor_parcela,
+                        cr.num_parcela,
+                        cr.total_parcelas,
+                        cr.data_pagamento
+                    FROM contas_receber cr
+                    JOIN clientes c ON c.id = cr.cliente_id
+                    WHERE cr.empresa_id = %s 
+                      AND cr.status = 'Pago'
+                      AND cr.data_pagamento = %s
+                    ORDER BY cr.venda_codigo
+                """, (emp_id, data_str))
+
+                df_saidas_dia = carregar_dados("""
+                    SELECT 
+                        f.nome AS fornecedor,
+                        cp.valor_parcela,
+                        cp.num_parcela,
+                        cp.total_parcelas,
+                        cp.data_pagamento
+                    FROM contas_pagar cp
+                    JOIN fornecedores f ON f.id = cp.fornecedor_id
+                    WHERE cp.empresa_id = %s 
+                      AND cp.status = 'Pago'
+                      AND cp.data_pagamento = %s
+                    ORDER BY f.nome
+                """, (emp_id, data_str))
+
+                # Salva no session_state para persistir após clique no PDF
+                st.session_state['fechamento_data_str']      = data_str
+                st.session_state['fechamento_entradas']      = df_entradas_dia
+                st.session_state['fechamento_recebimentos']  = df_recebimentos_dia
+                st.session_state['fechamento_saidas']        = df_saidas_dia
+
+            # Exibe o fechamento se já foi gerado
+            if 'fechamento_data_str' in st.session_state:
+                data_str        = st.session_state['fechamento_data_str']
+                df_entradas_dia = st.session_state['fechamento_entradas']
+                df_recebimentos_dia = st.session_state['fechamento_recebimentos']
+                df_saidas_dia   = st.session_state['fechamento_saidas']
+
+                total_vendas   = float(df_entradas_dia['valor_total'].sum()) if not df_entradas_dia.empty else 0.0
+                total_recebido = float(df_recebimentos_dia['valor_parcela'].sum()) if not df_recebimentos_dia.empty else 0.0
+                total_saidas   = float(df_saidas_dia['valor_parcela'].sum()) if not df_saidas_dia.empty else 0.0
+                saldo_liquido  = total_recebido - total_saidas
+
+                formas_pagamento = {}
+                if not df_entradas_dia.empty:
+                    for forma, grupo in df_entradas_dia.groupby('forma_pagamento'):
+                        formas_pagamento[forma] = float(grupo['valor_total'].sum())
+
+                st.markdown(f"### 📅 Fechamento do dia {data_str}")
                 st.markdown("---")
-                st.subheader("🔒 Fechamento de Caixa")
 
-                data_fechamento = st.date_input(
-                    "Selecione o dia para fechar o caixa:",
-                    value=date.today(),
-                    format="DD/MM/YYYY",
-                    key="data_fechamento_caixa"
-                )
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("🛒 Vendas do Dia",    f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col2.metric("💰 Total Recebido",   f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col3.metric("📤 Total de Saídas",  f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col4.metric("💵 Saldo Líquido",    f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                            delta=f"{'positivo' if saldo_liquido >= 0 else 'negativo'}")
 
-                if st.button("📊 Gerar Fechamento", type="primary"):
-                    data_str = data_fechamento.strftime('%d/%m/%Y')
+                if formas_pagamento:
+                    st.markdown("#### 💳 Entradas por Forma de Pagamento")
+                    cols_fp = st.columns(len(formas_pagamento))
+                    for idx, (forma, valor) in enumerate(formas_pagamento.items()):
+                        cols_fp[idx].metric(forma, f"R$ {valor:,.2f}".replace(",","X").replace(".",",").replace("X","."))
 
-                    df_entradas_dia = carregar_dados("""
-                        SELECT 
-                            v.codigo_venda,
-                            c.nome AS cliente,
-                            p.nome AS produto,
-                            p.tipo,
-                            v.valor_total,
-                            v.forma_pagamento
-                        FROM vendas v
-                        JOIN clientes c ON c.id = v.cliente_id
-                        JOIN produtos p ON p.id = v.produto_id
-                        WHERE v.empresa_id = %s AND v.data_venda = %s
-                        ORDER BY v.codigo_venda
-                    """, (emp_id, data_str))
+                col_ent, col_sai = st.columns(2)
 
-                    df_recebimentos_dia = carregar_dados("""
-                        SELECT 
-                            cr.venda_codigo,
-                            c.nome AS cliente,
-                            cr.valor_parcela,
-                            cr.num_parcela,
-                            cr.total_parcelas,
-                            cr.data_pagamento
-                        FROM contas_receber cr
-                        JOIN clientes c ON c.id = cr.cliente_id
-                        WHERE cr.empresa_id = %s 
-                          AND cr.status = 'Pago'
-                          AND cr.data_pagamento = %s
-                        ORDER BY cr.venda_codigo
-                    """, (emp_id, data_str))
-
-                    df_saidas_dia = carregar_dados("""
-                        SELECT 
-                            f.nome AS fornecedor,
-                            cp.valor_parcela,
-                            cp.num_parcela,
-                            cp.total_parcelas,
-                            cp.data_pagamento
-                        FROM contas_pagar cp
-                        JOIN fornecedores f ON f.id = cp.fornecedor_id
-                        WHERE cp.empresa_id = %s 
-                          AND cp.status = 'Pago'
-                          AND cp.data_pagamento = %s
-                        ORDER BY f.nome
-                    """, (emp_id, data_str))
-
-                    # Salva no session_state para persistir após clique no PDF
-                    st.session_state['fechamento_data_str']      = data_str
-                    st.session_state['fechamento_entradas']      = df_entradas_dia
-                    st.session_state['fechamento_recebimentos']  = df_recebimentos_dia
-                    st.session_state['fechamento_saidas']        = df_saidas_dia
-
-                # Exibe o fechamento se já foi gerado
-                if 'fechamento_data_str' in st.session_state:
-                    data_str        = st.session_state['fechamento_data_str']
-                    df_entradas_dia = st.session_state['fechamento_entradas']
-                    df_recebimentos_dia = st.session_state['fechamento_recebimentos']
-                    df_saidas_dia   = st.session_state['fechamento_saidas']
-
-                    total_vendas   = float(df_entradas_dia['valor_total'].sum()) if not df_entradas_dia.empty else 0.0
-                    total_recebido = float(df_recebimentos_dia['valor_parcela'].sum()) if not df_recebimentos_dia.empty else 0.0
-                    total_saidas   = float(df_saidas_dia['valor_parcela'].sum()) if not df_saidas_dia.empty else 0.0
-                    saldo_liquido  = total_recebido - total_saidas
-
-                    formas_pagamento = {}
+                with col_ent:
+                    st.markdown("#### 📋 Vendas e Serviços")
                     if not df_entradas_dia.empty:
-                        for forma, grupo in df_entradas_dia.groupby('forma_pagamento'):
-                            formas_pagamento[forma] = float(grupo['valor_total'].sum())
+                        tipos = {'P': '🛍️', 'S': '✨'}
+                        for _, row in df_entradas_dia.iterrows():
+                            icone_tipo = tipos.get(row['tipo'], '▫️')
+                            st.markdown(f"{icone_tipo} **{row['cliente']}** — {row['produto']}")
+                            st.caption(f"R$ {float(row['valor_total']):,.2f} | {row['forma_pagamento']}".replace(",","X").replace(".",",").replace("X","."))
+                    else:
+                        st.info("Nenhuma venda neste dia.")
 
-                    st.markdown(f"### 📅 Fechamento do dia {data_str}")
-                    st.markdown("---")
+                with col_sai:
+                    st.markdown("#### 📤 Saídas do Dia")
+                    if not df_saidas_dia.empty:
+                        for _, row in df_saidas_dia.iterrows():
+                            st.markdown(f"🔴 **{row['fornecedor']}** — Parc {row['num_parcela']}/{row['total_parcelas']}")
+                            st.caption(f"R$ {float(row['valor_parcela']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                    else:
+                        st.info("Nenhuma saída neste dia.")
 
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("🛒 Vendas do Dia",    f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
-                    col2.metric("💰 Total Recebido",   f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X","."))
-                    col3.metric("📤 Total de Saídas",  f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X","."))
-                    col4.metric("💵 Saldo Líquido",    f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                                delta=f"{'positivo' if saldo_liquido >= 0 else 'negativo'}")
+                st.markdown("---")
 
-                    if formas_pagamento:
-                        st.markdown("#### 💳 Entradas por Forma de Pagamento")
-                        cols_fp = st.columns(len(formas_pagamento))
-                        for idx, (forma, valor) in enumerate(formas_pagamento.items()):
-                            cols_fp[idx].metric(forma, f"R$ {valor:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                # Geração do PDF em memória (sempre disponível após gerar fechamento)
+                from reportlab.lib.pagesizes import A4
+                from reportlab.lib import colors
+                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.units import cm
+                import io
 
-                    col_ent, col_sai = st.columns(2)
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4,
+                                        rightMargin=2*cm, leftMargin=2*cm,
+                                        topMargin=2*cm, bottomMargin=2*cm)
+                styles = getSampleStyleSheet()
+                elementos = []
 
-                    with col_ent:
-                        st.markdown("#### 📋 Vendas e Serviços")
-                        if not df_entradas_dia.empty:
-                            tipos = {'P': '🛍️', 'S': '✨'}
-                            for _, row in df_entradas_dia.iterrows():
-                                icone_tipo = tipos.get(row['tipo'], '▫️')
-                                st.markdown(f"{icone_tipo} **{row['cliente']}** — {row['produto']}")
-                                st.caption(f"R$ {float(row['valor_total']):,.2f} | {row['forma_pagamento']}".replace(",","X").replace(".",",").replace("X","."))
-                        else:
-                            st.info("Nenhuma venda neste dia.")
+                titulo_style = ParagraphStyle('titulo', parent=styles['Title'], fontSize=16, spaceAfter=6)
+                sub_style    = ParagraphStyle('sub', parent=styles['Normal'], fontSize=10, textColor=colors.grey, spaceAfter=20)
+                bold_style   = ParagraphStyle('bold', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', spaceAfter=6)
 
-                    with col_sai:
-                        st.markdown("#### 📤 Saídas do Dia")
-                        if not df_saidas_dia.empty:
-                            for _, row in df_saidas_dia.iterrows():
-                                st.markdown(f"🔴 **{row['fornecedor']}** — Parc {row['num_parcela']}/{row['total_parcelas']}")
-                                st.caption(f"R$ {float(row['valor_parcela']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
-                        else:
-                            st.info("Nenhuma saída neste dia.")
+                elementos.append(Paragraph("Fechamento de Caixa", titulo_style))
+                elementos.append(Paragraph(f"Data: {data_str}", sub_style))
+                elementos.append(Spacer(1, 0.3*cm))
 
-                    st.markdown("---")
+                elementos.append(Paragraph("Resumo Geral", bold_style))
+                dados_resumo = [
+                    ["Descrição", "Valor"],
+                    ["Total de Vendas do Dia",    f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                    ["Total Recebido (Parcelas)",  f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                    ["Total de Saídas",            f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                    ["Saldo Líquido",              f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+                ]
+                t_resumo = Table(dados_resumo, colWidths=[11*cm, 5*cm])
+                t_resumo.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,-1), 10),
+                    ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                    ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                    ('TEXTCOLOR', (0,-1), (-1,-1), colors.HexColor('#00703c') if saldo_liquido >= 0 else colors.red),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                    ('TOPPADDING', (0,0), (-1,-1), 6),
+                ]))
+                elementos.append(t_resumo)
+                elementos.append(Spacer(1, 0.5*cm))
 
-                    # Geração do PDF em memória (sempre disponível após gerar fechamento)
-                    from reportlab.lib.pagesizes import A4
-                    from reportlab.lib import colors
-                    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-                    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-                    from reportlab.lib.units import cm
-                    import io
-
-                    buffer = io.BytesIO()
-                    doc = SimpleDocTemplate(buffer, pagesize=A4,
-                                            rightMargin=2*cm, leftMargin=2*cm,
-                                            topMargin=2*cm, bottomMargin=2*cm)
-                    styles = getSampleStyleSheet()
-                    elementos = []
-
-                    titulo_style = ParagraphStyle('titulo', parent=styles['Title'], fontSize=16, spaceAfter=6)
-                    sub_style    = ParagraphStyle('sub', parent=styles['Normal'], fontSize=10, textColor=colors.grey, spaceAfter=20)
-                    bold_style   = ParagraphStyle('bold', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', spaceAfter=6)
-
-                    elementos.append(Paragraph("Fechamento de Caixa", titulo_style))
-                    elementos.append(Paragraph(f"Data: {data_str}", sub_style))
-                    elementos.append(Spacer(1, 0.3*cm))
-
-                    elementos.append(Paragraph("Resumo Geral", bold_style))
-                    dados_resumo = [
-                        ["Descrição", "Valor"],
-                        ["Total de Vendas do Dia",    f"R$ {total_vendas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
-                        ["Total Recebido (Parcelas)",  f"R$ {total_recebido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
-                        ["Total de Saídas",            f"R$ {total_saidas:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
-                        ["Saldo Líquido",              f"R$ {saldo_liquido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
-                    ]
-                    t_resumo = Table(dados_resumo, colWidths=[11*cm, 5*cm])
-                    t_resumo.setStyle(TableStyle([
+                if formas_pagamento:
+                    elementos.append(Paragraph("Entradas por Forma de Pagamento", bold_style))
+                    dados_fp = [["Forma de Pagamento", "Total"]]
+                    for forma, valor in formas_pagamento.items():
+                        dados_fp.append([forma, f"R$ {valor:,.2f}".replace(",","X").replace(".",",").replace("X",".")])
+                    t_fp = Table(dados_fp, colWidths=[11*cm, 5*cm])
+                    t_fp.setStyle(TableStyle([
                         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
                         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
                         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -4704,292 +4663,270 @@ Feliz aniversário! 🥳✨"""
                         ('ALIGN', (1,0), (1,-1), 'RIGHT'),
                         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
                         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-                        ('TEXTCOLOR', (0,-1), (-1,-1), colors.HexColor('#00703c') if saldo_liquido >= 0 else colors.red),
                         ('BOTTOMPADDING', (0,0), (-1,-1), 6),
                         ('TOPPADDING', (0,0), (-1,-1), 6),
                     ]))
-                    elementos.append(t_resumo)
+                    elementos.append(t_fp)
                     elementos.append(Spacer(1, 0.5*cm))
 
-                    if formas_pagamento:
-                        elementos.append(Paragraph("Entradas por Forma de Pagamento", bold_style))
-                        dados_fp = [["Forma de Pagamento", "Total"]]
-                        for forma, valor in formas_pagamento.items():
-                            dados_fp.append([forma, f"R$ {valor:,.2f}".replace(",","X").replace(".",",").replace("X",".")])
-                        t_fp = Table(dados_fp, colWidths=[11*cm, 5*cm])
-                        t_fp.setStyle(TableStyle([
-                            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
-                            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0,0), (-1,-1), 10),
-                            ('ALIGN', (1,0), (1,-1), 'RIGHT'),
-                            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
-                            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-                            ('TOPPADDING', (0,0), (-1,-1), 6),
-                        ]))
-                        elementos.append(t_fp)
-                        elementos.append(Spacer(1, 0.5*cm))
-
-                    if not df_entradas_dia.empty:
-                        elementos.append(Paragraph("Vendas e Serviços do Dia", bold_style))
-                        dados_v = [["Cliente", "Produto/Serviço", "Forma Pgto", "Valor"]]
-                        for _, row in df_entradas_dia.iterrows():
-                            dados_v.append([
-                                str(row['cliente']),
-                                str(row['produto']),
-                                str(row['forma_pagamento']),
-                                f"R$ {float(row['valor_total']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
-                            ])
-                        t_v = Table(dados_v, colWidths=[5*cm, 5*cm, 3*cm, 3*cm])
-                        t_v.setStyle(TableStyle([
-                            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
-                            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0,0), (-1,-1), 9),
-                            ('ALIGN', (3,0), (3,-1), 'RIGHT'),
-                            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
-                            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-                            ('TOPPADDING', (0,0), (-1,-1), 5),
-                        ]))
-                        elementos.append(t_v)
-                        elementos.append(Spacer(1, 0.5*cm))
-
-                    if not df_saidas_dia.empty:
-                        elementos.append(Paragraph("Saídas do Dia", bold_style))
-                        dados_s = [["Fornecedor", "Parcela", "Valor"]]
-                        for _, row in df_saidas_dia.iterrows():
-                            dados_s.append([
-                                str(row['fornecedor']),
-                                f"{row['num_parcela']}/{row['total_parcelas']}",
-                                f"R$ {float(row['valor_parcela']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
-                            ])
-                        t_s = Table(dados_s, colWidths=[9*cm, 3*cm, 4*cm])
-                        t_s.setStyle(TableStyle([
-                            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#8a2a2a')),
-                            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0,0), (-1,-1), 9),
-                            ('ALIGN', (2,0), (2,-1), 'RIGHT'),
-                            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fff0f0')]),
-                            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-                            ('TOPPADDING', (0,0), (-1,-1), 5),
-                        ]))
-                        elementos.append(t_s)
-
-                    doc.build(elementos)
-                    buffer.seek(0)
-
-                    st.download_button(
-                        label="⬇️ Baixar PDF do Fechamento",
-                        data=buffer,
-                        file_name=f"fechamento_caixa_{data_fechamento.strftime('%d-%m-%Y')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-
-                    if st.button("🔄 Novo Fechamento", use_container_width=True):
-                        for k in ['fechamento_data_str', 'fechamento_entradas', 'fechamento_recebimentos', 'fechamento_saidas']:
-                            if k in st.session_state: del st.session_state[k]
-                        st.rerun()
-
-            # ==========================================
-            # ABA: COMISSÕES
-            # ==========================================
-            with aba_comissoes:
-                st.subheader("🏆 Relatório de Comissões")
-
-                col_ini, col_fim = st.columns(2)
-                hoje = date.today()
-                d_ini_com = col_ini.date_input("Data Inicial:", value=hoje.replace(day=1), format="DD/MM/YYYY", key="com_ini")
-                d_fim_com = col_fim.date_input("Data Final:", value=hoje, format="DD/MM/YYYY", key="com_fim")
-
-                # Seletor de colaborador
-                df_colab_com = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s ORDER BY nome", (emp_id,))
-                opcoes_colab = ["👥 Todos os Colaboradores"] + df_colab_com['nome'].tolist() if not df_colab_com.empty else ["👥 Todos os Colaboradores"]
-                filtro_colab = st.selectbox("Colaborador:", opcoes_colab, key="com_colab")
-
-                if st.button("📊 Gerar Relatório de Comissões", type="primary"):
-                    # Monta filtro de colaborador
-                    if filtro_colab != "👥 Todos os Colaboradores":
-                        colab_id_filtro = int(df_colab_com[df_colab_com['nome'] == filtro_colab].iloc[0]['id'])
-                        filtro_sql = "AND v.colaborador_id = %s"
-                        params_com = (emp_id, d_ini_com.strftime('%Y-%m-%d'), d_fim_com.strftime('%Y-%m-%d'), colab_id_filtro)
-                    else:
-                        filtro_sql = ""
-                        params_com = (emp_id, d_ini_com.strftime('%Y-%m-%d'), d_fim_com.strftime('%Y-%m-%d'))
-
-                    df_com = carregar_dados(f"""
-                        SELECT
-                            col.nome AS colaborador,
-                            p.nome AS servico,
-                            p.comissao_percentual,
-                            v.valor_total,
-                            ROUND((v.valor_total * p.comissao_percentual / 100)::numeric, 2) AS valor_comissao,
-                            v.data_venda,
-                            c.nome AS cliente
-                        FROM vendas v
-                        JOIN produtos p ON p.id = v.produto_id
-                        JOIN colaboradores col ON col.id = v.colaborador_id
-                        JOIN clientes c ON c.id = v.cliente_id
-                        WHERE v.empresa_id = %s
-                          AND p.tipo = 'S'
-                          AND v.colaborador_id IS NOT NULL
-                          AND TO_DATE(v.data_venda, 'DD/MM/YYYY') BETWEEN %s AND %s
-                          {filtro_sql}
-                        ORDER BY col.nome, v.data_venda
-                    """, params_com)
-
-                    if df_com.empty:
-                        st.info("Nenhum serviço com comissão encontrado no período.")
-                    else:
-                        st.session_state['com_df']        = df_com
-                        st.session_state['com_ini_val']   = d_ini_com
-                        st.session_state['com_fim_val']   = d_fim_com
-
-                if 'com_df' in st.session_state:
-                    df_com    = st.session_state['com_df']
-                    d_ini_com = st.session_state['com_ini_val']
-                    d_fim_com = st.session_state['com_fim_val']
-
-                    # --- RESUMO POR COLABORADOR ---
-                    st.markdown(f"#### 📅 Período: {d_ini_com.strftime('%d/%m/%Y')} a {d_fim_com.strftime('%d/%m/%Y')}")
-                    st.markdown("---")
-
-                    resumo = df_com.groupby('colaborador').agg(
-                        atendimentos=('servico', 'count'),
-                        total_servicos=('valor_total', 'sum'),
-                        total_comissao=('valor_comissao', 'sum')
-                    ).reset_index().sort_values('total_comissao', ascending=False)
-
-                    total_geral_com = float(resumo['total_comissao'].sum())
-                    total_geral_serv = float(resumo['total_servicos'].sum())
-
-                    # Métricas gerais
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("👥 Colaboradores", len(resumo))
-                    col2.metric("💇 Total em Serviços", f"R$ {total_geral_serv:,.2f}".replace(",","X").replace(".",",").replace("X","."))
-                    col3.metric("💰 Total em Comissões", f"R$ {total_geral_com:,.2f}".replace(",","X").replace(".",",").replace("X","."))
-
-                    st.markdown("---")
-                    st.markdown("#### 👤 Resumo por Colaborador")
-
-                    for _, row in resumo.iterrows():
-                        with st.container(border=True):
-                            col_a, col_b, col_c, col_d = st.columns([3, 2, 2, 2])
-                            col_a.markdown(f"**{row['colaborador']}**")
-                            col_b.metric("Atendimentos", int(row['atendimentos']))
-                            col_c.metric("Total Produzido", f"R$ {float(row['total_servicos']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
-                            col_d.metric("💰 Comissão", f"R$ {float(row['total_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
-
-                            # Detalhamento dos serviços do colaborador
-                            df_det = df_com[df_com['colaborador'] == row['colaborador']]
-                            with st.expander(f"Ver detalhes dos {int(row['atendimentos'])} atendimentos"):
-                                for _, srv in df_det.iterrows():
-                                    st.markdown(f"▫️ **{srv['data_venda']}** — {srv['cliente']} — {srv['servico']}")
-                                    st.caption(f"Valor: R$ {float(srv['valor_total']):,.2f} | {float(srv['comissao_percentual'])}% = R$ {float(srv['valor_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
-
-                    # --- EXPORTAR PDF ---
-                    st.markdown("---")
-                    from reportlab.lib.pagesizes import A4
-                    from reportlab.lib import colors
-                    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-                    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-                    from reportlab.lib.units import cm
-                    import io
-
-                    buffer = io.BytesIO()
-                    doc = SimpleDocTemplate(buffer, pagesize=A4,
-                                            rightMargin=2*cm, leftMargin=2*cm,
-                                            topMargin=2*cm, bottomMargin=2*cm)
-                    styles = getSampleStyleSheet()
-                    elementos = []
-
-                    titulo_style = ParagraphStyle('titulo', parent=styles['Title'], fontSize=16, spaceAfter=6)
-                    sub_style    = ParagraphStyle('sub', parent=styles['Normal'], fontSize=10, textColor=colors.grey, spaceAfter=16)
-                    bold_style   = ParagraphStyle('bold', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', spaceAfter=6)
-
-                    elementos.append(Paragraph("Relatório de Comissões", titulo_style))
-                    elementos.append(Paragraph(f"Período: {d_ini_com.strftime('%d/%m/%Y')} a {d_fim_com.strftime('%d/%m/%Y')}", sub_style))
-                    elementos.append(Spacer(1, 0.3*cm))
-
-                    # Resumo geral
-                    elementos.append(Paragraph("Resumo por Colaborador", bold_style))
-                    dados_res = [["Colaborador", "Atendimentos", "Total Serviços", "Comissão"]]
-                    for _, row in resumo.iterrows():
-                        dados_res.append([
-                            str(row['colaborador']),
-                            str(int(row['atendimentos'])),
-                            f"R$ {float(row['total_servicos']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                            f"R$ {float(row['total_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                if not df_entradas_dia.empty:
+                    elementos.append(Paragraph("Vendas e Serviços do Dia", bold_style))
+                    dados_v = [["Cliente", "Produto/Serviço", "Forma Pgto", "Valor"]]
+                    for _, row in df_entradas_dia.iterrows():
+                        dados_v.append([
+                            str(row['cliente']),
+                            str(row['produto']),
+                            str(row['forma_pagamento']),
+                            f"R$ {float(row['valor_total']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
                         ])
-                    # Linha de total
-                    dados_res.append([
-                        "TOTAL GERAL", str(int(resumo['atendimentos'].sum())),
-                        f"R$ {total_geral_serv:,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                        f"R$ {total_geral_com:,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                    ])
-
-                    t_res = Table(dados_res, colWidths=[6*cm, 3*cm, 4*cm, 3*cm])
-                    t_res.setStyle(TableStyle([
+                    t_v = Table(dados_v, colWidths=[5*cm, 5*cm, 3*cm, 3*cm])
+                    t_v.setStyle(TableStyle([
                         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
                         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
                         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0,0), (-1,-1), 10),
-                        ('ALIGN', (1,0), (-1,-1), 'CENTER'),
-                        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#f0f0f0')]),
-                        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#2d2d6b')),
-                        ('TEXTCOLOR', (0,-1), (-1,-1), colors.white),
-                        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 9),
+                        ('ALIGN', (3,0), (3,-1), 'RIGHT'),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f0f0f0')]),
                         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-                        ('TOPPADDING', (0,0), (-1,-1), 6),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                        ('TOPPADDING', (0,0), (-1,-1), 5),
                     ]))
-                    elementos.append(t_res)
-                    elementos.append(Spacer(1, 0.6*cm))
+                    elementos.append(t_v)
+                    elementos.append(Spacer(1, 0.5*cm))
 
-                    # Detalhamento por colaborador
-                    for colab in resumo['colaborador'].tolist():
-                        elementos.append(Paragraph(f"Detalhamento — {colab}", bold_style))
-                        df_det = df_com[df_com['colaborador'] == colab]
-                        dados_det = [["Data", "Cliente", "Serviço", "%", "Valor", "Comissão"]]
-                        for _, srv in df_det.iterrows():
-                            dados_det.append([
-                                str(srv['data_venda']),
-                                str(srv['cliente']),
-                                str(srv['servico']),
-                                f"{float(srv['comissao_percentual'])}%",
-                                f"R$ {float(srv['valor_total']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                                f"R$ {float(srv['valor_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                            ])
-                        t_det = Table(dados_det, colWidths=[2.5*cm, 4*cm, 3.5*cm, 1.5*cm, 2.5*cm, 2.5*cm])
-                        t_det.setStyle(TableStyle([
-                            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6a6a9a')),
-                            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0,0), (-1,-1), 8),
-                            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f5f5ff')]),
-                            ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
-                            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-                            ('TOPPADDING', (0,0), (-1,-1), 4),
-                        ]))
-                        elementos.append(t_det)
-                        elementos.append(Spacer(1, 0.4*cm))
+                if not df_saidas_dia.empty:
+                    elementos.append(Paragraph("Saídas do Dia", bold_style))
+                    dados_s = [["Fornecedor", "Parcela", "Valor"]]
+                    for _, row in df_saidas_dia.iterrows():
+                        dados_s.append([
+                            str(row['fornecedor']),
+                            f"{row['num_parcela']}/{row['total_parcelas']}",
+                            f"R$ {float(row['valor_parcela']):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+                        ])
+                    t_s = Table(dados_s, colWidths=[9*cm, 3*cm, 4*cm])
+                    t_s.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#8a2a2a')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 9),
+                        ('ALIGN', (2,0), (2,-1), 'RIGHT'),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fff0f0')]),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                        ('TOPPADDING', (0,0), (-1,-1), 5),
+                    ]))
+                    elementos.append(t_s)
 
-                    doc.build(elementos)
-                    buffer.seek(0)
+                doc.build(elementos)
+                buffer.seek(0)
 
-                    st.download_button(
-                        label="⬇️ Baixar PDF do Relatório de Comissões",
-                        data=buffer,
-                        file_name=f"comissoes_{d_ini_com.strftime('%d-%m-%Y')}_a_{d_fim_com.strftime('%d-%m-%Y')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-                    
+                st.download_button(
+                    label="⬇️ Baixar PDF do Fechamento",
+                    data=buffer,
+                    file_name=f"fechamento_caixa_{data_fechamento.strftime('%d-%m-%Y')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+
+                if st.button("🔄 Novo Fechamento", use_container_width=True):
+                    for k in ['fechamento_data_str', 'fechamento_entradas', 'fechamento_recebimentos', 'fechamento_saidas']:
+                        if k in st.session_state: del st.session_state[k]
+                    st.rerun()
+
+        # ==========================================
+        # ABA: COMISSÕES
+        # ==========================================
+        with aba_comissoes:
+            st.subheader("🏆 Relatório de Comissões")
+
+            col_ini, col_fim = st.columns(2)
+            hoje = date.today()
+            d_ini_com = col_ini.date_input("Data Inicial:", value=hoje.replace(day=1), format="DD/MM/YYYY", key="com_ini")
+            d_fim_com = col_fim.date_input("Data Final:", value=hoje, format="DD/MM/YYYY", key="com_fim")
+
+            # Seletor de colaborador
+            df_colab_com = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s ORDER BY nome", (emp_id,))
+            opcoes_colab = ["👥 Todos os Colaboradores"] + df_colab_com['nome'].tolist() if not df_colab_com.empty else ["👥 Todos os Colaboradores"]
+            filtro_colab = st.selectbox("Colaborador:", opcoes_colab, key="com_colab")
+
+            if st.button("📊 Gerar Relatório de Comissões", type="primary"):
+                # Monta filtro de colaborador
+                if filtro_colab != "👥 Todos os Colaboradores":
+                    colab_id_filtro = int(df_colab_com[df_colab_com['nome'] == filtro_colab].iloc[0]['id'])
+                    filtro_sql = "AND v.colaborador_id = %s"
+                    params_com = (emp_id, d_ini_com.strftime('%Y-%m-%d'), d_fim_com.strftime('%Y-%m-%d'), colab_id_filtro)
+                else:
+                    filtro_sql = ""
+                    params_com = (emp_id, d_ini_com.strftime('%Y-%m-%d'), d_fim_com.strftime('%Y-%m-%d'))
+
+                df_com = carregar_dados(f"""
+                    SELECT
+                        col.nome AS colaborador,
+                        p.nome AS servico,
+                        p.comissao_percentual,
+                        v.valor_total,
+                        ROUND((v.valor_total * p.comissao_percentual / 100)::numeric, 2) AS valor_comissao,
+                        v.data_venda,
+                        c.nome AS cliente
+                    FROM vendas v
+                    JOIN produtos p ON p.id = v.produto_id
+                    JOIN colaboradores col ON col.id = v.colaborador_id
+                    JOIN clientes c ON c.id = v.cliente_id
+                    WHERE v.empresa_id = %s
+                      AND p.tipo = 'S'
+                      AND v.colaborador_id IS NOT NULL
+                      AND TO_DATE(v.data_venda, 'DD/MM/YYYY') BETWEEN %s AND %s
+                      {filtro_sql}
+                    ORDER BY col.nome, v.data_venda
+                """, params_com)
+
+                if df_com.empty:
+                    st.info("Nenhum serviço com comissão encontrado no período.")
+                else:
+                    st.session_state['com_df']        = df_com
+                    st.session_state['com_ini_val']   = d_ini_com
+                    st.session_state['com_fim_val']   = d_fim_com
+
+            if 'com_df' in st.session_state:
+                df_com    = st.session_state['com_df']
+                d_ini_com = st.session_state['com_ini_val']
+                d_fim_com = st.session_state['com_fim_val']
+
+                # --- RESUMO POR COLABORADOR ---
+                st.markdown(f"#### 📅 Período: {d_ini_com.strftime('%d/%m/%Y')} a {d_fim_com.strftime('%d/%m/%Y')}")
+                st.markdown("---")
+
+                resumo = df_com.groupby('colaborador').agg(
+                    atendimentos=('servico', 'count'),
+                    total_servicos=('valor_total', 'sum'),
+                    total_comissao=('valor_comissao', 'sum')
+                ).reset_index().sort_values('total_comissao', ascending=False)
+
+                total_geral_com = float(resumo['total_comissao'].sum())
+                total_geral_serv = float(resumo['total_servicos'].sum())
+
+                # Métricas gerais
+                col1, col2, col3 = st.columns(3)
+                col1.metric("👥 Colaboradores", len(resumo))
+                col2.metric("💇 Total em Serviços", f"R$ {total_geral_serv:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                col3.metric("💰 Total em Comissões", f"R$ {total_geral_com:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+
+                st.markdown("---")
+                st.markdown("#### 👤 Resumo por Colaborador")
+
+                for _, row in resumo.iterrows():
+                    with st.container(border=True):
+                        col_a, col_b, col_c, col_d = st.columns([3, 2, 2, 2])
+                        col_a.markdown(f"**{row['colaborador']}**")
+                        col_b.metric("Atendimentos", int(row['atendimentos']))
+                        col_c.metric("Total Produzido", f"R$ {float(row['total_servicos']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
+                        col_d.metric("💰 Comissão", f"R$ {float(row['total_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
+
+                        # Detalhamento dos serviços do colaborador
+                        df_det = df_com[df_com['colaborador'] == row['colaborador']]
+                        with st.expander(f"Ver detalhes dos {int(row['atendimentos'])} atendimentos"):
+                            for _, srv in df_det.iterrows():
+                                st.markdown(f"▫️ **{srv['data_venda']}** — {srv['cliente']} — {srv['servico']}")
+                                st.caption(f"Valor: R$ {float(srv['valor_total']):,.2f} | {float(srv['comissao_percentual'])}% = R$ {float(srv['valor_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."))
+
+                # --- EXPORTAR PDF ---
+                st.markdown("---")
+                from reportlab.lib.pagesizes import A4
+                from reportlab.lib import colors
+                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.units import cm
+                import io
+
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4,
+                                        rightMargin=2*cm, leftMargin=2*cm,
+                                        topMargin=2*cm, bottomMargin=2*cm)
+                styles = getSampleStyleSheet()
+                elementos = []
+
+                titulo_style = ParagraphStyle('titulo', parent=styles['Title'], fontSize=16, spaceAfter=6)
+                sub_style    = ParagraphStyle('sub', parent=styles['Normal'], fontSize=10, textColor=colors.grey, spaceAfter=16)
+                bold_style   = ParagraphStyle('bold', parent=styles['Normal'], fontSize=11, fontName='Helvetica-Bold', spaceAfter=6)
+
+                elementos.append(Paragraph("Relatório de Comissões", titulo_style))
+                elementos.append(Paragraph(f"Período: {d_ini_com.strftime('%d/%m/%Y')} a {d_fim_com.strftime('%d/%m/%Y')}", sub_style))
+                elementos.append(Spacer(1, 0.3*cm))
+
+                # Resumo geral
+                elementos.append(Paragraph("Resumo por Colaborador", bold_style))
+                dados_res = [["Colaborador", "Atendimentos", "Total Serviços", "Comissão"]]
+                for _, row in resumo.iterrows():
+                    dados_res.append([
+                        str(row['colaborador']),
+                        str(int(row['atendimentos'])),
+                        f"R$ {float(row['total_servicos']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                        f"R$ {float(row['total_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                    ])
+                # Linha de total
+                dados_res.append([
+                    "TOTAL GERAL", str(int(resumo['atendimentos'].sum())),
+                    f"R$ {total_geral_serv:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                    f"R$ {total_geral_com:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                ])
+
+                t_res = Table(dados_res, colWidths=[6*cm, 3*cm, 4*cm, 3*cm])
+                t_res.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4a4a8a')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,-1), 10),
+                    ('ALIGN', (1,0), (-1,-1), 'CENTER'),
+                    ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#f0f0f0')]),
+                    ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#2d2d6b')),
+                    ('TEXTCOLOR', (0,-1), (-1,-1), colors.white),
+                    ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                    ('TOPPADDING', (0,0), (-1,-1), 6),
+                ]))
+                elementos.append(t_res)
+                elementos.append(Spacer(1, 0.6*cm))
+
+                # Detalhamento por colaborador
+                for colab in resumo['colaborador'].tolist():
+                    elementos.append(Paragraph(f"Detalhamento — {colab}", bold_style))
+                    df_det = df_com[df_com['colaborador'] == colab]
+                    dados_det = [["Data", "Cliente", "Serviço", "%", "Valor", "Comissão"]]
+                    for _, srv in df_det.iterrows():
+                        dados_det.append([
+                            str(srv['data_venda']),
+                            str(srv['cliente']),
+                            str(srv['servico']),
+                            f"{float(srv['comissao_percentual'])}%",
+                            f"R$ {float(srv['valor_total']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                            f"R$ {float(srv['valor_comissao']):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                        ])
+                    t_det = Table(dados_det, colWidths=[2.5*cm, 4*cm, 3.5*cm, 1.5*cm, 2.5*cm, 2.5*cm])
+                    t_det.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6a6a9a')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 8),
+                        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f5f5ff')]),
+                        ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                        ('TOPPADDING', (0,0), (-1,-1), 4),
+                    ]))
+                    elementos.append(t_det)
+                    elementos.append(Spacer(1, 0.4*cm))
+
+                doc.build(elementos)
+                buffer.seek(0)
+
+                st.download_button(
+                    label="⬇️ Baixar PDF do Relatório de Comissões",
+                    data=buffer,
+                    file_name=f"comissoes_{d_ini_com.strftime('%d-%m-%Y')}_a_{d_fim_com.strftime('%d-%m-%Y')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+                
     # ==========================================================
     # MÓDULO 5: CRM (COM FILTRO DINÂMICO DE ENVIO)
     # ==========================================================
