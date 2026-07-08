@@ -130,6 +130,12 @@ def carregar_dados_cached(query, params=None):
 def limpar_cache():
     st.cache_data.clear()
 
+@st.cache_data(show_spinner=False)
+def carregar_imagem_base64(caminho_imagem):
+    """Lê imagens locais uma única vez por cache, evitando I/O repetido em reruns."""
+    with open(caminho_imagem, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
+
 def executar_comando(query, params=None):
     """Executa um único INSERT/UPDATE/DELETE com commit, rollback e fechamento seguro."""
     def _operacao(cur):
@@ -287,13 +293,8 @@ if 'logado' not in st.session_state:
 
 # --- TELA DE LOGIN ---
 if not st.session_state['logado']:
-    # 1. Função para converter a imagem e poder usar no HTML
-    def get_base64_image(caminho_imagem):
-        with open(caminho_imagem, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode()
-
-    # 2. Converte a sua logo (verifique se o nome do arquivo está certinho)
-    img_base64 = get_base64_image("Apprimory_logo_branca.png")
+    # Converte a sua logo com cache para evitar leitura repetida do arquivo a cada rerun
+    img_base64 = carregar_imagem_base64("Apprimory_logo_branca.png")
 
     # --- APLICAÇÃO DAS COLUNAS INVISÍVEIS PARA CENTRALIZAR O CARD ---
     col_vazia_esq, col_login, col_vazia_dir = st.columns([1, 1.2, 1])
@@ -688,15 +689,13 @@ else:
             logo_html = f"<img src='{logo_customizada}' width='85' style='object-fit: contain; border-radius: 4px;'>"
         elif os.path.exists(logo_customizada):
             # Se for um caminho de ficheiro local no servidor, converte para Base64
-            with open(logo_customizada, "rb") as img_file:
-                img_base64 = base64.b64encode(img_file.read()).decode()
-                logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
+            img_base64 = carregar_imagem_base64(logo_customizada)
+            logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
                 
     # Cenário B: Não tem logo cadastrada, tenta usar a logo padrão do sistema ('logo.png')
     elif os.path.exists("logo.png"):
-        with open("logo.png", "rb") as img_file:
-            img_base64 = base64.b64encode(img_file.read()).decode()
-            logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
+        img_base64 = carregar_imagem_base64("logo.png")
+        logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
 
     # Renderiza o painel com Flexbox (fonte reduzida para 28px e gap aumentado para 20px)
     st.markdown(
@@ -757,14 +756,18 @@ else:
         
         # --- ABA 1: DASHBOARD DE VENDAS (Seu código original adaptado) ---
         with aba_dash:
-            query_dash = "SELECT v.codigo_venda, v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.empresa_id = %s"
-            df_dash = carregar_dados_cached(query_dash, (emp_id,))
+            query_dash = """
+                SELECT v.codigo_venda, v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria
+                FROM vendas v
+                JOIN produtos p ON v.produto_id = p.id
+                WHERE v.empresa_id = %s
+                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') >= %s
+                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') <= %s
+            """
+            df_dash = carregar_dados_cached(query_dash, (emp_id, d_ini, d_fim))
             
             if not df_dash.empty and d_ini and d_fim:
                 df_dash['Data_Obj'] = pd.to_datetime(df_dash['data_venda'], format='%d/%m/%Y', errors='coerce').dt.date
-                
-                # Aplica o filtro global
-                df_dash = df_dash[(df_dash['Data_Obj'] >= d_ini) & (df_dash['Data_Obj'] <= d_fim)]
                 
                 if not df_dash.empty:
                     col1, col2, col3 = st.columns(3)
@@ -1381,7 +1384,7 @@ Feliz aniversário! 🥳✨"""
         # ==========================================
         with tab_prod:
             # --- Buscando apenas PRODUTOS FÍSICOS ('P') ---
-            df_p = carregar_dados_cached("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='P' ORDER BY nome", (emp_id,))
+            df_p = carregar_dados_cached("SELECT id, referencia, nome, marca, categoria, valor, quantidade, classe, tipo, empresa_id FROM produtos WHERE empresa_id=%s AND tipo='P' ORDER BY nome", (emp_id,))
             df_c = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
             
@@ -1687,7 +1690,7 @@ Feliz aniversário! 🥳✨"""
             #st.markdown("### 🛠️ Gestão de Serviços Prestados")
             
             # --- Buscando apenas SERVIÇOS ('S') com todas as colunas ---
-            df_s = carregar_dados_cached("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+            df_s = carregar_dados_cached("SELECT id, referencia, nome, categoria, valor, tempo_minutos, tipo, empresa_id FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
             
             # Carregando categorias
             df_c_serv = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
@@ -1857,7 +1860,7 @@ Feliz aniversário! 🥳✨"""
                         limpar_cache()
                         st.rerun()
 
-            df_clientes = carregar_dados_cached("SELECT * FROM clientes WHERE empresa_id = %s ORDER BY nome", (emp_id,))
+            df_clientes = carregar_dados_cached("SELECT id, nome, data_nascimento, telefone, tipo, empresa_id FROM clientes WHERE empresa_id = %s ORDER BY nome", (emp_id,))
             
             with sub_edit_cli:
                 if not df_clientes.empty:
@@ -4025,7 +4028,7 @@ Feliz aniversário! 🥳✨"""
                     if 'venda_editando' in st.session_state:
                         v_id = st.session_state['venda_editando']
         
-                        df_parc = carregar_dados_cached("SELECT * FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
+                        df_parc = carregar_dados_cached("SELECT id, venda_codigo, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
         
                         if not df_parc.empty:
                             total_original = float(df_parc['valor_parcela'].sum())
