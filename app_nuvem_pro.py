@@ -1484,7 +1484,28 @@ Feliz aniversário! 🥳✨"""
         # ==========================================
         with tab_prod:
             # --- Buscando apenas PRODUTOS FÍSICOS ('P') ---
-            df_p = carregar_dados_cached("SELECT id, referencia, nome, marca, categoria, valor, quantidade, classe, tipo, empresa_id FROM produtos WHERE empresa_id=%s AND tipo='P' ORDER BY nome", (emp_id,))
+            df_p = carregar_dados_cached(
+    """
+    SELECT
+        id,
+        referencia,
+        nome,
+        marca,
+        categoria,
+        valor,
+        preco_custo,
+        markup,
+        quantidade,
+        classe,
+        tipo,
+        empresa_id
+    FROM produtos
+    WHERE empresa_id=%s
+      AND tipo='P'
+    ORDER BY nome
+    """,
+    (emp_id,)
+)
             df_c = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
             
