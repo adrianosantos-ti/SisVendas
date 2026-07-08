@@ -59,8 +59,24 @@ DATABASE_URL = st.secrets["DATABASE_URL"]
 # automática. Simples, robusto e compatível
 # com o PgBouncer do Supabase (porta 6543).
 # ==========================================
-def conectar_banco():
-    return psycopg2.connect(DATABASE_URL)
+def conectar_banco(tentativas=3, espera=1):
+    """
+    Abre conexão com o banco usando tentativas automáticas.
+
+    Isso aumenta a estabilidade no Streamlit Cloud + Supabase/PgBouncer,
+    onde podem ocorrer falhas temporárias de conexão durante reruns.
+    """
+    ultima_excecao = None
+
+    for tentativa in range(1, tentativas + 1):
+        try:
+            return psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            ultima_excecao = e
+            if tentativa < tentativas:
+                time_module.sleep(espera)
+
+    raise ultima_excecao
 
 def devolver_conexao(conn):
     try:
@@ -1032,22 +1048,34 @@ Feliz aniversário! 🥳✨"""
                         # Extraímos o código da venda a partir do texto do selectbox
                         venda_id_recibo = int(venda_recibo_sel.split("Nº ")[1].split(" |")[0])
                         
-                        conn = conectar_banco()
-                        cursor = conn.cursor()
+                        try:
+                            conn = conectar_banco()
+                            cursor = conn.cursor()
+                            
+                            # 2. Buscamos TODOS os itens daquele codigo_venda
+                            cursor.execute("""
+                                SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
+                                       v.valor_total, v.valor_entrada, v.valor_restante, 
+                                       v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
+                                FROM vendas v 
+                                JOIN clientes c ON v.cliente_id = c.id 
+                                JOIN produtos p ON v.produto_id = p.id 
+                                WHERE v.codigo_venda = %s AND v.empresa_id = %s
+                            """, (venda_id_recibo, emp_id))
+                            
+                            dados_recibo = cursor.fetchall()
                         
-                        # 2. Buscamos TODOS os itens daquele codigo_venda
-                        cursor.execute("""
-                            SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
-                                   v.valor_total, v.valor_entrada, v.valor_restante, 
-                                   v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
-                            FROM vendas v 
-                            JOIN clientes c ON v.cliente_id = c.id 
-                            JOIN produtos p ON v.produto_id = p.id 
-                            WHERE v.codigo_venda = %s AND v.empresa_id = %s
-                        """, (venda_id_recibo, emp_id))
+                        except psycopg2.OperationalError:
+                            dados_recibo = []
+                            st.error("Erro temporário de conexão ao buscar dados do recibo. Tente novamente em alguns segundos.")
                         
-                        dados_recibo = cursor.fetchall()
-                        devolver_conexao(conn)
+                        except Exception as e:
+                            dados_recibo = []
+                            st.error(f"Erro ao buscar dados do recibo: {e}")
+                        
+                        finally:
+                            if 'conn' in locals():
+                                devolver_conexao(conn)
 
                         if dados_recibo:
                             tel = dados_recibo[0][0]
