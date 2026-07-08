@@ -735,93 +735,46 @@ else:
         # ==========================================
         aba_dash, aba_crm, aba_hist, aba_alertas, aba_app = st.tabs(["📈 Análise de Vendas", "🎯 CRM e Clientes", "📋 Histórico", "🚨 Alertas", "📱 Visão App"])
         
-        # --- ABA 1: DASHBOARD DE VENDAS (OTIMIZADO) ---
+        # --- ABA 1: DASHBOARD DE VENDAS (Seu código original adaptado) ---
         with aba_dash:
-            # 1. Filtramos as datas direto no banco de dados para não sobrecarregar a memória
-            query_dash = """
-                SELECT v.codigo_venda, v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria 
-                FROM vendas v 
-                JOIN produtos p ON v.produto_id = p.id 
-                WHERE v.empresa_id = %s 
-                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') >= %s
-                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') <= %s
-            """
-            df_dash = carregar_dados_cached(query_dash, (emp_id, d_ini, d_fim))
+            query_dash = "SELECT v.codigo_venda, v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.empresa_id = %s"
+            df_dash = carregar_dados_cached(query_dash, (emp_id,))
             
             if not df_dash.empty and d_ini and d_fim:
-                # 2. Mantemos a conversão APENAS para organizar o eixo cronológico do gráfico
                 df_dash['Data_Obj'] = pd.to_datetime(df_dash['data_venda'], format='%d/%m/%Y', errors='coerce').dt.date
                 
-                col1, col2, col3 = st.columns(3)
-                fat = df_dash['valor_total'].sum()
-                qtd_vendas_reais = df_dash['codigo_venda'].nunique()
-                ticket_medio = fat / qtd_vendas_reais if qtd_vendas_reais > 0 else 0
+                # Aplica o filtro global
+                df_dash = df_dash[(df_dash['Data_Obj'] >= d_ini) & (df_dash['Data_Obj'] <= d_fim)]
                 
-                col1.metric("Faturamento", f"R$ {fat:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
-                col2.metric("Vendas Fechadas", qtd_vendas_reais)
-                col3.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
-                
-                st.markdown("---")
-                # ... (código anterior da aba dash)
-                st.markdown("---")
-                
-                df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
-                
-                # 1. Customização do gráfico com marcadores e rótulos amigáveis
-                fig_linha = px.line(
-                    df_fat_dia, 
-                    x='Data_Obj', 
-                    y='valor_total', 
-                    title="Curva de Vendas por Dia", 
-                    template="plotly_white",
-                    markers=True,  # 🟢 Cria os pontos exatos de cada venda
-                    labels={       # 🟢 Traduz os nomes dos eixos
-                        "Data_Obj": "Data da Venda", 
-                        "valor_total": "Faturamento Diário (R$)"
-                    }
-                )
-                
-                # 2. Força o eixo X a exibir apenas as datas formatadas e remove as quebras de horas
-                fig_linha.update_xaxes(
-                    tickformat="%d/%m", # Formato brasileiro (Dia/Mês)
-                    type='category'     # Trata cada dia como um bloco fechado, ignorando as horas
-                )
-                
-                st.plotly_chart(fig_linha, use_container_width=True)
-                
-                c1, c2 = st.columns(2)
-                
-                # 1. Agrupa os dados e pega os top 5
-                df_top = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False).head(5).sort_values('quantidade', ascending=True)
-                
-                # 2. Cria o gráfico usando o nome completo diretamente no eixo Y
-                fig_top = px.bar(
-                    df_top, 
-                    x='quantidade', 
-                    y='produto', 
-                    orientation='h', 
-                    text='quantidade', 
-                    color_discrete_sequence=['#0068c9'], 
-                    title="Top 5 Produtos Mais Vendidos"
-                )
-                
-                # 3. Deixa a barra mais fina (ex: 50% do espaço)
-                fig_top.update_traces(width=0.5) 
-                
-                # 4. Ajusta o layout para acomodar nomes longos sem cortar a tela
-                fig_top.update_layout(
-                    yaxis_title="", # Remove a palavra "produto" que ficava sobrando na lateral
-                    xaxis_title="Quantidade Vendida",
-                    yaxis=dict(automargin=True) # A mágica que empurra o gráfico para a direita se o nome for gigante
-                )
-                
-                c1.plotly_chart(fig_top, use_container_width=True)
-                
-                fig_cat = px.pie(df_dash.groupby('categoria')['valor_total'].sum().reset_index(), values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria", color_discrete_sequence=px.colors.qualitative.Bold)
-                c2.plotly_chart(fig_cat, use_container_width=True)
+                if not df_dash.empty:
+                    col1, col2, col3 = st.columns(3)
+                    fat = df_dash['valor_total'].sum()
+                    qtd_vendas_reais = df_dash['codigo_venda'].nunique()
+                    ticket_medio = fat / qtd_vendas_reais if qtd_vendas_reais > 0 else 0
+                    
+                    col1.metric("Faturamento", f"R$ {fat:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                    col2.metric("Vendas Fechadas", qtd_vendas_reais)
+                    col3.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+                    
+                    st.markdown("---")
+                    
+                    df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
+                    st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
+                    
+                    c1, c2 = st.columns(2)
+                    df_top = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False).head(5).sort_values('quantidade', ascending=True)
+                    df_top['produto_curto'] = df_top['produto'].apply(lambda x: (str(x)[:22] + '...') if len(str(x)) > 22 else str(x))
+                    fig_top = px.bar(df_top, x='quantidade', y='produto', orientation='h', text='quantidade', color_discrete_sequence=['#0068c9'], title="Top 5 Produtos Mais Vendidos")
+                    fig_top.update_yaxes(tickmode='array', tickvals=df_top['produto'], ticktext=df_top['produto_curto'])
+                    c1.plotly_chart(fig_top, use_container_width=True)
+                    
+                    fig_cat = px.pie(df_dash.groupby('categoria')['valor_total'].sum().reset_index(), values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria", color_discrete_sequence=px.colors.qualitative.Bold)
+                    c2.plotly_chart(fig_cat, use_container_width=True)
+                else: 
+                    st.warning(f"Sem vendas registradas no período de {d_ini.strftime('%d/%m/%Y')} a {d_fim.strftime('%d/%m/%Y')}.")
             else: 
-                st.warning(f"Sem vendas registradas no período de {d_ini.strftime('%d/%m/%Y')} a {d_fim.strftime('%d/%m/%Y')}.")
-                
+                st.info("Faça vendas para ver gráficos.")
+
         # --- ABA 2: CRM E ANIVERSARIANTES ---
         with aba_crm:
             st.markdown("### 🎂 Aniversariantes do Período")
@@ -1060,32 +1013,22 @@ Feliz aniversário! 🥳✨"""
                         # Extraímos o código da venda a partir do texto do selectbox
                         venda_id_recibo = int(venda_recibo_sel.split("Nº ")[1].split(" |")[0])
                         
-                        # Bloco de segurança para evitar o OperationalError do banco de dados
-                        try:
-                            conn = conectar_banco()
-                            cursor = conn.cursor()
-                            
-                            # 2. Buscamos TODOS os itens daquele codigo_venda
-                            cursor.execute("""
-                                SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
-                                       v.valor_total, v.valor_entrada, v.valor_restante, 
-                                       v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
-                                FROM vendas v 
-                                JOIN clientes c ON v.cliente_id = c.id 
-                                JOIN produtos p ON v.produto_id = p.id 
-                                WHERE v.codigo_venda = %s AND v.empresa_id = %s
-                            """, (venda_id_recibo, emp_id))
-                            
-                            dados_recibo = cursor.fetchall()
-                            
-                        except Exception as e:
-                            # Se a conexão falhar no recarregamento, cria uma lista vazia para não quebrar o código abaixo
-                            dados_recibo = [] 
-                            
-                        finally:
-                            # O bloco finally GARANTE que a conexão será fechada, com erro ou sem erro
-                            if 'conn' in locals():
-                                devolver_conexao(conn)
+                        conn = conectar_banco()
+                        cursor = conn.cursor()
+                        
+                        # 2. Buscamos TODOS os itens daquele codigo_venda
+                        cursor.execute("""
+                            SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
+                                   v.valor_total, v.valor_entrada, v.valor_restante, 
+                                   v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
+                            FROM vendas v 
+                            JOIN clientes c ON v.cliente_id = c.id 
+                            JOIN produtos p ON v.produto_id = p.id 
+                            WHERE v.codigo_venda = %s AND v.empresa_id = %s
+                        """, (venda_id_recibo, emp_id))
+                        
+                        dados_recibo = cursor.fetchall()
+                        devolver_conexao(conn)
 
                         if dados_recibo:
                             tel = dados_recibo[0][0]
@@ -3528,7 +3471,7 @@ Feliz aniversário! 🥳✨"""
                     # VISÃO APP: ACOMPANHAMENTO DE TROCAS EM STANDBY
                     # ==========================================
                     st.markdown("---")
-                    st.subheader("📱 Visão App: Trocas Pendentes)")
+                    st.subheader("📱 Visão App: Trocas em Standby (Abertas)")
                     
                     df_trocas_abertas = carregar_dados_cached("""
                         SELECT t.id, t.data_movimentacao, c.nome AS consultora, t.total_saida, t.total_entrada, t.cliente_id
