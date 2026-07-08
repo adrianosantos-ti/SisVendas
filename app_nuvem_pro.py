@@ -46,15 +46,20 @@ st.markdown(
 )
 
 # ==========================================
-# 2. CONEXÃO AO BANCO (Via PgBouncer do Supabase)
+# CONFIGURAÇÃO DE BANCO DE DADOS (NUVEM)
 # ==========================================
 if 'carrinho' not in st.session_state:
     st.session_state['carrinho'] = []
 
 DATABASE_URL = st.secrets["DATABASE_URL"]
 
+# ==========================================
+# CONEXÃO AO BANCO
+# Usa uma conexão por execução com reconexão
+# automática. Simples, robusto e compatível
+# com o PgBouncer do Supabase (porta 6543).
+# ==========================================
 def conectar_banco():
-    # Deixa a responsabilidade do pool para a porta 6543 do Supabase
     return psycopg2.connect(DATABASE_URL)
 
 def devolver_conexao(conn):
@@ -82,6 +87,15 @@ def carregar_dados(query, params=None):
         devolver_conexao(conn)
 
 def executar_escrita(operacoes):
+    """
+    Executa operações de escrita no banco de forma segura.
+    Garante commit ou rollback e fechamento da conexão.
+    
+    Uso:
+        def minhas_operacoes(cur):
+            cur.execute("UPDATE ...", (params,))
+        executar_escrita(minhas_operacoes)
+    """
     conn = conectar_banco()
     try:
         cur = conn.cursor()
@@ -93,13 +107,18 @@ def executar_escrita(operacoes):
     finally:
         devolver_conexao(conn)
 
+# ==========================================
+# CACHE DE LEITURA (reduz chamadas ao banco)
+# TTL de 60s: dados ficam em memória por 1 min.
+# Use limpar_cache() após qualquer INSERT/UPDATE/DELETE.
+# ==========================================
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar_dados_cached(query, params=None):
     return carregar_dados(query, params)
 
 def limpar_cache():
     st.cache_data.clear()
-    
+
 # ==========================================
 # PAINEL DE AVALIAÇÕES (visível no sistema)
 # ==========================================
@@ -759,7 +778,25 @@ else:
                     st.markdown("---")
                     
                     df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
-                    st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
+                    df_fat_dia = df_fat_dia.sort_values('Data_Obj')
+                    df_fat_dia['Data_Label'] = df_fat_dia['Data_Obj'].apply(lambda x: x.strftime('%d/%m'))
+                    
+                    fig_linha = px.line(
+                        df_fat_dia,
+                        x='Data_Label',
+                        y='valor_total',
+                        title="Curva de Vendas por Dia",
+                        template="plotly_white",
+                        markers=True,
+                        labels={
+                            'Data_Label': 'Data',
+                            'valor_total': 'Faturamento Diário (R$)'
+                        }
+                    )
+                    fig_linha.update_traces(line=dict(width=3), marker=dict(size=8))
+                    fig_linha.update_layout(xaxis_title="Data", yaxis_title="Faturamento Diário (R$)")
+                    
+                    st.plotly_chart(fig_linha, use_container_width=True)
                     
                     c1, c2 = st.columns(2)
                     df_top = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False).head(5).sort_values('quantidade', ascending=True)
@@ -3821,9 +3858,9 @@ Feliz aniversário! 🥳✨"""
             """,
             unsafe_allow_html=True
         )
-        
         st.markdown("### 💰 Gestão Financeira")
         
+        # --- MUDANÇA: Adicionamos a aba_fluxo_caixa aqui na lista de abas ---
         tab_rec, tab_pag, aba_fluxo_caixa, aba_comissoes = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)", "💸 Fluxo de Caixa", "🏆 Comissões"])
         
         # --- CONTAS A RECEBER 100% RESTAURADO ---
