@@ -1060,22 +1060,32 @@ Feliz aniversário! 🥳✨"""
                         # Extraímos o código da venda a partir do texto do selectbox
                         venda_id_recibo = int(venda_recibo_sel.split("Nº ")[1].split(" |")[0])
                         
-                        conn = conectar_banco()
-                        cursor = conn.cursor()
-                        
-                        # 2. Buscamos TODOS os itens daquele codigo_venda
-                        cursor.execute("""
-                            SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
-                                   v.valor_total, v.valor_entrada, v.valor_restante, 
-                                   v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
-                            FROM vendas v 
-                            JOIN clientes c ON v.cliente_id = c.id 
-                            JOIN produtos p ON v.produto_id = p.id 
-                            WHERE v.codigo_venda = %s AND v.empresa_id = %s
-                        """, (venda_id_recibo, emp_id))
-                        
-                        dados_recibo = cursor.fetchall()
-                        devolver_conexao(conn)
+                        # Bloco de segurança para evitar o OperationalError do banco de dados
+                        try:
+                            conn = conectar_banco()
+                            cursor = conn.cursor()
+                            
+                            # 2. Buscamos TODOS os itens daquele codigo_venda
+                            cursor.execute("""
+                                SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
+                                       v.valor_total, v.valor_entrada, v.valor_restante, 
+                                       v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
+                                FROM vendas v 
+                                JOIN clientes c ON v.cliente_id = c.id 
+                                JOIN produtos p ON v.produto_id = p.id 
+                                WHERE v.codigo_venda = %s AND v.empresa_id = %s
+                            """, (venda_id_recibo, emp_id))
+                            
+                            dados_recibo = cursor.fetchall()
+                            
+                        except Exception as e:
+                            # Se a conexão falhar no recarregamento, cria uma lista vazia para não quebrar o código abaixo
+                            dados_recibo = [] 
+                            
+                        finally:
+                            # O bloco finally GARANTE que a conexão será fechada, com erro ou sem erro
+                            if 'conn' in locals():
+                                devolver_conexao(conn)
 
                         if dados_recibo:
                             tel = dados_recibo[0][0]
