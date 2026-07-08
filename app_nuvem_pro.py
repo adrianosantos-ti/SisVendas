@@ -778,17 +778,7 @@ else:
                     st.markdown("---")
                     
                     df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
-                    fig_linha = px.line(
-                        df_fat_dia,
-                        x='Data_Obj',
-                        y='valor_total',
-                        title="Curva de Vendas por Dia",
-                        template="plotly_white",
-                        markers=True
-                    )
-                    fig_linha.update_xaxes(tickformat="%d/%m")
-                    fig_linha.update_traces(marker=dict(size=8))
-                    st.plotly_chart(fig_linha, use_container_width=True, key="grafico_curva_vendas")
+                    st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
                     
                     c1, c2 = st.columns(2)
                     df_top = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False).head(5).sort_values('quantidade', ascending=True)
