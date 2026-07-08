@@ -59,28 +59,23 @@ DATABASE_URL = st.secrets["DATABASE_URL"]
 # automática. Simples, robusto e compatível
 # com o PgBouncer do Supabase (porta 6543).
 # ==========================================
-def conectar_banco(tentativas=3, espera=1):
-    """
-    Abre conexão com o banco usando tentativas automáticas.
-
-    Isso aumenta a estabilidade no Streamlit Cloud + Supabase/PgBouncer,
-    onde podem ocorrer falhas temporárias de conexão durante reruns.
-    """
-    ultima_excecao = None
-
+def conectar_banco(tentativas=3, espera=0.7):
+    """Abre conexão com retry para reduzir falhas temporárias no Streamlit Cloud/Supabase."""
+    ultimo_erro = None
     for tentativa in range(1, tentativas + 1):
         try:
             return psycopg2.connect(DATABASE_URL, connect_timeout=10)
         except psycopg2.OperationalError as e:
-            ultima_excecao = e
+            ultimo_erro = e
             if tentativa < tentativas:
                 time_module.sleep(espera)
-
-    raise ultima_excecao
+            else:
+                raise ultimo_erro
 
 def devolver_conexao(conn):
     try:
-        conn.close()
+        if conn:
+            conn.close()
     except Exception:
         pass
 
@@ -134,6 +129,22 @@ def carregar_dados_cached(query, params=None):
 
 def limpar_cache():
     st.cache_data.clear()
+
+def executar_comando(query, params=None):
+    """Executa um único INSERT/UPDATE/DELETE com commit, rollback e fechamento seguro."""
+    def _operacao(cur):
+        cur.execute(query, params or ())
+    executar_escrita(_operacao)
+
+def buscar_linha(query, params=None):
+    """Executa uma consulta e retorna apenas a primeira linha, sempre fechando a conexão."""
+    conn = conectar_banco()
+    try:
+        cur = conn.cursor()
+        cur.execute(query, params or ())
+        return cur.fetchone()
+    finally:
+        devolver_conexao(conn)
 
 # ==========================================
 # PAINEL DE AVALIAÇÕES (visível no sistema)
@@ -252,20 +263,14 @@ if "avaliacao" in params and "empresa" in params:
 
     if st.button("📨 Enviar Avaliação", type="primary", use_container_width=True):
         try:
-            conn = conectar_banco()
-            cur = conn.cursor()
-            cur.execute("""
+            executar_comando("""
                 INSERT INTO avaliacoes (empresa_id, venda_codigo, cliente_nome, nota, comentario)
                 VALUES (%s, %s, %s, %s, %s)
             """, (int(emp_aval), int(cod_aval), nome_cliente, nota_valor, comentario))
-            cur.close()
-            conn.commit()
-            devolver_conexao(conn)
             st.session_state['avaliacao_enviada'] = True
             st.rerun()
         except Exception as e:
             st.error(f"Erro ao salvar avaliação: {e}")
-            if 'conn' in locals(): devolver_conexao(conn)
 
     st.stop()
 
@@ -662,15 +667,12 @@ else:
             s_atu = st.text_input("Atual", type="password")
             s_nov = st.text_input("Nova", type="password")
             if st.form_submit_button("Mudar"):
-                conn = conectar_banco()
-                cursor = conn.cursor()
-                cursor.execute("SELECT senha FROM usuarios WHERE id=%s",(st.session_state['usuario_id'],))
-                if cursor.fetchone()[0] == s_atu:
-                    cursor.execute("UPDATE usuarios SET senha=%s WHERE id=%s",(s_nov, st.session_state['usuario_id']))
-                    conn.commit()
+                senha_atual = buscar_linha("SELECT senha FROM usuarios WHERE id=%s", (st.session_state['usuario_id'],))
+                if senha_atual and senha_atual[0] == s_atu:
+                    executar_comando("UPDATE usuarios SET senha=%s WHERE id=%s", (s_nov, st.session_state['usuario_id']))
                     st.success("OK!")
-                else: st.error("Incorreta")
-                devolver_conexao(conn)
+                else:
+                    st.error("Incorreta")
 
     if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
         st.session_state.clear()
@@ -975,10 +977,10 @@ Feliz aniversário! 🥳✨"""
                         
                         if venda_edit_selecionada:
                             venda_id_edit = int(venda_edit_selecionada.split("Item ")[1].split(")")[0])
-                            conn = conectar_banco()
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT data_venda, forma_pagamento, prazo, valor_unitario, desconto, valor_entrada, quantidade FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_edit, emp_id))
-                            dados_v_edit = cursor.fetchone()
+                            dados_v_edit = buscar_linha(
+                                "SELECT data_venda, forma_pagamento, prazo, valor_unitario, desconto, valor_entrada, quantidade FROM vendas WHERE id = %s AND empresa_id = %s",
+                                (venda_id_edit, emp_id)
+                            )
                             
                             if dados_v_edit:
                                 v_data_str, v_pag, v_prazo, v_tabela, v_desc, v_ent, v_qtd = dados_v_edit
@@ -1005,10 +1007,11 @@ Feliz aniversário! 🥳✨"""
                                     if st.form_submit_button("💾 Salvar Alterações"):
                                         novo_total = (novo_tabela - novo_desc) * v_qtd
                                         novo_restante = novo_total - nova_entrada
-                                        cursor.execute("UPDATE vendas SET data_venda=%s, forma_pagamento=%s, prazo=%s, valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s, valor_restante=%s WHERE id=%s AND empresa_id=%s", 
-                                                     (nova_data.strftime("%d/%m/%Y"), novo_pag, novo_prazo, novo_tabela, novo_desc, novo_total, nova_entrada, novo_restante, venda_id_edit, emp_id))
-                                        conn.commit(); devolver_conexao(conn); st.success("Atualizado!"); limpar_cache(); st.rerun()
-                            else: devolver_conexao(conn)
+                                        executar_comando(
+                                            "UPDATE vendas SET data_venda=%s, forma_pagamento=%s, prazo=%s, valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s, valor_restante=%s WHERE id=%s AND empresa_id=%s",
+                                            (nova_data.strftime("%d/%m/%Y"), novo_pag, novo_prazo, novo_tabela, novo_desc, novo_total, nova_entrada, novo_restante, venda_id_edit, emp_id)
+                                        )
+                                        st.success("Atualizado!"); limpar_cache(); st.rerun()
 
                 with col_opcoes2:
                     with st.expander("❌ Cancelar / Estornar Item", expanded=False):
@@ -1018,18 +1021,20 @@ Feliz aniversário! 🥳✨"""
                             
                             if st.form_submit_button("🚨 Confirmar Cancelamento", type="primary"):
                                 venda_id_del = int(venda_para_apagar.split("Item ")[1].split(")")[0])
-                                conn = conectar_banco()
-                                cursor = conn.cursor()
-                                cursor.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
-                                venda_info = cursor.fetchone()
-                                
-                                if venda_info:
-                                    p_id, p_qtd, cod_venda = venda_info
-                                    cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
-                                    cursor.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
-                                    cursor.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
-                                    conn.commit(); devolver_conexao(conn); st.success("Cancelado!"); limpar_cache(); st.rerun()
-                                else: devolver_conexao(conn); st.error("Erro.")
+                                try:
+                                    def _cancelar_venda(cur):
+                                        cur.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
+                                        venda_info = cur.fetchone()
+                                        if not venda_info:
+                                            raise ValueError("Venda não encontrada para cancelamento.")
+                                        p_id, p_qtd, cod_venda = venda_info
+                                        cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
+                                        cur.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
+                                        cur.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
+                                    executar_escrita(_cancelar_venda)
+                                    st.success("Cancelado!"); limpar_cache(); st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro ao cancelar venda: {e}")
                 
                 #st.markdown("---")
 
@@ -1064,15 +1069,9 @@ Feliz aniversário! 🥳✨"""
                             """, (venda_id_recibo, emp_id))
                             
                             dados_recibo = cursor.fetchall()
-                        
-                        except psycopg2.OperationalError:
-                            dados_recibo = []
-                            st.error("Erro temporário de conexão ao buscar dados do recibo. Tente novamente em alguns segundos.")
-                        
                         except Exception as e:
                             dados_recibo = []
-                            st.error(f"Erro ao buscar dados do recibo: {e}")
-                        
+                            st.error("Erro ao buscar dados do recibo. Tente novamente em alguns segundos.")
                         finally:
                             if 'conn' in locals():
                                 devolver_conexao(conn)
@@ -4094,15 +4093,14 @@ Feliz aniversário! 🥳✨"""
                                     if round(soma_novas_parcelas, 2) != round(total_original, 2):
                                         st.error(f"❌ **Operação Bloqueada:** A soma das novas parcelas (R$ {soma_novas_parcelas:.2f}) é diferente do total da venda (R$ {total_original:.2f}). A diferença é de R$ {abs(total_original - soma_novas_parcelas):.2f}.")
                                     else:
-                                        conn = conectar_banco()
-                                        for parcela_id, dados in novos_dados.items():
-                                            # Atualiza agora o valor_parcela E a data_vencimento no banco
-                                            conn.cursor().execute(
-                                                "UPDATE contas_receber SET valor_parcela=%s, data_vencimento=%s WHERE id=%s AND empresa_id=%s", 
-                                                (dados['valor'], dados['data'], parcela_id, emp_id)
-                                            )
-                                        conn.commit()
-                                        devolver_conexao(conn)
+                                        def _reajustar_parcelas(cur):
+                                            for parcela_id, dados in novos_dados.items():
+                                                # Atualiza agora o valor_parcela E a data_vencimento no banco
+                                                cur.execute(
+                                                    "UPDATE contas_receber SET valor_parcela=%s, data_vencimento=%s WHERE id=%s AND empresa_id=%s", 
+                                                    (dados['valor'], dados['data'], parcela_id, emp_id)
+                                                )
+                                        executar_escrita(_reajustar_parcelas)
                         
                                         st.success("✅ Valores e datas reajustados com sucesso!")
                                         del st.session_state['venda_editando']
@@ -4241,11 +4239,8 @@ Feliz aniversário! 🥳✨"""
                             
                             if st.form_submit_button("🔴 Confirmar Pagamento", type="primary"):
                                 id_desp_baixa = int(despesa_sel.split("ID ")[1].split(" |")[0])
-                                conn = conectar_banco()
                                 # Salva como YYYY-MM-DD
-                                conn.cursor().execute("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%Y-%m-%d"), id_desp_baixa, emp_id))
-                                conn.commit()
-                                devolver_conexao(conn)
+                                executar_comando("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%Y-%m-%d"), id_desp_baixa, emp_id))
                                 st.success("Despesa baixada com sucesso no fluxo financeiro!")
                                 limpar_cache()
                                 st.rerun()
@@ -4267,18 +4262,14 @@ Feliz aniversário! 🥳✨"""
                         
                         if st.form_submit_button("💾 Salvar Lançamento"):
                             id_forn_manual = int(df_forn_select[df_forn_select['nome'] == forn_nome_sel].iloc[0]['id'])
-                            conn = conectar_banco()
-                            cur = conn.cursor()
-                            
-                            for i in range(1, int(tot_parc_manual) + 1):
-                                venc_parc_manual = data_1_venc_manual + timedelta(days=30 * (i - 1))
-                                cur.execute("""
-                                    INSERT INTO contas_pagar (fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
-                                    VALUES (%s, %s, %s, %s, %s, 'Pendente', %s)
-                                """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%Y-%m-%d"), emp_id))
-                            
-                            conn.commit()
-                            devolver_conexao(conn)
+                            def _lancar_despesas(cur):
+                                for i in range(1, int(tot_parc_manual) + 1):
+                                    venc_parc_manual = data_1_venc_manual + timedelta(days=30 * (i - 1))
+                                    cur.execute("""
+                                        INSERT INTO contas_pagar (fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
+                                        VALUES (%s, %s, %s, %s, %s, 'Pendente', %s)
+                                    """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%Y-%m-%d"), emp_id))
+                            executar_escrita(_lancar_despesas)
                             st.success(f"Despesa com {tot_parc_manual} parcela(s) lançada com sucesso!")
                             limpar_cache()
                             st.rerun()
@@ -4318,14 +4309,11 @@ Feliz aniversário! 🥳✨"""
                                 novo_pagto_desp_val = dt_p_input.strftime("%Y-%m-%d")
                             
                             if st.form_submit_button("💾 Atualizar Dados"):
-                                conn = conectar_banco()
-                                conn.cursor().execute("""
+                                executar_comando("""
                                     UPDATE contas_pagar 
                                     SET valor_parcela = %s, data_vencimento = %s, data_pagamento = %s 
                                     WHERE id = %s AND empresa_id = %s
                                 """, (float(novo_v_desp), novo_venc_desp.strftime("%Y-%m-%d"), novo_pagto_desp_val, id_desp_crud, emp_id))
-                                conn.commit()
-                                devolver_conexao(conn)
                                 st.success("Lançamento atualizado com sucesso!")
                                 limpar_cache()
                                 st.rerun()
@@ -4337,10 +4325,7 @@ Feliz aniversário! 🥳✨"""
                         with st.form("form_delete_despesa_individual"):
                             st.write(f"Confirma a exclusão da despesa ID {id_desp_crud}?")
                             if st.form_submit_button("🚨 Excluir Permanentemente", type="primary"):
-                                conn = conectar_banco()
-                                conn.cursor().execute("DELETE FROM contas_pagar WHERE id = %s AND empresa_id = %s", (id_desp_crud, emp_id))
-                                conn.commit()
-                                devolver_conexao(conn)
+                                executar_comando("DELETE FROM contas_pagar WHERE id = %s AND empresa_id = %s", (id_desp_crud, emp_id))
                                 st.success("Despesa removida com sucesso!")
                                 limpar_cache()
                                 st.rerun()
@@ -5016,13 +5001,10 @@ Feliz aniversário! 🥳✨"""
                     
                     with col_done:
                         if st.button(f"✅ Marcar como Enviado", key=f"check_{tipo_contato}_{row['codigo_venda']}", use_container_width=True):
-                            conn = conectar_banco()
-                            conn.cursor().execute("""
+                            executar_comando("""
                                 INSERT INTO crm_contatos (venda_codigo, tipo_contato, empresa_id) 
                                 VALUES (%s, %s, %s)
                             """, (int(row['codigo_venda']), tipo_contato, emp_id))
-                            conn.commit()
-                            devolver_conexao(conn)
                             st.success("Registrado!")
                             time_module.sleep(0.4)
                             limpar_cache()
