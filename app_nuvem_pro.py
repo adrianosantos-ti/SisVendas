@@ -22,6 +22,7 @@ from datetime import datetime, date, time, timedelta
 from PIL import Image
 
 hoje = date.today()
+PERF_RUN_START = time_module.perf_counter()
 
 # 1. Forçamos a leitura da imagem (use o nome exato do seu arquivo PNG)
 icone = Image.open("logo.png") 
@@ -81,42 +82,53 @@ def devolver_conexao(conn):
 
 def carregar_dados(query, params=None):
     conn = conectar_banco()
+    inicio_sql = time_module.perf_counter()
     try:
         cursor = conn.cursor()
         if params:
             cursor.execute(query, params)
         else:
             cursor.execute(query)
-        
+
+        registrar_sql_perf(query, time_module.perf_counter() - inicio_sql, "SELECT")
+
         if cursor.description:
             cols = [desc[0] for desc in cursor.description]
             df = pd.DataFrame(cursor.fetchall(), columns=cols)
         else:
             df = pd.DataFrame()
         return df
+    except Exception:
+        registrar_sql_perf(query, time_module.perf_counter() - inicio_sql, "SELECT_ERRO")
+        raise
     finally:
         devolver_conexao(conn)
+
 
 def executar_escrita(operacoes):
     """
     Executa operações de escrita no banco de forma segura.
     Garante commit ou rollback e fechamento da conexão.
-    
+
     Uso:
         def minhas_operacoes(cur):
             cur.execute("UPDATE ...", (params,))
         executar_escrita(minhas_operacoes)
     """
     conn = conectar_banco()
+    inicio_sql = time_module.perf_counter()
     try:
         cur = conn.cursor()
         operacoes(cur)
         conn.commit()
+        registrar_sql_perf("TRANSAÇÃO DE ESCRITA", time_module.perf_counter() - inicio_sql, "WRITE")
     except Exception:
         conn.rollback()
+        registrar_sql_perf("TRANSAÇÃO DE ESCRITA COM ERRO", time_module.perf_counter() - inicio_sql, "WRITE_ERRO")
         raise
     finally:
         devolver_conexao(conn)
+
 
 # ==========================================
 # CACHE DE LEITURA (reduz chamadas ao banco)
@@ -127,8 +139,90 @@ def executar_escrita(operacoes):
 def carregar_dados_cached(query, params=None):
     return carregar_dados(query, params)
 
+
 def limpar_cache():
     st.cache_data.clear()
+
+# ==========================================
+# TELEMETRIA DE PERFORMANCE (MODO DEV)
+# Mede tempo SQL, quantidade de consultas e tempo total de renderização.
+# Visível apenas para perfis admin/master.
+# ==========================================
+def obter_perf():
+    """Inicializa e retorna o painel de telemetria da execução atual."""
+    perf = st.session_state.get('_perf_run')
+    if not perf or perf.get('run_start') != PERF_RUN_START:
+        perf = {
+            'run_start': PERF_RUN_START,
+            'sql_count': 0,
+            'sql_time': 0.0,
+            'write_count': 0,
+            'write_time': 0.0,
+            'queries': []
+        }
+        st.session_state['_perf_run'] = perf
+    return perf
+
+def normalizar_sql_para_perf(query):
+    """Compacta SQL para exibição curta no painel de performance."""
+    try:
+        sql = " ".join(str(query).split())
+        return sql[:180] + ("..." if len(sql) > 180 else "")
+    except Exception:
+        return "SQL não identificado"
+
+def registrar_sql_perf(query, tempo, tipo="SELECT"):
+    """Registra uma consulta ou escrita executada durante o rerun."""
+    try:
+        perf = obter_perf()
+        if tipo == "WRITE":
+            perf['write_count'] += 1
+            perf['write_time'] += tempo
+        else:
+            perf['sql_count'] += 1
+            perf['sql_time'] += tempo
+
+        perf['queries'].append({
+            'tipo': tipo,
+            'tempo': float(tempo),
+            'sql': normalizar_sql_para_perf(query)
+        })
+    except Exception:
+        # Telemetria nunca deve quebrar o ERP.
+        pass
+
+def exibir_telemetria_performance():
+    """Mostra resumo de performance no sidebar para administradores."""
+    try:
+        if not st.session_state.get('logado'):
+            return
+        if st.session_state.get('perfil') not in ['admin', 'master']:
+            return
+
+        perf = obter_perf()
+        tempo_total = time_module.perf_counter() - PERF_RUN_START
+        tempo_banco = perf.get('sql_time', 0.0) + perf.get('write_time', 0.0)
+        tempo_render = max(tempo_total - tempo_banco, 0.0)
+
+        with st.sidebar.expander("🛠️ Performance", expanded=False):
+            st.caption(f"Tela: {st.session_state.get('menu_principal', 'N/A')}")
+            c1, c2 = st.columns(2)
+            c1.metric("Total", f"{tempo_total:.2f}s")
+            c2.metric("Banco", f"{tempo_banco:.2f}s")
+            c3, c4 = st.columns(2)
+            c3.metric("Render", f"{tempo_render:.2f}s")
+            c4.metric("SQL", f"{perf.get('sql_count', 0) + perf.get('write_count', 0)}")
+
+            consultas = sorted(perf.get('queries', []), key=lambda x: x.get('tempo', 0), reverse=True)
+            if consultas:
+                st.caption("Consultas mais lentas:")
+                for item in consultas[:5]:
+                    st.caption(f"{item.get('tipo', 'SQL')} • {item.get('tempo', 0):.2f}s")
+                    st.code(item.get('sql', ''), language="sql")
+            else:
+                st.caption("Nenhuma consulta registrada neste rerun.")
+    except Exception:
+        pass
 
 @st.cache_data(show_spinner=False)
 def carregar_imagem_base64(caminho_imagem):
@@ -145,12 +239,18 @@ def executar_comando(query, params=None):
 def buscar_linha(query, params=None):
     """Executa uma consulta e retorna apenas a primeira linha, sempre fechando a conexão."""
     conn = conectar_banco()
+    inicio_sql = time_module.perf_counter()
     try:
         cur = conn.cursor()
         cur.execute(query, params or ())
+        registrar_sql_perf(query, time_module.perf_counter() - inicio_sql, "SELECT")
         return cur.fetchone()
+    except Exception:
+        registrar_sql_perf(query, time_module.perf_counter() - inicio_sql, "SELECT_ERRO")
+        raise
     finally:
         devolver_conexao(conn)
+
 
 # ==========================================
 # PAINEL DE AVALIAÇÕES (visível no sistema)
@@ -5027,3 +5127,9 @@ Feliz aniversário! 🥳✨"""
                     gerar_linha_contato(row, msg_2m, "2m")
             else:
                 st.info("Nenhum cliente na janela de 2 meses pendente de envio.")
+
+# ==========================================
+# PAINEL FINAL DE TELEMETRIA DE PERFORMANCE
+# Mantido no final do script para capturar o tempo do rerun completo.
+# ==========================================
+exibir_telemetria_performance()
