@@ -885,12 +885,93 @@ else:
                     st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
                     
                     c1, c2 = st.columns(2)
-                    df_top = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False).head(5).sort_values('quantidade', ascending=True)
-                    df_top['produto_curto'] = df_top['produto'].apply(lambda x: (str(x)[:22] + '...') if len(str(x)) > 22 else str(x))
-                    fig_top = px.bar(df_top, x='quantidade', y='produto', orientation='h', text='quantidade', color_discrete_sequence=['#0068c9'], title="Top 5 Produtos Mais Vendidos")
-                    fig_top.update_yaxes(tickmode='array', tickvals=df_top['produto'], ticktext=df_top['produto_curto'])
-                    c1.plotly_chart(fig_top, use_container_width=True)
-                    
+
+                    # FEATURE 001.1 — Ranking Inteligente de Produtos
+                    # Objetivo: nomes completos, ranking configurável, barras mais finas e tooltip gerencial.
+                    with c1:
+                        opcoes_ranking_produtos = ["Top 5", "Top 10", "Top 20", "Todos"]
+                        ranking_produtos_sel = st.radio(
+                            "🏆 Ranking de produtos:",
+                            options=opcoes_ranking_produtos,
+                            index=0,
+                            horizontal=True,
+                            key="feature0011_ranking_produtos"
+                        )
+
+                        df_ranking_produtos = (
+                            df_dash.groupby('produto')
+                            .agg(
+                                quantidade=('quantidade', 'sum'),
+                                faturamento=('valor_total', 'sum')
+                            )
+                            .reset_index()
+                            .sort_values('quantidade', ascending=False)
+                        )
+
+                        total_qtd_ranking = df_ranking_produtos['quantidade'].sum()
+                        df_ranking_produtos['participacao_pct'] = (
+                            df_ranking_produtos['quantidade'] / total_qtd_ranking * 100
+                        ) if total_qtd_ranking else 0
+                        df_ranking_produtos['ranking'] = range(1, len(df_ranking_produtos) + 1)
+
+                        if ranking_produtos_sel == "Todos":
+                            df_top = df_ranking_produtos.copy()
+                            titulo_ranking = "🏆 Ranking Completo dos Produtos Mais Vendidos"
+                        else:
+                            qtd_top = int(ranking_produtos_sel.replace("Top ", ""))
+                            df_top = df_ranking_produtos.head(qtd_top).copy()
+                            titulo_ranking = f"🏆 {ranking_produtos_sel} Produtos Mais Vendidos"
+
+                        df_top = df_top.sort_values('quantidade', ascending=True)
+                        df_top['faturamento_fmt'] = df_top['faturamento'].apply(
+                            lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                        )
+                        df_top['participacao_fmt'] = df_top['participacao_pct'].apply(lambda x: f"{x:.1f}%")
+                        df_top['rotulo_barra'] = df_top.apply(
+                            lambda row: f"{int(row['quantidade'])} • {row['participacao_fmt']}",
+                            axis=1
+                        )
+
+                        altura_ranking = max(420, len(df_top) * 42)
+                        max_qtd_ranking = df_top['quantidade'].max() if not df_top.empty else 0
+
+                        fig_top = px.bar(
+                            df_top,
+                            x='quantidade',
+                            y='produto',
+                            orientation='h',
+                            text='rotulo_barra',
+                            title=titulo_ranking,
+                            custom_data=['ranking', 'faturamento_fmt', 'participacao_fmt']
+                        )
+
+                        fig_top.update_traces(
+                            width=0.42,
+                            textposition='outside',
+                            cliponaxis=False,
+                            hovertemplate=(
+                                "<b>%{y}</b><br><br>"
+                                "Ranking: #%{customdata[0]}<br>"
+                                "Quantidade vendida: %{x}<br>"
+                                "Faturamento: %{customdata[1]}<br>"
+                                "Participação: %{customdata[2]}"
+                                "<extra></extra>"
+                            )
+                        )
+
+                        fig_top.update_layout(
+                            xaxis_title="Quantidade vendida",
+                            yaxis_title="",
+                            height=altura_ranking,
+                            margin=dict(l=320, r=80, t=70, b=40),
+                            showlegend=False
+                        )
+
+                        fig_top.update_xaxes(range=[0, max_qtd_ranking * 1.20 if max_qtd_ranking else 1])
+                        fig_top.update_yaxes(automargin=True)
+
+                        st.plotly_chart(fig_top, use_container_width=True)
+
                     fig_cat = px.pie(df_dash.groupby('categoria')['valor_total'].sum().reset_index(), values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria", color_discrete_sequence=px.colors.qualitative.Bold)
                     c2.plotly_chart(fig_cat, use_container_width=True)
                 else: 
