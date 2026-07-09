@@ -881,8 +881,58 @@ else:
                     
                     st.markdown("---")
                     
-                    df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
-                    st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
+                    # FEATURE 002 — Curva de Vendas por Dia
+                    # Objetivo: exibir somente dias com vendas, sem horários no eixo X,
+                    # mantendo linha + marcadores para facilitar a leitura de picos e quedas.
+                    df_fat_dia = (
+                        df_dash.groupby('Data_Obj')['valor_total']
+                        .sum()
+                        .reset_index()
+                        .dropna(subset=['Data_Obj'])
+                        .sort_values('Data_Obj')
+                    )
+
+                    if not df_fat_dia.empty:
+                        df_fat_dia['Dia'] = df_fat_dia['Data_Obj'].apply(lambda d: d.strftime('%d/%m/%Y'))
+
+                        fig_fat_dia = px.line(
+                            df_fat_dia,
+                            x='Dia',
+                            y='valor_total',
+                            markers=True,
+                            title="Curva de Vendas por Dia",
+                            template="plotly_white"
+                        )
+
+                        fig_fat_dia.update_traces(
+                            mode="lines+markers",
+                            line=dict(width=3),
+                            marker=dict(size=8),
+                            hovertemplate=(
+                                "<b>%{x}</b><br>"
+                                "Faturamento: R$ %{y:,.2f}"
+                                "<extra></extra>"
+                            )
+                        )
+
+                        fig_fat_dia.update_xaxes(
+                            type='category',
+                            title_text="Dia",
+                            tickangle=-35
+                        )
+
+                        fig_fat_dia.update_yaxes(
+                            title_text="Faturamento (R$)"
+                        )
+
+                        fig_fat_dia.update_layout(
+                            height=420,
+                            margin=dict(l=40, r=40, t=60, b=80)
+                        )
+
+                        st.plotly_chart(fig_fat_dia, use_container_width=True)
+                    else:
+                        st.info("Sem vendas suficientes para gerar a curva diária.")
                     
                     c1, c2 = st.columns(2)
 
