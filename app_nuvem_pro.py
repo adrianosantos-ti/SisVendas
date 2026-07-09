@@ -2354,59 +2354,99 @@ Feliz aniversário! 🥳✨"""
                 # PDV 2.0 — Tela de Vendas redesenhada
                 # Mantém a lógica de negócio original e reorganiza a experiência.
                 # ==========================================================
-                st.markdown("### 🛒 PDV 2.0 — Nova Venda")
-                st.caption("Fluxo operacional: cliente → produto → carrinho → pagamento → recibo.")
-
+                # PDV 2.1 — Cabeçalho compacto e ergonomia mobile
+                # Reduz textos, espaçamentos e fontes para melhorar a navegação em desktop e celular.
                 st.markdown("""
                     <style>
                     .pdv2-header {
-                        border: 1px solid #e5e7eb;
-                        border-radius: 18px;
-                        padding: 16px 20px;
-                        margin: 8px 0 16px 0;
-                        background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-                        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+                        border-bottom: 1px solid #e5e7eb;
+                        padding: 2px 0 8px 0;
+                        margin: -4px 0 10px 0;
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        gap: 10px;
                     }
                     .pdv2-title {
-                        font-size: 1.25rem;
+                        font-size: 1.05rem;
                         font-weight: 900;
                         color: #111827;
-                        margin-bottom: 2px;
+                        line-height: 1.15;
                     }
                     .pdv2-subtitle {
                         color: #64748b;
-                        font-size: 0.92rem;
+                        font-size: 0.78rem;
+                        line-height: 1.2;
+                        text-align: right;
+                        white-space: nowrap;
                     }
                     .pdv2-section-title {
                         font-weight: 900;
                         color: #1f2937;
-                        font-size: 1.02rem;
-                        margin-bottom: 8px;
+                        font-size: 0.94rem;
+                        margin-bottom: 4px;
                     }
                     .pdv2-total-box {
-                        border-radius: 18px;
-                        padding: 18px 20px;
-                        margin: 8px 0 14px 0;
+                        border-radius: 14px;
+                        padding: 12px 14px;
+                        margin: 4px 0 10px 0;
                         background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
                         border: 1px solid #dbeafe;
                     }
                     .pdv2-total-label {
-                        font-size: 0.86rem;
+                        font-size: 0.76rem;
                         color: #475569;
                         font-weight: 800;
                         text-transform: uppercase;
-                        letter-spacing: .04em;
+                        letter-spacing: .035em;
                     }
                     .pdv2-total-value {
-                        font-size: 2.25rem;
+                        font-size: 1.8rem;
                         color: #0f172a;
                         font-weight: 950;
-                        line-height: 1.05;
-                        margin-top: 4px;
+                        line-height: 1.0;
+                        margin-top: 2px;
                     }
                     .pdv2-small-note {
                         color: #64748b;
-                        font-size: 0.86rem;
+                        font-size: 0.78rem;
+                    }
+                    div[data-testid="stVerticalBlock"] {
+                        gap: 0.55rem;
+                    }
+                    @media (max-width: 768px) {
+                        .pdv2-header {
+                            display: block;
+                            padding: 0 0 6px 0;
+                            margin: -8px 0 8px 0;
+                        }
+                        .pdv2-title {
+                            font-size: 0.98rem;
+                        }
+                        .pdv2-subtitle {
+                            text-align: left;
+                            white-space: normal;
+                            font-size: 0.72rem;
+                            margin-top: 2px;
+                        }
+                        .pdv2-section-title {
+                            font-size: 0.88rem;
+                        }
+                        .pdv2-total-box {
+                            padding: 10px 12px;
+                            border-radius: 12px;
+                        }
+                        .pdv2-total-value {
+                            font-size: 1.55rem;
+                        }
+                        .stButton button, .stDownloadButton button, .stLinkButton a {
+                            min-height: 2.25rem;
+                            padding: 0.25rem 0.6rem;
+                            font-size: 0.85rem;
+                        }
+                        div[data-testid="stMetricValue"] {
+                            font-size: 1.25rem;
+                        }
                     }
                     </style>
                 """, unsafe_allow_html=True)
@@ -2420,8 +2460,8 @@ Feliz aniversário! 🥳✨"""
                 if 'zap_link' in st.session_state and st.session_state['zap_link']:
                     with st.container(border=True):
                         st.success(f"🎉 {st.session_state['zap_codigo']} pronto! Total: R$ {st.session_state['zap_total']:.2f}".replace('.', ','))
-                        st.markdown("### 📲 Próximo passo: enviar recibo pelo WhatsApp")
-                        st.text_area("Mensagem preparada:", value=st.session_state['zap_msg'], height=160, disabled=True)
+                        st.markdown("#### 📲 Recibo pelo WhatsApp")
+                        st.text_area("Mensagem preparada:", value=st.session_state['zap_msg'], height=120, disabled=True)
                         col_zap1, col_zap2 = st.columns([2, 1])
                         col_zap1.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
                         if col_zap2.button("➕ Nova venda", use_container_width=True):
@@ -2436,8 +2476,8 @@ Feliz aniversário! 🥳✨"""
 
                 st.markdown("""
                     <div class="pdv2-header">
-                        <div class="pdv2-title">🛒 Nova venda</div>
-                        <div class="pdv2-subtitle">Carrinho sempre visível, total em destaque e finalização em poucos cliques.</div>
+                        <div class="pdv2-title">🛒 Nova Venda</div>
+                        <div class="pdv2-subtitle">Cliente → produto → carrinho → fechamento</div>
                     </div>
                 """, unsafe_allow_html=True)
 
