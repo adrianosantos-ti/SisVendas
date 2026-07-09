@@ -2985,286 +2985,438 @@ Feliz aniversário! 🥳✨"""
 
         if tab_lanca_serv:
             with tab_lanca_serv:
-                st.subheader("✨ Lançamento de Serviços e Ficha Técnica")
-                
+                # ==========================================================
+                # SERVIÇOS 2.0 — Tela de Serviços com identidade do PDV
+                # Mantém a lógica original: serviço, profissional, insumos,
+                # financeiro, recibo WhatsApp e link de avaliação.
+                # ==========================================================
+                st.markdown("""
+                    <style>
+                    .serv2-header {
+                        border-bottom: 1px solid #e5e7eb;
+                        padding: 2px 0 8px 0;
+                        margin: -4px 0 10px 0;
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        gap: 10px;
+                    }
+                    .serv2-title {
+                        font-size: 1.05rem;
+                        font-weight: 900;
+                        color: #111827;
+                        line-height: 1.15;
+                    }
+                    .serv2-subtitle {
+                        color: #64748b;
+                        font-size: 0.78rem;
+                        line-height: 1.2;
+                        text-align: right;
+                        white-space: nowrap;
+                    }
+                    .serv2-section-title {
+                        font-weight: 900;
+                        color: #1f2937;
+                        font-size: 0.94rem;
+                        margin-bottom: 4px;
+                    }
+                    .serv2-total-box {
+                        border-radius: 14px;
+                        padding: 12px 14px;
+                        margin: 4px 0 10px 0;
+                        background: linear-gradient(135deg, #f8fafc 0%, #f5f3ff 100%);
+                        border: 1px solid #ddd6fe;
+                    }
+                    .serv2-total-label {
+                        font-size: 0.76rem;
+                        color: #6d28d9;
+                        font-weight: 800;
+                        text-transform: uppercase;
+                        letter-spacing: .035em;
+                    }
+                    .serv2-total-value {
+                        font-size: 1.8rem;
+                        color: #0f172a;
+                        font-weight: 950;
+                        line-height: 1.0;
+                        margin-top: 2px;
+                    }
+                    .serv2-small-note {
+                        color: #64748b;
+                        font-size: 0.78rem;
+                    }
+                    div[data-testid="stVerticalBlock"] { gap: 0.55rem; }
+                    @media (max-width: 768px) {
+                        .serv2-header {
+                            display: block;
+                            padding: 0 0 6px 0;
+                            margin: -8px 0 8px 0;
+                        }
+                        .serv2-title { font-size: 0.98rem; }
+                        .serv2-subtitle {
+                            text-align: left;
+                            white-space: normal;
+                            font-size: 0.72rem;
+                            margin-top: 2px;
+                        }
+                        .serv2-total-value { font-size: 1.45rem; }
+                        .serv2-total-box { padding: 10px 12px; }
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
+
+                st.markdown(
+                    """
+                    <div class="serv2-header">
+                        <div class="serv2-title">✨ Lançar Serviço</div>
+                        <div class="serv2-subtitle">Serviço • Profissional • Insumos • Avaliação</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
                 # Carrega dados
                 df_cli = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                 df_serv = carregar_dados_cached("SELECT id, nome, valor FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
                 df_prod_insumo = carregar_dados_cached("SELECT id, nome FROM produtos WHERE empresa_id=%s AND tipo='P' AND classe='Insumo' ORDER BY nome", (emp_id,))
                 df_colab = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
-            
+
                 if not df_cli.empty and not df_serv.empty and not df_colab.empty:
-                    # 1. Configurações do Atendimento
-                    c_cli, c_data = st.columns(2)
-                    cliente_pdv = c_cli.selectbox("Cliente (Ficha Técnica):", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione a cliente...", key="cli_serv")
-                    data_venda_input = c_data.date_input("Data do Serviço", format="DD/MM/YYYY", value=date.today(), key="dt_serv")
-                
-                    c_pag, c_parc = st.columns(2)
-                    f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...", key="fpag_serv")
-                    
-                    # Inicialização padrão para evitar falhas se f_pag não estiver selecionado
-                    qtd_parcelas = 1
-                    data_1_venc = date.today()
-                    
-                    if f_pag:
-                        qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1, key="parc_serv")
-                        sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
-                        data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY", key="venc1_serv")
-                
-                    st.markdown("---")
-                
-                    # 2. Seleção do Serviço, Profissional e Insumos
-                    st.markdown("**Detalhes do Procedimento**")
-                    col_s1, col_s2 = st.columns(2)
-                    
-                    serv_display = col_s1.selectbox("✨ Selecione o Serviço:", options=df_serv['nome'].tolist(), index=None, placeholder="Escolha o procedimento...")
-                    nome_colab = col_s2.selectbox("👤 Quem executou?", options=df_colab['nome'].tolist(), index=None, placeholder="Selecione o profissional executor...")
-                    
-                    opcoes_insumos = df_prod_insumo['nome'].tolist() if not df_prod_insumo.empty else []
-                    msg_placeholder = "Selecione os produtos utilizados (opcional)..." if opcoes_insumos else "⚠️ Nenhum produto classificado como 'Insumo' no banco."
-                    insumos_selecionados = st.multiselect("🧴 Produtos/Insumos Utilizados na Sessão (Histórico do Cliente):", options=opcoes_insumos, placeholder=msg_placeholder, help="Estes itens ficarão salvos na ficha da cliente para consultas futuras.")
-                
-                    # --- NOVO FLUXO: Mostra detalhes do serviço assim que ele for selecionado ---
-                    if serv_display:
-                        s_info = df_serv[df_serv['nome'] == serv_display].iloc[0]
-                        preco_tabela = float(s_info['valor'])
-                        
-                        st.info(f"🏷️ Preço Base do Serviço: **R$ {preco_tabela:.2f}**".replace('.', ','))
-                        
-                        # Trocado st.form por st.container para que a validação do botão seja em tempo real
+                    # Painel do recibo fica logo no topo da aba para o operador não precisar procurar após finalizar.
+                    if 'zap_link_serv' in st.session_state and st.session_state['zap_link_serv']:
                         with st.container(border=True):
-                            c1, c2, c3, c4 = st.columns(4)
-                        
-                            q_pdv = c1.number_input("Quantidade de Sessões:", min_value=1, step=1, value=1)
-                            preco_custom = c2.number_input("Preço do Serviço (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
-                            desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f", key="d_rs_s")
-                            desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f", key="d_perc_s")
-                        
-                            trava_add = (cliente_pdv is None) or (f_pag is None) or (nome_colab is None)
-                            
-                            if trava_add:
-                                st.warning("⚠️ Preencha Cliente, Forma de Pagamento e Profissional para habilitar a adição ao carrinho.")
-                        
-                            if st.button("➕ Adicionar Serviço", type="primary", disabled=trava_add):
-                                desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
-                                
-                                idx_colab = df_colab['nome'].tolist().index(nome_colab)
-                                profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
-                                
-                                insumos_ids = []
-                                for ins in insumos_selecionados:
-                                    ins_id = df_prod_insumo[df_prod_insumo['nome'] == ins].iloc[0]['id']
-                                    insumos_ids.append(int(ins_id))
-                                
-                                nome_carrinho = f"{serv_display} (Profissional: {nome_colab})"
-                                if insumos_selecionados:
-                                    nome_carrinho += f" | Insumos: {', '.join(insumos_selecionados)}"
-                                
-                                st.session_state['carrinho_servicos'].append({
-                                    'id': int(s_info['id']), 
-                                    'nome': nome_carrinho, 
-                                    'qtd': int(q_pdv), 
-                                    'unit': float(preco_custom), 
-                                    'desc': float(desconto_final), 
-                                    'total': float((preco_custom - desconto_final) * q_pdv),
-                                    'colab_id': profissional_selecionado,
-                                    'insumos_ids': insumos_ids
-                                })
-                                st.rerun()
+                            st.success(f"🎉 {st.session_state['zap_codigo_serv']} finalizado! Total: R$ {st.session_state['zap_total_serv']:.2f}".replace('.', ','))
+                            st.markdown('<div class="serv2-section-title">📲 Enviar recibo e avaliação via WhatsApp</div>', unsafe_allow_html=True)
 
-                    # 3. Carrinho e Configurações Financeiras
-                    if st.session_state['carrinho_servicos']:
-                        st.markdown("### 🛍️ Serviços Adicionados")
-                        
-                        col_c1, col_c2, col_c3, col_c4, col_vazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
-                        col_c1.markdown("**Procedimento**")
-                        col_c2.markdown("**Sessões**")
-                        col_c3.markdown("**Subtotal**")
-                        
-                        st.markdown("<hr style='margin: 4px 0px 8px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
-                        
-                        total_pdv = 0.0
-                        
-                        for i, item in enumerate(st.session_state['carrinho_servicos']):
-                            col_i1, col_i2, col_i3, col_i4, col_ivazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
-                            col_i1.write(f"▫️ {item['nome']}")
-                            col_i2.write(f"{item['qtd']}x")
-                            col_i3.write(f"R$ {item['total']:.2f}".replace('.', ','))
-                            
-                            if col_i4.button("🗑️", key=f"del_serv_{i}", help="Remover serviço"):
-                                st.session_state['carrinho_servicos'].pop(i)
-                                st.rerun()
-                                
-                            total_pdv += float(item['total'])
-                        
-                        st.markdown("<hr style='margin: 10px 0px 10px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
-                        st.header(f"Total a Pagar: R$ {total_pdv:.2f}".replace('.', ','))
-                    
-                        st.markdown("---")
-                    
-                        # --- CONFIGURAÇÃO DE ENTRADA E PARCELAS ---
-                        valor_entrada = 0.0
-                        if f_pag == "Crediário":
-                            valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0, key="ent_s")
-                    
-                        valor_restante = float(total_pdv - valor_entrada)
-                    
-                        datas_parcelas = []
-                        if qtd_parcelas > 1 or f_pag == "Crediário":
-                            st.markdown("📅 **Cronograma de Vencimentos:**")
-                            if f_pag == "Crediário" and valor_entrada > 0:
-                                datas_parcelas.append(data_venda_input)
-                                if qtd_parcelas > 1:
-                                    cols_p = st.columns(min(int(qtd_parcelas) - 1, 4))
-                                    for i in range(2, int(qtd_parcelas) + 1):
-                                        sugestao_p = data_1_venc + timedelta(days=30 * (i - 2))
-                                        with cols_p[(i-2) % min(int(qtd_parcelas) - 1, 4)]:
-                                            dt_p = st.date_input(f"{i}ª Parc.", value=sugestao_p, format="DD/MM/YYYY", key=f"v_p_s_{i}")
-                                            datas_parcelas.append(dt_p)
+                            msg_editada = st.text_area(
+                                "✏️ Edite a mensagem antes de enviar:",
+                                value=st.session_state['zap_msg_serv'],
+                                height=220,
+                                key="msg_editada_serv_top"
+                            )
+
+                            tel_serv = st.session_state.get('zap_tel_serv', '')
+                            if tel_serv:
+                                link_atualizado = f"https://wa.me/{tel_serv}?text={urllib.parse.quote(msg_editada)}"
                             else:
-                                cols_p = st.columns(min(int(qtd_parcelas), 4))
-                                for i in range(1, int(qtd_parcelas) + 1):
-                                    sugerido = data_1_venc + timedelta(days=30 * (i - 1))
-                                    with cols_p[(i-1) % min(int(qtd_parcelas), 4)]:
-                                        dt_p = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"v_p_s_{i}")
-                                        datas_parcelas.append(dt_p)
-                        else:
-                            datas_parcelas.append(data_1_venc)
+                                link_atualizado = st.session_state['zap_link_serv']
 
-                        st.markdown("---")             
-                    
-                        c1_finalizar, c3_limpar = st.columns([2, 1])
-                    
-                        # --- AÇÃO: FINALIZAR SERVIÇO (PERSISTE NO BANCO) ---
-                        if c1_finalizar.button("✅ Lançar Atendimento e Gerar Financeiro", type="primary", use_container_width=True):
-                            try:
-                                conn = conectar_banco()
-                                cur = conn.cursor()
-                            
-                                cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
-                                resultado = cur.fetchone()[0]
-                                novo_cod = int(resultado + 1) if resultado else 1
-                            
-                                data_v = data_venda_input.strftime("%d/%m/%Y")
-                                cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
-                            
-                                for it in st.session_state['carrinho_servicos']:
-                                    cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
-                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                               (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), int(it['colab_id'])))
-                                    
-                                    if it['insumos_ids']:
-                                        for insumo_id in it['insumos_ids']:
-                                            cur.execute("""INSERT INTO historico_insumos (venda_codigo, cliente_id, produto_id, data_uso, empresa_id) 
-                                                           VALUES (%s,%s,%s,%s,%s)""",
-                                                        (int(novo_cod), int(cli_id_v), int(insumo_id), data_venda_input, int(emp_id)))
-                            
-                                if f_pag == "Crediário" and valor_entrada > 0:
-                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
-                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                               (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', data_v, int(emp_id)))
-                                    
-                                    if qtd_parcelas > 1:
-                                        val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
-                                        for i in range(2, int(qtd_parcelas) + 1):
-                                            dt_venc = datas_parcelas[i-1]
-                                            cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
-                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                       (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc_rest), dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
-                                else:
-                                    val_parc = float(total_pdv / qtd_parcelas)
-                                    for i in range(1, int(qtd_parcelas) + 1):
-                                        dt_venc = datas_parcelas[i-1]
-                                        status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
-                                        data_pag_val = data_v if status_venda == 'Pago' else None
-                                        
-                                        cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
-                                                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                   (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))                        
-                            
-                                cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
-                                resultado_tel = cur.fetchone()
-                                tel_cli = resultado_tel[0] if resultado_tel else None
-                            
-                                # Monta lista de serviços com profissional e insumos visíveis
-                                lista_produtos_msg = ""
-                                for it in st.session_state['carrinho_servicos']:
-                                    partes = it['nome'].split(' | Insumos:')
-                                    nome_serv = partes[0]  # inclui "(Profissional: Nome)"
-                                    lista_produtos_msg += f"▫️ {nome_serv} (R$ {it['unit']:.2f})\n".replace('.', ',')
-                            
-                                # Link de avaliação personalizado por atendimento
-                                link_avaliacao = f"https://wa.me/?text=Atendimento%20N%C2%BA%20{novo_cod}%20-%20Avalia%C3%A7%C3%A3o"
-                                url_base = st.secrets.get("APP_URL", "")
-                                if url_base:
-                                    nome_encoded = urllib.parse.quote(cliente_pdv)
-                                    link_avaliacao = f"{url_base}?avaliacao={novo_cod}&empresa={emp_id}&cliente={nome_encoded}"
-
-                                msg = f"Olá, {cliente_pdv}! ✨\n\n"
-                                msg += f"Obrigada por escolher nossos serviços hoje ({data_v}). Aqui está o seu recibo:\n\n"
-                                msg += f"🧾 *Atendimento Nº {novo_cod}*\n\n"
-                                msg += f"*Procedimentos Realizados:*\n{lista_produtos_msg}\n"
-                                msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
-                                msg += f"💳 *Forma de Pagto:* {f_pag}\n\n"
-                                msg += "Foi um prazer atender você. Até a próxima! 🌸\n\n"
-                                msg += f"⭐ *Avalie seu atendimento:*\n{link_avaliacao}"
-                            
-                                if tel_cli:
-                                    tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
-                                    if len(tel_limpo) >= 10:
-                                        if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
-                                        st.session_state['zap_link_serv'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
-                                        st.session_state['zap_msg_serv'] = msg
-                                        st.session_state['zap_codigo_serv'] = f"ATENDIMENTO Nº {novo_cod}"
-                                        st.session_state['zap_total_serv'] = total_pdv
-                                        st.session_state['zap_tel_serv'] = tel_limpo
-                            
-                                conn.commit()
-                                devolver_conexao(conn)
-                                st.session_state['carrinho_servicos'] = []
-                                st.success(f"Ficha técnica e Atendimento {novo_cod} salvos com sucesso!")
-                                limpar_cache()
+                            c_w1, c_w2 = st.columns([2, 1])
+                            c_w1.link_button("🟢 Abrir WhatsApp e Enviar", link_atualizado, type="primary", use_container_width=True)
+                            if c_w2.button("➕ Novo atendimento", use_container_width=True, key="novo_atend_serv_top"):
+                                for k in ['zap_link_serv', 'zap_msg_serv', 'zap_codigo_serv', 'zap_total_serv', 'zap_tel_serv']:
+                                    if k in st.session_state:
+                                        del st.session_state[k]
                                 st.rerun()
-                            
-                            except Exception as e:
-                                st.error(f"Erro no banco: {e}")
-                                if 'conn' in locals(): devolver_conexao(conn)
 
-                        if c3_limpar.button("🗑️ Limpar Painel", use_container_width=True): 
-                            st.session_state['carrinho_servicos'] = []
-                            st.rerun()
-                else: 
+                    col_operacao, col_resumo = st.columns([1.05, 1], gap="medium")
+
+                    with col_operacao:
+                        with st.container(border=True):
+                            st.markdown('<div class="serv2-section-title">👤 Atendimento</div>', unsafe_allow_html=True)
+                            c_cli, c_data = st.columns([1.8, 1], gap="small")
+                            cliente_pdv = c_cli.selectbox(
+                                "Cliente",
+                                options=df_cli['nome'].tolist(),
+                                index=None,
+                                placeholder="Selecione a cliente...",
+                                key="cli_serv"
+                            )
+                            data_venda_input = c_data.date_input(
+                                "Data",
+                                format="DD/MM/YYYY",
+                                value=date.today(),
+                                key="dt_serv"
+                            )
+
+                            c_pag, c_parc = st.columns([1.5, 1], gap="small")
+                            f_pag = c_pag.selectbox(
+                                "Pagamento",
+                                ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"],
+                                index=None,
+                                placeholder="Forma...",
+                                key="fpag_serv"
+                            )
+
+                            qtd_parcelas = 1
+                            data_1_venc = date.today()
+                            if f_pag:
+                                qtd_parcelas = c_parc.number_input(
+                                    "Parcelas",
+                                    min_value=1,
+                                    max_value=12,
+                                    value=1,
+                                    step=1,
+                                    key="parc_serv"
+                                )
+                                sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
+                                data_1_venc = st.date_input(
+                                    "Data do 1º vencimento",
+                                    value=sugestao_venc,
+                                    format="DD/MM/YYYY",
+                                    key="venc1_serv"
+                                )
+
+                        with st.container(border=True):
+                            st.markdown('<div class="serv2-section-title">✨ Procedimento</div>', unsafe_allow_html=True)
+                            col_s1, col_s2 = st.columns([1.4, 1], gap="small")
+                            serv_display = col_s1.selectbox(
+                                "Serviço",
+                                options=df_serv['nome'].tolist(),
+                                index=None,
+                                placeholder="Escolha o procedimento...",
+                                key="servico_serv2"
+                            )
+                            nome_colab = col_s2.selectbox(
+                                "Profissional",
+                                options=df_colab['nome'].tolist(),
+                                index=None,
+                                placeholder="Executor...",
+                                key="colab_serv2"
+                            )
+
+                            opcoes_insumos = df_prod_insumo['nome'].tolist() if not df_prod_insumo.empty else []
+                            msg_placeholder = "Selecione os insumos utilizados..." if opcoes_insumos else "⚠️ Nenhum insumo cadastrado."
+                            insumos_selecionados = st.multiselect(
+                                "Insumos utilizados na sessão",
+                                options=opcoes_insumos,
+                                placeholder=msg_placeholder,
+                                help="Estes itens ficam salvos na ficha da cliente para consultas futuras.",
+                                key="insumos_serv2"
+                            )
+
+                            if serv_display:
+                                s_info = df_serv[df_serv['nome'] == serv_display].iloc[0]
+                                preco_tabela = float(s_info['valor'])
+                                st.info(f"🏷️ Preço base: R$ {preco_tabela:.2f}".replace('.', ','))
+
+                                c1, c2, c3, c4 = st.columns([0.9, 1.1, 1, 1], gap="small")
+                                q_pdv = c1.number_input("Sessões", min_value=1, step=1, value=1, key="qtd_serv2")
+                                preco_custom = c2.number_input("Preço (R$)", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f", key="preco_serv2")
+                                desc_rs = c3.number_input("Desc. R$", min_value=0.0, step=1.0, format="%.2f", key="d_rs_s")
+                                desc_perc = c4.number_input("Desc. %", min_value=0.0, max_value=100.0, step=1.0, format="%.1f", key="d_perc_s")
+
+                                trava_add = (cliente_pdv is None) or (f_pag is None) or (nome_colab is None)
+                                if trava_add:
+                                    st.warning("Preencha cliente, pagamento e profissional para adicionar o serviço.")
+
+                                if st.button("➕ ADICIONAR SERVIÇO", type="primary", disabled=trava_add, use_container_width=True, key="add_serv2"):
+                                    desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
+
+                                    idx_colab = df_colab['nome'].tolist().index(nome_colab)
+                                    profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
+
+                                    insumos_ids = []
+                                    for ins in insumos_selecionados:
+                                        ins_id = df_prod_insumo[df_prod_insumo['nome'] == ins].iloc[0]['id']
+                                        insumos_ids.append(int(ins_id))
+
+                                    nome_carrinho = f"{serv_display} (Profissional: {nome_colab})"
+                                    if insumos_selecionados:
+                                        nome_carrinho += f" | Insumos: {', '.join(insumos_selecionados)}"
+
+                                    st.session_state['carrinho_servicos'].append({
+                                        'id': int(s_info['id']),
+                                        'nome': nome_carrinho,
+                                        'qtd': int(q_pdv),
+                                        'unit': float(preco_custom),
+                                        'desc': float(desconto_final),
+                                        'total': float((preco_custom - desconto_final) * q_pdv),
+                                        'colab_id': profissional_selecionado,
+                                        'insumos_ids': insumos_ids
+                                    })
+                                    st.rerun()
+                            else:
+                                st.caption("Selecione um serviço para informar profissional, insumos, sessões e desconto.")
+
+                    with col_resumo:
+                        with st.container(border=True):
+                            st.markdown('<div class="serv2-section-title">🛒 Serviços adicionados</div>', unsafe_allow_html=True)
+
+                            total_pdv = 0.0
+                            desconto_total_serv = 0.0
+                            qtd_sessoes_serv = 0
+
+                            if st.session_state['carrinho_servicos']:
+                                col_c1, col_c2, col_c3, col_c4 = st.columns([4, 1, 1.6, 0.6], gap="small")
+                                col_c1.markdown("**Procedimento**")
+                                col_c2.markdown("**Qtd**")
+                                col_c3.markdown("**Total**")
+                                st.markdown("<hr style='margin: 4px 0 8px 0; opacity: .25;'>", unsafe_allow_html=True)
+
+                                for i, item in enumerate(st.session_state['carrinho_servicos']):
+                                    item_total = float(item['total'])
+                                    item_qtd = int(item['qtd'])
+                                    item_desc = float(item.get('desc', 0)) * item_qtd
+                                    total_pdv += item_total
+                                    desconto_total_serv += item_desc
+                                    qtd_sessoes_serv += item_qtd
+
+                                    col_i1, col_i2, col_i3, col_i4 = st.columns([4, 1, 1.6, 0.6], gap="small")
+                                    col_i1.write(f"▫️ {item['nome']}")
+                                    col_i2.write(f"{item_qtd}x")
+                                    col_i3.write(f"R$ {item_total:.2f}".replace('.', ','))
+                                    if col_i4.button("🗑️", key=f"del_serv_{i}", help="Remover serviço"):
+                                        st.session_state['carrinho_servicos'].pop(i)
+                                        st.rerun()
+                            else:
+                                st.info("Nenhum serviço adicionado ainda.")
+
+                            subtotal_bruto = total_pdv + desconto_total_serv
+                            total_pdv_fmt = f"R$ {total_pdv:.2f}".replace('.', ',')
+                            subtotal_fmt = f"R$ {subtotal_bruto:.2f}".replace('.', ',')
+                            desconto_fmt = f"R$ {desconto_total_serv:.2f}".replace('.', ',')
+
+                            st.markdown("---")
+                            st.markdown(f"""
+                                <div class="serv2-total-box">
+                                    <div class="serv2-total-label">Total do atendimento</div>
+                                    <div class="serv2-total-value">{total_pdv_fmt}</div>
+                                    <div class="serv2-small-note">{qtd_sessoes_serv} sessão(ões) • Subtotal {subtotal_fmt} • Descontos {desconto_fmt}</div>
+                                </div>
+                            """, unsafe_allow_html=True)
+
+                            valor_entrada = 0.0
+                            valor_restante = float(total_pdv)
+                            datas_parcelas = []
+
+                            if st.session_state['carrinho_servicos']:
+                                if f_pag == "Crediário":
+                                    valor_entrada = st.number_input(
+                                        "Valor da entrada (R$)",
+                                        min_value=0.0,
+                                        max_value=float(total_pdv),
+                                        value=0.0,
+                                        step=10.0,
+                                        key="ent_s"
+                                    )
+
+                                valor_restante = float(total_pdv - valor_entrada)
+
+                                if qtd_parcelas > 1 or f_pag == "Crediário":
+                                    with st.expander("📅 Cronograma de vencimentos", expanded=False):
+                                        if f_pag == "Crediário" and valor_entrada > 0:
+                                            datas_parcelas.append(data_venda_input)
+                                            if qtd_parcelas > 1:
+                                                cols_p = st.columns(min(int(qtd_parcelas) - 1, 4))
+                                                for i in range(2, int(qtd_parcelas) + 1):
+                                                    sugestao_p = data_1_venc + timedelta(days=30 * (i - 2))
+                                                    with cols_p[(i-2) % min(int(qtd_parcelas) - 1, 4)]:
+                                                        dt_p = st.date_input(f"{i}ª Parc.", value=sugestao_p, format="DD/MM/YYYY", key=f"v_p_s_{i}")
+                                                        datas_parcelas.append(dt_p)
+                                        else:
+                                            cols_p = st.columns(min(int(qtd_parcelas), 4))
+                                            for i in range(1, int(qtd_parcelas) + 1):
+                                                sugerido = data_1_venc + timedelta(days=30 * (i - 1))
+                                                with cols_p[(i-1) % min(int(qtd_parcelas), 4)]:
+                                                    dt_p = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"v_p_s_{i}")
+                                                    datas_parcelas.append(dt_p)
+                                else:
+                                    datas_parcelas.append(data_1_venc)
+
+                                c1_finalizar, c3_limpar = st.columns([2, 1], gap="small")
+
+                                if c1_finalizar.button("✅ FINALIZAR ATENDIMENTO", type="primary", use_container_width=True):
+                                    try:
+                                        conn = conectar_banco()
+                                        cur = conn.cursor()
+
+                                        cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
+                                        resultado = cur.fetchone()[0]
+                                        novo_cod = int(resultado + 1) if resultado else 1
+
+                                        data_v = data_venda_input.strftime("%d/%m/%Y")
+                                        cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
+
+                                        for it in st.session_state['carrinho_servicos']:
+                                            cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
+                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                       (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), int(it['colab_id'])))
+
+                                            if it['insumos_ids']:
+                                                for insumo_id in it['insumos_ids']:
+                                                    cur.execute("""INSERT INTO historico_insumos (venda_codigo, cliente_id, produto_id, data_uso, empresa_id) 
+                                                                   VALUES (%s,%s,%s,%s,%s)""",
+                                                                (int(novo_cod), int(cli_id_v), int(insumo_id), data_venda_input, int(emp_id)))
+
+                                        if f_pag == "Crediário" and valor_entrada > 0:
+                                            cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                       (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', data_v, int(emp_id)))
+
+                                            if qtd_parcelas > 1:
+                                                val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
+                                                for i in range(2, int(qtd_parcelas) + 1):
+                                                    dt_venc = datas_parcelas[i-1]
+                                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
+                                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                               (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc_rest), dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
+                                        else:
+                                            val_parc = float(total_pdv / qtd_parcelas)
+                                            for i in range(1, int(qtd_parcelas) + 1):
+                                                dt_venc = datas_parcelas[i-1]
+                                                status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
+                                                data_pag_val = data_v if status_venda == 'Pago' else None
+
+                                                cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                           (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))
+
+                                        cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
+                                        resultado_tel = cur.fetchone()
+                                        tel_cli = resultado_tel[0] if resultado_tel else None
+
+                                        lista_produtos_msg = ""
+                                        for it in st.session_state['carrinho_servicos']:
+                                            partes = it['nome'].split(' | Insumos:')
+                                            nome_serv = partes[0]
+                                            lista_produtos_msg += f"▫️ {nome_serv} (R$ {it['unit']:.2f})\n".replace('.', ',')
+
+                                        link_avaliacao = f"https://wa.me/?text=Atendimento%20N%C2%BA%20{novo_cod}%20-%20Avalia%C3%A7%C3%A3o"
+                                        url_base = st.secrets.get("APP_URL", "")
+                                        if url_base:
+                                            nome_encoded = urllib.parse.quote(cliente_pdv)
+                                            link_avaliacao = f"{url_base}?avaliacao={novo_cod}&empresa={emp_id}&cliente={nome_encoded}"
+
+                                        msg = f"Olá, {cliente_pdv}! ✨\n\n"
+                                        msg += f"Obrigada por escolher nossos serviços hoje ({data_v}). Aqui está o seu recibo:\n\n"
+                                        msg += f"🧾 *Atendimento Nº {novo_cod}*\n\n"
+                                        msg += f"*Procedimentos Realizados:*\n{lista_produtos_msg}\n"
+                                        msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
+                                        msg += f"💳 *Forma de Pagto:* {f_pag}\n\n"
+                                        msg += "Foi um prazer atender você. Até a próxima! 🌸\n\n"
+                                        msg += f"⭐ *Avalie seu atendimento:*\n{link_avaliacao}"
+
+                                        if tel_cli:
+                                            tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
+                                            if len(tel_limpo) >= 10:
+                                                if not tel_limpo.startswith('55'):
+                                                    tel_limpo = '55' + tel_limpo
+                                                st.session_state['zap_link_serv'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                                st.session_state['zap_msg_serv'] = msg
+                                                st.session_state['zap_codigo_serv'] = f"ATENDIMENTO Nº {novo_cod}"
+                                                st.session_state['zap_total_serv'] = total_pdv
+                                                st.session_state['zap_tel_serv'] = tel_limpo
+
+                                        conn.commit()
+                                        devolver_conexao(conn)
+                                        st.session_state['carrinho_servicos'] = []
+                                        st.success(f"Ficha técnica e Atendimento {novo_cod} salvos com sucesso!")
+                                        limpar_cache()
+                                        st.rerun()
+
+                                    except Exception as e:
+                                        st.error(f"Erro no banco: {e}")
+                                        if 'conn' in locals():
+                                            devolver_conexao(conn)
+
+                                if c3_limpar.button("🗑️ Limpar", use_container_width=True):
+                                    st.session_state['carrinho_servicos'] = []
+                                    st.rerun()
+                else:
                     st.warning("Cadastre clientes, colaboradores e serviços para habilitar esta tela.")
+
                 
-                # --- TELA DO RECIBO DO WHATSAPP ---
-                if 'zap_link_serv' in st.session_state and st.session_state['zap_link_serv']:
-                    st.markdown("---")
-                    with st.container(border=True):
-                        st.success(f"🎉 {st.session_state['zap_codigo_serv']} finalizado! Total: R$ {st.session_state['zap_total_serv']:.2f}".replace('.', ','))
-                        st.subheader("📲 Enviar Recibo via WhatsApp")
-                        
-                        # Mensagem editável antes do envio
-                        msg_editada = st.text_area(
-                            "✏️ Edite a mensagem antes de enviar:",
-                            value=st.session_state['zap_msg_serv'],
-                            height=250
-                        )
-                        
-                        # Atualiza o link do WhatsApp com a mensagem editada
-                        tel_serv = st.session_state.get('zap_tel_serv', '')
-                        if tel_serv:
-                            link_atualizado = f"https://wa.me/{tel_serv}?text={urllib.parse.quote(msg_editada)}"
-                        else:
-                            link_atualizado = st.session_state['zap_link_serv']
-                        
-                        st.link_button("🟢 Abrir WhatsApp e Enviar", link_atualizado, type="primary", use_container_width=True)
-                        
-                        if st.button("❌ Fechar Painel", use_container_width=True, key="fechar_zap_s"):
-                            del st.session_state['zap_link_serv']
-                            for k in ['zap_msg_serv', 'zap_codigo_serv', 'zap_total_serv', 'zap_tel_serv']:
-                                if k in st.session_state: del st.session_state[k]
-                            st.rerun()         
-                            
         if tab_orcamentos:
             with tab_orcamentos:
                 st.subheader("📋 Orçamentos Salvos")
