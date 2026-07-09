@@ -881,16 +881,147 @@ else:
                     
                     st.markdown("---")
                     
-                    df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
-                    st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
+                    # FEATURE 002 — Curva de Vendas por Dia
+                    # Objetivo: exibir somente dias com vendas, sem horários no eixo X,
+                    # mantendo linha + marcadores para facilitar a leitura de picos e quedas.
+                    df_fat_dia = (
+                        df_dash.groupby('Data_Obj')['valor_total']
+                        .sum()
+                        .reset_index()
+                        .dropna(subset=['Data_Obj'])
+                        .sort_values('Data_Obj')
+                    )
+
+                    if not df_fat_dia.empty:
+                        df_fat_dia['Dia'] = df_fat_dia['Data_Obj'].apply(lambda d: d.strftime('%d/%m/%Y'))
+
+                        fig_fat_dia = px.line(
+                            df_fat_dia,
+                            x='Dia',
+                            y='valor_total',
+                            markers=True,
+                            title="Curva de Vendas por Dia",
+                            template="plotly_white"
+                        )
+
+                        fig_fat_dia.update_traces(
+                            mode="lines+markers",
+                            line=dict(width=3),
+                            marker=dict(size=8),
+                            hovertemplate=(
+                                "<b>%{x}</b><br>"
+                                "Faturamento: R$ %{y:,.2f}"
+                                "<extra></extra>"
+                            )
+                        )
+
+                        fig_fat_dia.update_xaxes(
+                            type='category',
+                            title_text="Dia",
+                            tickangle=-35
+                        )
+
+                        fig_fat_dia.update_yaxes(
+                            title_text="Faturamento (R$)"
+                        )
+
+                        fig_fat_dia.update_layout(
+                            height=420,
+                            margin=dict(l=40, r=40, t=60, b=80)
+                        )
+
+                        st.plotly_chart(fig_fat_dia, use_container_width=True)
+                    else:
+                        st.info("Sem vendas suficientes para gerar a curva diária.")
                     
                     c1, c2 = st.columns(2)
-                    df_top = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False).head(5).sort_values('quantidade', ascending=True)
-                    df_top['produto_curto'] = df_top['produto'].apply(lambda x: (str(x)[:22] + '...') if len(str(x)) > 22 else str(x))
-                    fig_top = px.bar(df_top, x='quantidade', y='produto', orientation='h', text='quantidade', color_discrete_sequence=['#0068c9'], title="Top 5 Produtos Mais Vendidos")
-                    fig_top.update_yaxes(tickmode='array', tickvals=df_top['produto'], ticktext=df_top['produto_curto'])
-                    c1.plotly_chart(fig_top, use_container_width=True)
-                    
+
+                    # FEATURE 001.1 — Ranking Inteligente de Produtos
+                    # Objetivo: nomes completos, ranking configurável, barras mais finas e tooltip gerencial.
+                    with c1:
+                        opcoes_ranking_produtos = ["Top 5", "Top 10", "Top 20", "Todos"]
+                        ranking_produtos_sel = st.radio(
+                            "🏆 Ranking de produtos:",
+                            options=opcoes_ranking_produtos,
+                            index=0,
+                            horizontal=True,
+                            key="feature0011_ranking_produtos"
+                        )
+
+                        df_ranking_produtos = (
+                            df_dash.groupby('produto')
+                            .agg(
+                                quantidade=('quantidade', 'sum'),
+                                faturamento=('valor_total', 'sum')
+                            )
+                            .reset_index()
+                            .sort_values('quantidade', ascending=False)
+                        )
+
+                        total_qtd_ranking = df_ranking_produtos['quantidade'].sum()
+                        df_ranking_produtos['participacao_pct'] = (
+                            df_ranking_produtos['quantidade'] / total_qtd_ranking * 100
+                        ) if total_qtd_ranking else 0
+                        df_ranking_produtos['ranking'] = range(1, len(df_ranking_produtos) + 1)
+
+                        if ranking_produtos_sel == "Todos":
+                            df_top = df_ranking_produtos.copy()
+                            titulo_ranking = "🏆 Ranking Completo dos Produtos Mais Vendidos"
+                        else:
+                            qtd_top = int(ranking_produtos_sel.replace("Top ", ""))
+                            df_top = df_ranking_produtos.head(qtd_top).copy()
+                            titulo_ranking = f"🏆 {ranking_produtos_sel} Produtos Mais Vendidos"
+
+                        df_top = df_top.sort_values('quantidade', ascending=True)
+                        df_top['faturamento_fmt'] = df_top['faturamento'].apply(
+                            lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                        )
+                        df_top['participacao_fmt'] = df_top['participacao_pct'].apply(lambda x: f"{x:.1f}%")
+                        df_top['rotulo_barra'] = df_top.apply(
+                            lambda row: f"{int(row['quantidade'])} • {row['participacao_fmt']}",
+                            axis=1
+                        )
+
+                        altura_ranking = max(420, len(df_top) * 42)
+                        max_qtd_ranking = df_top['quantidade'].max() if not df_top.empty else 0
+
+                        fig_top = px.bar(
+                            df_top,
+                            x='quantidade',
+                            y='produto',
+                            orientation='h',
+                            text='rotulo_barra',
+                            title=titulo_ranking,
+                            custom_data=['ranking', 'faturamento_fmt', 'participacao_fmt']
+                        )
+
+                        fig_top.update_traces(
+                            width=0.42,
+                            textposition='outside',
+                            cliponaxis=False,
+                            hovertemplate=(
+                                "<b>%{y}</b><br><br>"
+                                "Ranking: #%{customdata[0]}<br>"
+                                "Quantidade vendida: %{x}<br>"
+                                "Faturamento: %{customdata[1]}<br>"
+                                "Participação: %{customdata[2]}"
+                                "<extra></extra>"
+                            )
+                        )
+
+                        fig_top.update_layout(
+                            xaxis_title="Quantidade vendida",
+                            yaxis_title="",
+                            height=altura_ranking,
+                            margin=dict(l=320, r=80, t=70, b=40),
+                            showlegend=False
+                        )
+
+                        fig_top.update_xaxes(range=[0, max_qtd_ranking * 1.20 if max_qtd_ranking else 1])
+                        fig_top.update_yaxes(automargin=True)
+
+                        st.plotly_chart(fig_top, use_container_width=True)
+
                     fig_cat = px.pie(df_dash.groupby('categoria')['valor_total'].sum().reset_index(), values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria", color_discrete_sequence=px.colors.qualitative.Bold)
                     c2.plotly_chart(fig_cat, use_container_width=True)
                 else: 
@@ -2219,8 +2350,94 @@ Feliz aniversário! 🥳✨"""
                 
         if tab_venda:
             with tab_venda:
-                st.subheader("🛒 Vendas")
-            
+                st.markdown("### 🛒 PDV — Venda rápida")
+
+                st.caption("Fluxo simples para demonstração: cliente → produto → carrinho → fechamento.")
+
+                st.markdown("""
+
+                    <style>
+
+                    .pdv-step {
+
+                        border: 1px solid #e5e7eb;
+
+                        border-radius: 14px;
+
+                        padding: 14px 16px;
+
+                        margin: 10px 0 14px 0;
+
+                        background: #ffffff;
+
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+
+                    }
+
+                    .pdv-step-title {
+
+                        font-size: 1.02rem;
+
+                        font-weight: 800;
+
+                        color: #1f2937;
+
+                        margin-bottom: 6px;
+
+                    }
+
+                    .pdv-muted {
+
+                        color: #6b7280;
+
+                        font-size: 0.88rem;
+
+                        margin-bottom: 8px;
+
+                    }
+
+                    .pdv-total-card {
+
+                        border-radius: 16px;
+
+                        padding: 16px 18px;
+
+                        margin: 12px 0 14px 0;
+
+                        background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+
+                        border: 1px solid #dbeafe;
+
+                    }
+
+                    .pdv-total-label {
+
+                        color: #475569;
+
+                        font-weight: 700;
+
+                        font-size: 0.9rem;
+
+                        margin-bottom: 2px;
+
+                    }
+
+                    .pdv-total-value {
+
+                        color: #0f172a;
+
+                        font-weight: 900;
+
+                        font-size: 2rem;
+
+                        line-height: 1.1;
+
+                    }
+
+                    </style>
+
+                """, unsafe_allow_html=True)
+
                 # Carrega dados atualizados para o PDV
                 df_cli = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                 
@@ -2228,6 +2445,12 @@ Feliz aniversário! 🥳✨"""
                 df_pro = carregar_dados_cached("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s AND tipo='P' AND classe='Venda' ORDER BY nome", (emp_id,))
             
                 if not df_cli.empty and not df_pro.empty:
+                    st.markdown("""
+                        <div class="pdv-step">
+                            <div class="pdv-step-title">1️⃣ Dados da venda</div>
+                            <div class="pdv-muted">Selecione cliente, data e condição de pagamento antes de adicionar produtos.</div>
+                        </div>
+                    """, unsafe_allow_html=True)
                     # 1. Configurações da Venda
                     c_cli, c_data = st.columns(2)
                     cliente_pdv = c_cli.selectbox("Cliente:", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione o cliente...")
@@ -2307,11 +2530,17 @@ Feliz aniversário! 🥳✨"""
                                 else:
                                     st.error("Estoque insuficiente!")
                     else:
-                        st.info("👆 preencha o cliente, a forma de pagamento e selecione um item para configurar a venda.")
+                        st.info("👆 Para continuar, selecione o cliente, a forma de pagamento e um produto.")
 
                     # 3. Carrinho e Configurações Financeiras
                     if st.session_state['carrinho']:
-                        st.markdown("### 🛍️ Itens no Carrinho")
+                        st.markdown("""
+                            <div class="pdv-step">
+                                <div class="pdv-step-title">3️⃣ Carrinho e fechamento</div>
+                                <div class="pdv-muted">Revise os itens, ajuste parcelas e finalize a venda ou gere um orçamento.</div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        st.markdown("### 🛍️ Carrinho")
                         
                         col_c1, col_c2, col_c3, col_c4, col_vazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
                         col_c1.markdown("**Item**")
@@ -2335,8 +2564,39 @@ Feliz aniversário! 🥳✨"""
                             total_pdv += float(item['total'])
                         
                         st.markdown("<hr style='margin: 10px 0px 10px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
-                        st.header(f"Total Atual: R$ {total_pdv:.2f}".replace('.', ','))
-                    
+
+                        
+                        total_pdv_fmt = f"R$ {total_pdv:.2f}".replace('.', ',')
+
+                        
+                        st.markdown(
+
+                        
+                            f"""
+
+                        
+                            <div class="pdv-total-card">
+
+                        
+                                <div class="pdv-total-label">Total atual da venda</div>
+
+                        
+                                <div class="pdv-total-value">{total_pdv_fmt}</div>
+
+                        
+                            </div>
+
+                        
+                            """,
+
+                        
+                            unsafe_allow_html=True
+
+                        
+                        )
+
+
+                        
                         st.markdown("---")
                     
                         # --- CONFIGURAÇÃO DE ENTRADA ---
@@ -2378,6 +2638,7 @@ Feliz aniversário! 🥳✨"""
                     
                         st.markdown("---")             
                     
+                        st.markdown("#### Ações finais")
                         c1_finalizar, c2_orcamento, c3_limpar = st.columns(3)
                     
                         # --- AÇÃO: FINALIZAR VENDA (PERSISTE NO BANCO) ---
@@ -2540,7 +2801,7 @@ Feliz aniversário! 🥳✨"""
                             st.success("Orçamento gerado! Os dados de estoque e contas a receber permaneceram intactos.")
                             st.rerun()
 
-                        if c3_limpar.button("🗑️ Limpar Carrinho", use_container_width=True): 
+                        if c3_limpar.button("🧹 Limpar Carrinho", use_container_width=True): 
                             st.session_state['carrinho'] = []
                             st.rerun()
                 else: 
@@ -2564,8 +2825,9 @@ Feliz aniversário! 🥳✨"""
                 # --- EXPANDER: EDITAR FORMA DE PAGAMENTO ---
                 # Fica FORA do bloco condicional para aparecer sempre
                 st.markdown("---")
-                with st.expander("✏️ Corrigir Forma de Pagamento de uma Venda"):
-                    st.caption("Busque a venda pelo número ou cliente, altere a forma de pagamento e as parcelas serão recriadas.")
+                st.markdown("### ⚙️ Ajustes administrativos")
+                with st.expander("✏️ Corrigir forma de pagamento de uma venda", expanded=False):
+                    st.caption("Área de manutenção: busque a venda pelo número ou cliente, altere a forma de pagamento e as parcelas serão recriadas.")
 
                     col_busca1, col_busca2 = st.columns(2)
                     busca_cod = col_busca1.number_input("Nº da Venda:", min_value=0, step=1, value=0, key="edit_fp_cod")
