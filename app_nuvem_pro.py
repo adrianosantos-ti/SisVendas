@@ -2569,31 +2569,10 @@ Feliz aniversário! 🥳✨"""
                         total_pdv_fmt = f"R$ {total_pdv:.2f}".replace('.', ',')
 
                         
-                        st.markdown(
-
-                        
-                            f"""
-
-                        
-                            <div class="pdv-total-card">
-
-                        
-                                <div class="pdv-total-label">Total atual da venda</div>
-
-                        
-                                <div class="pdv-total-value">{total_pdv_fmt}</div>
-
-                        
-                            </div>
-
-                        
-                            """,
-
-                        
-                            unsafe_allow_html=True
-
-                        
-                        )
+                        # FEATURE DEMO PDV — Total sem HTML bruto
+                        # Mantemos o visual profissional usando componente nativo do Streamlit,
+                        # evitando que tags HTML apareçam na tela em alguns ambientes.
+                        st.metric("💰 Total atual da venda", total_pdv_fmt)
 
 
                         
