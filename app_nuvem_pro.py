@@ -1049,9 +1049,11 @@ Feliz aniversário! 🥳✨"""
                 LEFT JOIN clientes c ON v.cliente_id = c.id 
                 LEFT JOIN produtos p ON v.produto_id = p.id 
                 WHERE v.empresa_id = %s
+                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') >= %s
+                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') <= %s
                 ORDER BY v.codigo_venda DESC, v.id DESC
             """
-            df_todas_vendas = carregar_dados_cached(query_todas_vendas, (emp_id,))
+            df_todas_vendas = carregar_dados_cached(query_todas_vendas, (emp_id, d_ini, d_fim))
             
             if not df_todas_vendas.empty:
                 col_opcoes1, col_opcoes2 = st.columns(2)
@@ -1383,29 +1385,47 @@ Feliz aniversário! 🥳✨"""
             mes_num = meses_nomes.index(mes_str) + 1
             ano_sel = int(ano_str)
             
-            # Consulta SQL Otimizada: Usando SUM para somar todos os itens do carrinho corretamente
+            # Consulta SQL Otimizada: soma vendas e calcula status financeiro em um único agrupamento
+            ultimo_dia_app = calendar.monthrange(ano_sel, mes_num)[1]
+            app_ini = date(ano_sel, mes_num, 1)
+            app_fim = date(ano_sel, mes_num, ultimo_dia_app)
+
             query_app = """
+                WITH cr_status AS (
+                    SELECT
+                        venda_codigo,
+                        empresa_id,
+                        COUNT(*) FILTER (WHERE status = 'Pendente') AS pendentes,
+                        COUNT(*) FILTER (
+                            WHERE status = 'Pendente'
+                              AND TO_DATE(data_vencimento, 'DD/MM/YYYY') < CURRENT_DATE
+                        ) AS atrasadas
+                    FROM contas_receber
+                    WHERE empresa_id = %s
+                    GROUP BY venda_codigo, empresa_id
+                )
                 SELECT 
                     v.codigo_venda,
                     MAX(v.data_venda) AS "Data",
                     MAX(c.nome) AS "Cliente",
                     SUM(v.valor_total) AS "Valor Total (R$)",
                     CASE 
-                        WHEN (SELECT COUNT(id) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pendente') = 0 THEN '🟢 QUITADO'
-                        WHEN (SELECT COUNT(id) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pendente' AND TO_DATE(data_vencimento, 'DD/MM/YYYY') < CURRENT_DATE) > 0 THEN '🔴 ATRASADO'
+                        WHEN COALESCE(MAX(cr.pendentes), 0) = 0 THEN '🟢 QUITADO'
+                        WHEN COALESCE(MAX(cr.atrasadas), 0) > 0 THEN '🔴 ATRASADO'
                         ELSE '🔵 PENDENTE'
                     END AS "Status"
                 FROM vendas v
                 LEFT JOIN clientes c ON v.cliente_id = c.id
-                WHERE EXTRACT(MONTH FROM TO_DATE(v.data_venda, 'DD/MM/YYYY')) = %s 
-                  AND EXTRACT(YEAR FROM TO_DATE(v.data_venda, 'DD/MM/YYYY')) = %s
+                LEFT JOIN cr_status cr ON cr.venda_codigo = v.codigo_venda AND cr.empresa_id = v.empresa_id
+                WHERE TO_DATE(v.data_venda, 'DD/MM/YYYY') >= %s
+                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') <= %s
                   AND v.empresa_id = %s
                 GROUP BY v.codigo_venda
                 ORDER BY TO_DATE(MAX(v.data_venda), 'DD/MM/YYYY') DESC
             """
             
             # Aqui fazemos a busca (se der erro de data, ajuste o cast de data_venda no SQL)
-            df_app = carregar_dados_cached(query_app, (mes_num, ano_sel, emp_id))
+            df_app = carregar_dados_cached(query_app, (emp_id, app_ini, app_fim, emp_id))
             
             if not df_app.empty:
                 # Calculadora do rodapé
@@ -1484,28 +1504,12 @@ Feliz aniversário! 🥳✨"""
         # ==========================================
         with tab_prod:
             # --- Buscando apenas PRODUTOS FÍSICOS ('P') ---
-            df_p = carregar_dados_cached(
-    """
-    SELECT
-        id,
-        referencia,
-        nome,
-        marca,
-        categoria,
-        valor,
-        preco_custo,
-        markup,
-        quantidade,
-        classe,
-        tipo,
-        empresa_id
-    FROM produtos
-    WHERE empresa_id=%s
-      AND tipo='P'
-    ORDER BY nome
-    """,
-    (emp_id,)
-)
+            df_p = carregar_dados_cached("""
+                SELECT id, referencia, nome, marca, categoria, valor, preco_custo, markup, quantidade, classe, tipo, empresa_id
+                FROM produtos
+                WHERE empresa_id=%s AND tipo='P'
+                ORDER BY nome
+            """, (emp_id,))
             df_c = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
             
