@@ -428,7 +428,7 @@ if not st.session_state['logado']:
         .ap-login-title {
             margin: 0;
             color: #0f172a;
-            font-size: 1.42rem;
+            font-size: 1.18rem;
             font-weight: 760;
             line-height: 1.2;
             text-align: center;
@@ -526,8 +526,7 @@ if not st.session_state['logado']:
             <div class="ap-login-brand">
                 <img src="data:image/png;base64,{img_base64}" alt="Apprimory">
             </div>
-            <h1 class="ap-login-title">Bem-vindo ao Apprimory</h1>
-            <p class="ap-login-subtitle">Entre para continuar sua gestão.</p>
+            <h1 class="ap-login-title">Bem-vindo</h1>
             """,
             unsafe_allow_html=True
         )
