@@ -393,78 +393,217 @@ if 'logado' not in st.session_state:
 
 # --- TELA DE LOGIN ---
 if not st.session_state['logado']:
-    # Converte a sua logo com cache para evitar leitura repetida do arquivo a cada rerun
+    # Converte a logo com cache para evitar leitura repetida a cada rerun.
     img_base64 = carregar_imagem_base64("Apprimory_logo_branca.png")
 
-    # --- APLICAÇÃO DAS COLUNAS INVISÍVEIS PARA CENTRALIZAR O CARD ---
-    col_vazia_esq, col_login, col_vazia_dir = st.columns([1, 1.2, 1])
+    # ADS 2.1 — Welcome Experience
+    # Somente UI/UX: a autenticação, permissões e fechamento da conexão foram preservados.
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background:
+                radial-gradient(circle at 50% 8%, rgba(37, 99, 235, 0.08), transparent 34%),
+                linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+        }
+
+        .block-container {
+            max-width: 1180px;
+            padding-top: 1.2rem;
+            padding-bottom: 1rem;
+        }
+
+        .ap-login-brand {
+            text-align: center;
+            margin: 0 auto 0.55rem auto;
+        }
+
+        .ap-login-brand img {
+            width: min(330px, 78vw);
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .ap-login-title {
+            margin: 0;
+            color: #0f172a;
+            font-size: 1.42rem;
+            font-weight: 760;
+            line-height: 1.2;
+            text-align: center;
+        }
+
+        .ap-login-subtitle {
+            margin: 0.28rem 0 0.85rem 0;
+            color: #64748b;
+            font-size: 0.90rem;
+            line-height: 1.45;
+            text-align: center;
+        }
+
+        .ap-login-signature {
+            margin: 0.7rem 0 0 0;
+            color: #2563eb;
+            font-size: 0.78rem;
+            font-weight: 650;
+            letter-spacing: 0.01em;
+            text-align: center;
+        }
+
+        .ap-login-footer {
+            margin-top: 0.85rem;
+            color: #94a3b8;
+            font-size: 0.72rem;
+            text-align: center;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 16px !important;
+            box-shadow: 0 14px 38px rgba(15, 23, 42, 0.08);
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] > div {
+            padding: 0.85rem 1rem 0.95rem 1rem;
+        }
+
+        div[data-testid="stTextInput"] label p {
+            font-size: 0.82rem;
+            font-weight: 650;
+            color: #334155;
+        }
+
+        div[data-testid="stTextInput"] input {
+            min-height: 2.55rem;
+            border-radius: 10px;
+            font-size: 0.90rem;
+        }
+
+        div[data-testid="stButton"] button {
+            min-height: 2.65rem;
+            border-radius: 10px;
+            font-size: 0.90rem;
+            font-weight: 700;
+        }
+
+        @media (max-width: 640px) {
+            .block-container {
+                padding-top: 0.55rem;
+                padding-left: 0.85rem;
+                padding-right: 0.85rem;
+            }
+
+            .ap-login-brand img {
+                width: min(245px, 76vw);
+            }
+
+            .ap-login-title {
+                font-size: 1.18rem;
+            }
+
+            .ap-login-subtitle {
+                font-size: 0.82rem;
+                margin-bottom: 0.65rem;
+            }
+
+            div[data-testid="stVerticalBlockBorderWrapper"] > div {
+                padding: 0.7rem 0.8rem 0.8rem 0.8rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # Colunas invisíveis mantêm o card centralizado no desktop e fluido no celular.
+    col_vazia_esq, col_login, col_vazia_dir = st.columns([1.05, 1.15, 1.05])
 
     with col_login:
-        # 3. Exibe a imagem centralizada e com tamanho controlado
         st.markdown(
             f"""
-            <div style="text-align: center;">
-                <img src="data:image/png;base64,{img_base64}" width="350">
+            <div class="ap-login-brand">
+                <img src="data:image/png;base64,{img_base64}" alt="Apprimory">
             </div>
+            <h1 class="ap-login-title">Bem-vindo ao Apprimory</h1>
+            <p class="ap-login-subtitle">Entre para continuar sua gestão.</p>
             """,
             unsafe_allow_html=True
         )
-        
-        st.write("") # Dá um pequeno espaço extra
-        
-        # Centralizando também o texto de boas-vindas para acompanhar o design
-        st.markdown("<h3 style='text-align: center;'>🔐 Identifique-se</h3>", unsafe_allow_html=True)
-        
+
         with st.container(border=True):
-            login_input = st.text_input("Usuário")
-            senha_input = st.text_input("Senha", type="password")
-            
-            if st.button("Entrar no Sistema", type="primary", use_container_width=True):
+            login_input = st.text_input(
+                "👤 Usuário",
+                placeholder="Digite seu usuário...",
+                key="login_usuario_ads21"
+            )
+            senha_input = st.text_input(
+                "🔒 Senha",
+                type="password",
+                placeholder="Digite sua senha...",
+                key="login_senha_ads21"
+            )
+
+            if st.button("Entrar no Apprimory", type="primary", use_container_width=True):
                 conn = None
-                try:
-                    conn = conectar_banco()
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
-                    usuario = cursor.fetchone()
-                    # ==========================================
-                    # CORREÇÃO NO BLOCO DE LOGIN
-                    # ==========================================
-                    if usuario:
-                        st.session_state['logado'] = True
-                        st.session_state['usuario_id'] = usuario[0]
-                        st.session_state['usuario_nome'] = usuario[1]
-                        st.session_state['perfil'] = usuario[2]
-                        st.session_state['empresa_id'] = usuario[3]
+                if not login_input.strip() or not senha_input:
+                    st.warning("Informe o usuário e a senha para continuar.")
+                else:
+                    try:
+                        with st.spinner("Entrando..."):
+                            conn = conectar_banco()
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                "SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s",
+                                (login_input, senha_input)
+                            )
+                            usuario = cursor.fetchone()
 
-                        perfil_usuario = usuario[2]
-                        id_usuario_logado = usuario[0]
+                            if usuario:
+                                st.session_state['logado'] = True
+                                st.session_state['usuario_id'] = usuario[0]
+                                st.session_state['usuario_nome'] = usuario[1]
+                                st.session_state['perfil'] = usuario[2]
+                                st.session_state['empresa_id'] = usuario[3]
 
-                        if perfil_usuario in ['admin', 'master']:
-                            # Se for admin/master, puxa todas as chaves existentes no sistema
-                            cursor.execute("SELECT chave FROM modulos")
-                            resultado = cursor.fetchall()
-                            # 🌟 ADICIONADO .strip() AQUI PARA LIMPAR ESPAÇOS OCULTOS
-                            st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
-                        else:
-                            # Se for usuário comum, cruza com a tabela de permissões
-                            cursor.execute("""
-                                SELECT m.chave 
-                                FROM permissoes_acesso p
-                                JOIN modulos m ON p.modulo_id = m.id
-                                WHERE p.usuario_id = %s
-                            """, (id_usuario_logado,))
-                            resultado = cursor.fetchall()
-                            # 🌟 ADICIONADO .strip() AQUI TAMBÉM
-                            st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
+                                perfil_usuario = usuario[2]
+                                id_usuario_logado = usuario[0]
 
-                        # Agora sim, com tudo salvo na memória, recarregamos a tela
-                        st.rerun()
-                    else:
-                        st.error("❌ Usuário ou senha incorretos.")
-                except Exception as e:
-                    st.error(f"Erro ao tentar entrar no sistema: {e}")
-                finally:
-                    devolver_conexao(conn)
+                                if perfil_usuario in ['admin', 'master']:
+                                    cursor.execute("SELECT chave FROM modulos")
+                                    resultado = cursor.fetchall()
+                                    st.session_state['modulos_permitidos'] = [
+                                        linha[0].strip() for linha in resultado
+                                    ] if resultado else []
+                                else:
+                                    cursor.execute("""
+                                        SELECT m.chave
+                                        FROM permissoes_acesso p
+                                        JOIN modulos m ON p.modulo_id = m.id
+                                        WHERE p.usuario_id = %s
+                                    """, (id_usuario_logado,))
+                                    resultado = cursor.fetchall()
+                                    st.session_state['modulos_permitidos'] = [
+                                        linha[0].strip() for linha in resultado
+                                    ] if resultado else []
+
+                                st.rerun()
+                            else:
+                                st.error("❌ Usuário ou senha incorretos.")
+                    except Exception as e:
+                        st.error(f"Erro ao tentar entrar no sistema: {e}")
+                    finally:
+                        devolver_conexao(conn)
+
+        st.markdown(
+            """
+            <p class="ap-login-signature">Transformando dados em decisões.</p>
+            <p class="ap-login-footer">Apprimory 2.0 · Inteligência para Gestão</p>
+            """,
+            unsafe_allow_html=True
+        )
+
 
 # --- PAINEL DO ADMINISTRADOR MASTER ---
 elif st.session_state['perfil'] == 'master':
@@ -2413,7 +2552,7 @@ Feliz aniversário! 🥳✨"""
             </style>
             <div class="ads-mov-header">
                 <div class="ads-mov-title">🔄 Movimentações</div>
-                <div class="ads-mov-context">Operações diárias · AppPrimory 2.0</div>
+                <div class="ads-mov-context">Operações diárias · Apprimory 2.0</div>
             </div>
         """, unsafe_allow_html=True)
         
