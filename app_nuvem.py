@@ -7,13 +7,6 @@ import calendar
 import urllib.parse
 import time as time_module  # renomeado para não conflitar com datetime.time
 
-# 🔧 DIAGNÓSTICO TEMPORÁRIO: faz o processo imprimir a pilha de chamadas exata
-# no log ANTES de morrer em caso de segfault (por padrão, um segfault mata o
-# processo sem dar chance ao Python de mostrar onde estava). Depois de
-# identificarmos e corrigirmos a causa, isso pode ser removido.
-import faulthandler
-faulthandler.enable()
-
 # Força o servidor inteiro a rodar no fuso correto
 os.environ['TZ'] = 'America/Fortaleza'
 time_module.tzset()
@@ -894,7 +887,14 @@ Feliz aniversário! 🥳✨"""
                         return None
                     
                     df_nivers['Ação'] = df_nivers.apply(lambda row: gerar_link_wpp(row['telefone'], row['nome']), axis=1)
+                    # 🔧 CORREÇÃO DO SEGFAULT: força dtype 'string' explícito. Sem isso, a
+                    # coluna fica como 'object' misturando str (link) e None (telefone
+                    # inválido), e o PyArrow 25.0.0 trava em nível nativo (C) ao tentar
+                    # inferir o tipo Arrow dessa mistura, em vez de lançar uma exceção
+                    # tratável do Python.
+                    df_nivers['Ação'] = df_nivers['Ação'].astype('string')
                     df_nivers = df_nivers.rename(columns={'nome': 'Cliente', 'telefone': 'Contato'})
+                    df_nivers['Contato'] = df_nivers['Contato'].astype('string')
                     
                     st.dataframe(
                         df_nivers[['Cliente', 'Aniversário', 'Contato', 'Ação']],
