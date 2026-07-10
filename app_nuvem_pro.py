@@ -403,34 +403,38 @@ if not st.session_state['logado']:
         <style>
         .stApp {
             background:
-                radial-gradient(circle at 50% 8%, rgba(37, 99, 235, 0.08), transparent 34%),
-                linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+                radial-gradient(circle at -4% 6%, rgba(59, 130, 246, 0.16) 0, rgba(59, 130, 246, 0.08) 14%, transparent 30%),
+                radial-gradient(circle at 104% 18%, rgba(148, 163, 184, 0.12) 0, rgba(148, 163, 184, 0.06) 12%, transparent 28%),
+                radial-gradient(circle at 100% 100%, rgba(59, 130, 246, 0.10) 0, rgba(59, 130, 246, 0.04) 12%, transparent 26%),
+                linear-gradient(180deg, #f8fafc 0%, #f8fafc 100%);
         }
 
         .block-container {
             max-width: 1180px;
-            padding-top: 1.2rem;
-            padding-bottom: 1rem;
+            padding-top: 0.85rem;
+            padding-bottom: 1.25rem;
         }
 
         .ap-login-brand {
             text-align: center;
-            margin: 0 auto 0.55rem auto;
+            margin: 0 auto 1.15rem auto;
         }
 
         .ap-login-brand img {
-            width: min(330px, 78vw);
+            width: min(310px, 76vw);
             height: auto;
             display: block;
             margin: 0 auto;
+            filter: drop-shadow(0 8px 20px rgba(15, 23, 42, 0.05));
         }
 
         .ap-login-title {
-            margin: 0;
-            color: #0f172a;
-            font-size: 1.18rem;
-            font-weight: 760;
+            margin: 0 0 1.05rem 0;
+            color: #475569;
+            font-size: 1.52rem;
+            font-weight: 600;
             line-height: 1.2;
+            letter-spacing: -0.02em;
             text-align: center;
         }
 
@@ -443,49 +447,76 @@ if not st.session_state['logado']:
         }
 
         .ap-login-signature {
-            margin: 0.7rem 0 0 0;
+            margin: 1rem 0 0 0;
             color: #2563eb;
-            font-size: 0.78rem;
-            font-weight: 650;
-            letter-spacing: 0.01em;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.005em;
             text-align: center;
         }
 
         .ap-login-footer {
-            margin-top: 0.85rem;
-            color: #94a3b8;
+            margin-top: 1.15rem;
+            color: #64748b;
             font-size: 0.72rem;
             text-align: center;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: rgba(255, 255, 255, 0.96);
-            border: 1px solid #e2e8f0 !important;
-            border-radius: 16px !important;
-            box-shadow: 0 14px 38px rgba(15, 23, 42, 0.08);
+            background: rgba(255, 255, 255, 0.94);
+            border: 1px solid rgba(203, 213, 225, 0.82) !important;
+            border-radius: 22px !important;
+            box-shadow: 0 20px 54px rgba(15, 23, 42, 0.10);
+            backdrop-filter: blur(10px);
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"] > div {
-            padding: 0.85rem 1rem 0.95rem 1rem;
+            padding: 1.15rem 1.2rem 1.2rem 1.2rem;
         }
 
         div[data-testid="stTextInput"] label p {
-            font-size: 0.82rem;
-            font-weight: 650;
-            color: #334155;
+            font-size: 0.88rem;
+            font-weight: 700;
+            color: #1e293b;
         }
 
         div[data-testid="stTextInput"] input {
-            min-height: 2.55rem;
-            border-radius: 10px;
-            font-size: 0.90rem;
+            min-height: 2.85rem;
+            border-radius: 14px;
+            font-size: 0.94rem;
+            background: rgba(248, 250, 252, 0.96);
+            border-color: #dbe4f0;
+        }
+
+        div[data-testid="stTextInput"] input:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 0.18rem rgba(37, 99, 235, 0.10);
         }
 
         div[data-testid="stButton"] button {
-            min-height: 2.65rem;
-            border-radius: 10px;
-            font-size: 0.90rem;
-            font-weight: 700;
+            min-height: 3.05rem;
+            border-radius: 14px;
+            font-size: 0.98rem;
+            font-weight: 750;
+            border: none;
+            background: linear-gradient(135deg, #1d4ed8 0%, #0b76e8 100%);
+            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.24);
+            transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+        }
+
+        div[data-testid="stButton"] button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 14px 30px rgba(37, 99, 235, 0.30);
+            filter: brightness(1.03);
+        }
+
+        div[data-testid="stButton"] button:before {
+            content: "⇥";
+            display: inline-block;
+            margin-right: 0.55rem;
+            font-size: 1.35rem;
+            line-height: 1;
+            transform: translateY(1px);
         }
 
         @media (max-width: 640px) {
@@ -496,11 +527,12 @@ if not st.session_state['logado']:
             }
 
             .ap-login-brand img {
-                width: min(245px, 76vw);
+                width: min(245px, 74vw);
             }
 
             .ap-login-title {
-                font-size: 1.00rem;
+                font-size: 1.25rem;
+                margin-bottom: 0.85rem;
             }
 
             .ap-login-subtitle {
@@ -509,7 +541,12 @@ if not st.session_state['logado']:
             }
 
             div[data-testid="stVerticalBlockBorderWrapper"] > div {
-                padding: 0.7rem 0.8rem 0.8rem 0.8rem;
+                padding: 0.9rem 0.9rem 0.95rem 0.9rem;
+            }
+
+            div[data-testid="stButton"] button {
+                min-height: 2.9rem;
+                font-size: 0.93rem;
             }
         }
         </style>
