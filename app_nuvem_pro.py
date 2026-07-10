@@ -2388,6 +2388,18 @@ Feliz aniversário! 🥳✨"""
             .ads-screen-caption {
                 font-size:.76rem; color:#64748b; margin:-.25rem 0 .55rem 0;
             }
+            .ads-panel-title {
+                font-size:.94rem; font-weight:900; color:#1f2937;
+                margin:0 0 .18rem 0; line-height:1.2;
+            }
+            .ads-panel-caption {
+                font-size:.74rem; color:#64748b;
+                margin:0 0 .48rem 0; line-height:1.25;
+            }
+            .ads-context-title {
+                font-size:.82rem; font-weight:850; color:#1f2937;
+                margin:.05rem 0 .20rem 0; line-height:1.2;
+            }
 
             @media (max-width: 768px) {
                 .block-container { padding-left:.75rem; padding-right:.75rem; padding-top:.65rem; }
@@ -4038,12 +4050,19 @@ Feliz aniversário! 🥳✨"""
                         consultora_sel = col_consultora.selectbox(
                             "👤 Consultora da negociação",
                             options=lista_consultoras,
+                            index=None,
+                            placeholder="Selecione a consultora...",
                             key="troca_consultora_sel"
                         )
-                        id_consultora = int(
-                            df_consultoras[df_consultoras['nome'] == consultora_sel].iloc[0]['id']
+                        id_consultora = None
+                        if consultora_sel:
+                            id_consultora = int(
+                                df_consultoras[df_consultoras['nome'] == consultora_sel].iloc[0]['id']
+                            )
+                        col_contexto.markdown(
+                            '<div class="ads-context-title">Status da operação</div>',
+                            unsafe_allow_html=True
                         )
-                        col_contexto.markdown("**Status da operação**")
                         col_contexto.caption("🟡 Em preparação · estoque ainda não alterado")
 
                     # Carrega catálogo de produtos para os lançamentos
@@ -4065,13 +4084,18 @@ Feliz aniversário! 🥳✨"""
                         # --- PAINEL DE SAÍDA ---
                         with col_saida:
                             with st.container(border=True):
-                                st.markdown("### 📤 Saída para a Consultora")
-                                st.caption("Produtos que deixam o estoque da empresa nesta negociação.")
+                                st.markdown(
+                                    '<div class="ads-panel-title">📤 Saída para a Consultora</div>'
+                                    '<div class="ads-panel-caption">Produtos que deixam o estoque da empresa nesta negociação.</div>',
+                                    unsafe_allow_html=True
+                                )
 
                                 with st.form("form_add_saida", clear_on_submit=True):
                                     item_sel_s = st.selectbox(
                                         "Produto de saída",
                                         options=opcoes_prod,
+                                        index=None,
+                                        placeholder="Digite ou selecione um produto...",
                                         key="troca_produto_saida"
                                     )
                                     c_qtd_s, c_val_s = st.columns(2)
@@ -4083,8 +4107,8 @@ Feliz aniversário! 🥳✨"""
                                         key="troca_qtd_saida"
                                     )
 
-                                    idx_s = opcoes_prod.index(item_sel_s)
-                                    preco_base_s = float(df_produtos.iloc[idx_s]['valor'])
+                                    idx_s = opcoes_prod.index(item_sel_s) if item_sel_s else None
+                                    preco_base_s = float(df_produtos.iloc[idx_s]['valor']) if idx_s is not None else 0.0
                                     preco_s = c_val_s.number_input(
                                         "Valor unitário (R$)",
                                         min_value=0.0,
@@ -4099,19 +4123,22 @@ Feliz aniversário! 🥳✨"""
                                         type="primary",
                                         use_container_width=True
                                     ):
-                                        item_info = df_produtos.iloc[idx_s]
-                                        if item_info['tipo'] == 'P' and qtd_s > item_info['quantidade']:
-                                            st.error("❌ Estoque insuficiente para esta saída!")
+                                        if idx_s is None:
+                                            st.error("Selecione um produto para adicionar à saída.")
                                         else:
-                                            st.session_state['troca_saida'].append({
-                                                'id': int(item_info['id']),
-                                                'nome': str(item_info['nome']),
-                                                'qtd': int(qtd_s),
-                                                'unit': float(preco_s),
-                                                'total': float(qtd_s * preco_s),
-                                                'tipo': str(item_info['tipo'])
-                                            })
-                                            st.rerun()
+                                            item_info = df_produtos.iloc[idx_s]
+                                            if item_info['tipo'] == 'P' and qtd_s > item_info['quantidade']:
+                                                st.error("❌ Estoque insuficiente para esta saída!")
+                                            else:
+                                                st.session_state['troca_saida'].append({
+                                                    'id': int(item_info['id']),
+                                                    'nome': str(item_info['nome']),
+                                                    'qtd': int(qtd_s),
+                                                    'unit': float(preco_s),
+                                                    'total': float(qtd_s * preco_s),
+                                                    'tipo': str(item_info['tipo'])
+                                                })
+                                                st.rerun()
 
                                 if st.session_state['troca_saida']:
                                     df_saida_ui = pd.DataFrame(st.session_state['troca_saida'])[
@@ -4144,13 +4171,18 @@ Feliz aniversário! 🥳✨"""
                         # --- PAINEL DE ENTRADA ---
                         with col_entrada:
                             with st.container(border=True):
-                                st.markdown("### 📥 Retorno para a Empresa")
-                                st.caption("Produtos recebidos da consultora e que retornarão ao estoque.")
+                                st.markdown(
+                                    '<div class="ads-panel-title">📥 Retorno para a Empresa</div>'
+                                    '<div class="ads-panel-caption">Produtos recebidos da consultora e que retornarão ao estoque.</div>',
+                                    unsafe_allow_html=True
+                                )
 
                                 with st.form("form_add_entrada", clear_on_submit=True):
                                     item_sel_e = st.selectbox(
                                         "Produto de retorno",
                                         options=opcoes_prod,
+                                        index=None,
+                                        placeholder="Digite ou selecione um produto...",
                                         key="troca_produto_entrada"
                                     )
                                     c_qtd_e, c_val_e = st.columns(2)
@@ -4162,8 +4194,8 @@ Feliz aniversário! 🥳✨"""
                                         key="troca_qtd_entrada"
                                     )
 
-                                    idx_e = opcoes_prod.index(item_sel_e)
-                                    preco_base_e = float(df_produtos.iloc[idx_e]['valor'])
+                                    idx_e = opcoes_prod.index(item_sel_e) if item_sel_e else None
+                                    preco_base_e = float(df_produtos.iloc[idx_e]['valor']) if idx_e is not None else 0.0
                                     preco_e = c_val_e.number_input(
                                         "Valor unitário (R$)",
                                         min_value=0.0,
@@ -4178,16 +4210,19 @@ Feliz aniversário! 🥳✨"""
                                         type="primary",
                                         use_container_width=True
                                     ):
-                                        item_info = df_produtos.iloc[idx_e]
-                                        st.session_state['troca_entrada'].append({
-                                            'id': int(item_info['id']),
-                                            'nome': str(item_info['nome']),
-                                            'qtd': int(qtd_e),
-                                            'unit': float(preco_e),
-                                            'total': float(qtd_e * preco_e),
-                                            'tipo': str(item_info['tipo'])
-                                        })
-                                        st.rerun()
+                                        if idx_e is None:
+                                            st.error("Selecione um produto para adicionar ao retorno.")
+                                        else:
+                                            item_info = df_produtos.iloc[idx_e]
+                                            st.session_state['troca_entrada'].append({
+                                                'id': int(item_info['id']),
+                                                'nome': str(item_info['nome']),
+                                                'qtd': int(qtd_e),
+                                                'unit': float(preco_e),
+                                                'total': float(qtd_e * preco_e),
+                                                'tipo': str(item_info['tipo'])
+                                            })
+                                            st.rerun()
 
                                 if st.session_state['troca_entrada']:
                                     df_entrada_ui = pd.DataFrame(st.session_state['troca_entrada'])[
@@ -4258,7 +4293,9 @@ Feliz aniversário! 🥳✨"""
                                 use_container_width=True,
                                 key="salvar_troca_standby"
                             ):
-                                if not st.session_state['troca_saida'] and not st.session_state['troca_entrada']:
+                                if not consultora_sel or id_consultora is None:
+                                    st.error("Selecione a consultora da negociação.")
+                                elif not st.session_state['troca_saida'] and not st.session_state['troca_entrada']:
                                     st.error("Adicione pelo menos um item em uma das listas para processar.")
                                 else:
                                     try:
