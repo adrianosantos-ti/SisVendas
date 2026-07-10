@@ -500,7 +500,7 @@ if not st.session_state['logado']:
             }
 
             .ap-login-title {
-                font-size: 1.18rem;
+                font-size: 1.00rem;
             }
 
             .ap-login-subtitle {
