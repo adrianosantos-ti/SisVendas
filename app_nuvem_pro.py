@@ -2963,7 +2963,14 @@ Feliz aniversário! 🥳✨"""
                 # Fica FORA do bloco condicional para aparecer sempre
                 st.markdown("---")
                 st.markdown("### ⚙️ Ajustes administrativos")
-                with st.expander("✏️ Corrigir forma de pagamento de uma venda", expanded=False):
+                # 🔧 Isolado em @st.fragment: este bloco cresce muito (de 3 para 10+
+                # widgets, incluindo um número VARIÁVEL de colunas de data conforme o
+                # número de parcelas escolhido). Isso é exatamente o padrão que causa o
+                # vazamento de conteúdo de outras abas (Serviços/Entradas/Trocas) para
+                # baixo da tela — sem o fragmento, cada interação aqui dispara um rerun
+                # completo do script, recalculando todas as abas junto.
+                @st.fragment
+                def fragmento_corrigir_pagamento_venda():
                     st.caption("Área de manutenção: busque a venda pelo número ou cliente, altere a forma de pagamento e as parcelas serão recriadas.")
 
                     col_busca1, col_busca2 = st.columns(2)
@@ -3088,6 +3095,9 @@ Feliz aniversário! 🥳✨"""
                             except Exception as e:
                                 st.error(f"Erro ao atualizar: {e}")
                                 if 'conn' in locals(): devolver_conexao(conn)        
+
+                with st.expander("✏️ Corrigir forma de pagamento de uma venda", expanded=False):
+                    fragmento_corrigir_pagamento_venda()
 
         # Inicializa o carrinho de serviços se não existir
         if 'carrinho_servicos' not in st.session_state:
