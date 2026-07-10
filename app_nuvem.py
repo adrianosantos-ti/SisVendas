@@ -1525,7 +1525,7 @@ Feliz aniversário! 🥳✨"""
             # --- EXPANDER 3: MONTAGEM DE KITS PROMOCIONAIS ---
             with st.expander("🎁 Montar Kit Promocional"):
                 # Kits promocionais só fazem sentido com produtos de Venda
-                df_produtos_base = df_p[(df_p['quantidade'] > 0) & (df_p.get('classe', 'Venda') == 'Venda')] if not df_p.empty else pd.DataFrame()
+                df_produtos_base = df_p[(df_p['quantidade'] > 0) & (df_p.get('classe', 'Venda') == 'Venda')].copy() if not df_p.empty else pd.DataFrame()
                 
                 if not df_produtos_base.empty:
                     st.caption("Monte combos unindo produtos de revenda para atrair mais clientes.")
@@ -1629,7 +1629,7 @@ Feliz aniversário! 🥳✨"""
                 cat_selecionada = col_f_cat.selectbox("📑 Filtrar por Categoria:", options=opcoes_cat)
                 
                 if cat_selecionada != "📦 Todas as Categorias":
-                    df_filtrado = df_filtrado[df_filtrado['categoria'] == cat_selecionada]
+                    df_filtrado = df_filtrado[df_filtrado['categoria'] == cat_selecionada].copy()
                 
                 if not df_filtrado.empty:
                     df_filtrado['display_pesquisa'] = df_filtrado.apply(lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1)
@@ -3875,7 +3875,7 @@ Feliz aniversário! 🥳✨"""
                 
                 #st.markdown("---")
                 
-                df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
+                df_p = df_financeiro[df_financeiro['Status'] == 'Pendente'].copy()
                 
                 # --- LÓGICA DE REGISTRAR PAGAMENTO REFORMULADA (CARD LAYOUT MOBILE) ---
                 
