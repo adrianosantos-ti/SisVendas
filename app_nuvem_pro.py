@@ -393,253 +393,78 @@ if 'logado' not in st.session_state:
 
 # --- TELA DE LOGIN ---
 if not st.session_state['logado']:
-    # Converte a logo com cache para evitar leitura repetida a cada rerun.
+    # Converte a sua logo com cache para evitar leitura repetida do arquivo a cada rerun
     img_base64 = carregar_imagem_base64("Apprimory_logo_branca.png")
 
-    # ADS 2.1 — Welcome Experience
-    # Somente UI/UX: a autenticação, permissões e fechamento da conexão foram preservados.
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background:
-                radial-gradient(circle at -4% 6%, rgba(59, 130, 246, 0.16) 0, rgba(59, 130, 246, 0.08) 14%, transparent 30%),
-                radial-gradient(circle at 104% 18%, rgba(148, 163, 184, 0.12) 0, rgba(148, 163, 184, 0.06) 12%, transparent 28%),
-                radial-gradient(circle at 100% 100%, rgba(59, 130, 246, 0.10) 0, rgba(59, 130, 246, 0.04) 12%, transparent 26%),
-                linear-gradient(180deg, #f8fafc 0%, #f8fafc 100%);
-        }
-
-        .block-container {
-            max-width: 1180px;
-            padding-top: 0.85rem;
-            padding-bottom: 1.25rem;
-        }
-
-        .ap-login-brand {
-            text-align: center;
-            margin: 0 auto 1.15rem auto;
-        }
-
-        .ap-login-brand img {
-            width: min(310px, 76vw);
-            height: auto;
-            display: block;
-            margin: 0 auto;
-            filter: drop-shadow(0 8px 20px rgba(15, 23, 42, 0.05));
-        }
-
-        .ap-login-title {
-            margin: 0 0 1.05rem 0;
-            color: #475569;
-            font-size: 1.52rem;
-            font-weight: 600;
-            line-height: 1.2;
-            letter-spacing: -0.02em;
-            text-align: center;
-        }
-
-        .ap-login-subtitle {
-            margin: 0.28rem 0 0.85rem 0;
-            color: #64748b;
-            font-size: 0.90rem;
-            line-height: 1.45;
-            text-align: center;
-        }
-
-        .ap-login-signature {
-            margin: 1rem 0 0 0;
-            color: #2563eb;
-            font-size: 0.82rem;
-            font-weight: 600;
-            letter-spacing: 0.005em;
-            text-align: center;
-        }
-
-        .ap-login-footer {
-            margin-top: 1.15rem;
-            color: #64748b;
-            font-size: 0.72rem;
-            text-align: center;
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: rgba(255, 255, 255, 0.94);
-            border: 1px solid rgba(203, 213, 225, 0.82) !important;
-            border-radius: 22px !important;
-            box-shadow: 0 20px 54px rgba(15, 23, 42, 0.10);
-            backdrop-filter: blur(10px);
-        }
-
-        div[data-testid="stVerticalBlockBorderWrapper"] > div {
-            padding: 1.15rem 1.2rem 1.2rem 1.2rem;
-        }
-
-        div[data-testid="stTextInput"] label p {
-            font-size: 0.88rem;
-            font-weight: 700;
-            color: #1e293b;
-        }
-
-        div[data-testid="stTextInput"] input {
-            min-height: 2.85rem;
-            border-radius: 14px;
-            font-size: 0.94rem;
-            background: rgba(248, 250, 252, 0.96);
-            border-color: #dbe4f0;
-        }
-
-        div[data-testid="stTextInput"] input:focus {
-            border-color: #2563eb;
-            box-shadow: 0 0 0 0.18rem rgba(37, 99, 235, 0.10);
-        }
-
-        div[data-testid="stButton"] button {
-            min-height: 3.05rem;
-            border-radius: 14px;
-            font-size: 0.98rem;
-            font-weight: 750;
-            border: none;
-            background: linear-gradient(135deg, #1d4ed8 0%, #0b76e8 100%);
-            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.24);
-            transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
-        }
-
-        div[data-testid="stButton"] button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 14px 30px rgba(37, 99, 235, 0.30);
-            filter: brightness(1.03);
-        }
-
-        div[data-testid="stButton"] button:before {
-            content: "⇥";
-            display: inline-block;
-            margin-right: 0.55rem;
-            font-size: 1.35rem;
-            line-height: 1;
-            transform: translateY(1px);
-        }
-
-        @media (max-width: 640px) {
-            .block-container {
-                padding-top: 0.55rem;
-                padding-left: 0.85rem;
-                padding-right: 0.85rem;
-            }
-
-            .ap-login-brand img {
-                width: min(245px, 74vw);
-            }
-
-            .ap-login-title {
-                font-size: 1.25rem;
-                margin-bottom: 0.85rem;
-            }
-
-            .ap-login-subtitle {
-                font-size: 0.82rem;
-                margin-bottom: 0.65rem;
-            }
-
-            div[data-testid="stVerticalBlockBorderWrapper"] > div {
-                padding: 0.9rem 0.9rem 0.95rem 0.9rem;
-            }
-
-            div[data-testid="stButton"] button {
-                min-height: 2.9rem;
-                font-size: 0.93rem;
-            }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Colunas invisíveis mantêm o card centralizado no desktop e fluido no celular.
-    col_vazia_esq, col_login, col_vazia_dir = st.columns([1.05, 1.15, 1.05])
+    # --- APLICAÇÃO DAS COLUNAS INVISÍVEIS PARA CENTRALIZAR O CARD ---
+    col_vazia_esq, col_login, col_vazia_dir = st.columns([1, 1.2, 1])
 
     with col_login:
+        # 3. Exibe a imagem centralizada e com tamanho controlado
         st.markdown(
             f"""
-            <div class="ap-login-brand">
-                <img src="data:image/png;base64,{img_base64}" alt="Apprimory">
+            <div style="text-align: center;">
+                <img src="data:image/png;base64,{img_base64}" width="350">
             </div>
-            <h1 class="ap-login-title">Bem-vindo</h1>
             """,
             unsafe_allow_html=True
         )
-
+        
+        st.write("") # Dá um pequeno espaço extra
+        
+        # Centralizando também o texto de boas-vindas para acompanhar o design
+        st.markdown("<h3 style='text-align: center;'>🔐 Identifique-se</h3>", unsafe_allow_html=True)
+        
         with st.container(border=True):
-            login_input = st.text_input(
-                "👤 Usuário",
-                placeholder="Digite seu usuário...",
-                key="login_usuario_ads21"
-            )
-            senha_input = st.text_input(
-                "🔒 Senha",
-                type="password",
-                placeholder="Digite sua senha...",
-                key="login_senha_ads21"
-            )
-
-            if st.button("Entrar no Apprimory", type="primary", use_container_width=True):
+            login_input = st.text_input("Usuário")
+            senha_input = st.text_input("Senha", type="password")
+            
+            if st.button("Entrar no Sistema", type="primary", use_container_width=True):
                 conn = None
-                if not login_input.strip() or not senha_input:
-                    st.warning("Informe o usuário e a senha para continuar.")
-                else:
-                    try:
-                        with st.spinner("Entrando..."):
-                            conn = conectar_banco()
-                            cursor = conn.cursor()
-                            cursor.execute(
-                                "SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s",
-                                (login_input, senha_input)
-                            )
-                            usuario = cursor.fetchone()
+                try:
+                    conn = conectar_banco()
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
+                    usuario = cursor.fetchone()
+                    # ==========================================
+                    # CORREÇÃO NO BLOCO DE LOGIN
+                    # ==========================================
+                    if usuario:
+                        st.session_state['logado'] = True
+                        st.session_state['usuario_id'] = usuario[0]
+                        st.session_state['usuario_nome'] = usuario[1]
+                        st.session_state['perfil'] = usuario[2]
+                        st.session_state['empresa_id'] = usuario[3]
 
-                            if usuario:
-                                st.session_state['logado'] = True
-                                st.session_state['usuario_id'] = usuario[0]
-                                st.session_state['usuario_nome'] = usuario[1]
-                                st.session_state['perfil'] = usuario[2]
-                                st.session_state['empresa_id'] = usuario[3]
+                        perfil_usuario = usuario[2]
+                        id_usuario_logado = usuario[0]
 
-                                perfil_usuario = usuario[2]
-                                id_usuario_logado = usuario[0]
+                        if perfil_usuario in ['admin', 'master']:
+                            # Se for admin/master, puxa todas as chaves existentes no sistema
+                            cursor.execute("SELECT chave FROM modulos")
+                            resultado = cursor.fetchall()
+                            # 🌟 ADICIONADO .strip() AQUI PARA LIMPAR ESPAÇOS OCULTOS
+                            st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
+                        else:
+                            # Se for usuário comum, cruza com a tabela de permissões
+                            cursor.execute("""
+                                SELECT m.chave 
+                                FROM permissoes_acesso p
+                                JOIN modulos m ON p.modulo_id = m.id
+                                WHERE p.usuario_id = %s
+                            """, (id_usuario_logado,))
+                            resultado = cursor.fetchall()
+                            # 🌟 ADICIONADO .strip() AQUI TAMBÉM
+                            st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
 
-                                if perfil_usuario in ['admin', 'master']:
-                                    cursor.execute("SELECT chave FROM modulos")
-                                    resultado = cursor.fetchall()
-                                    st.session_state['modulos_permitidos'] = [
-                                        linha[0].strip() for linha in resultado
-                                    ] if resultado else []
-                                else:
-                                    cursor.execute("""
-                                        SELECT m.chave
-                                        FROM permissoes_acesso p
-                                        JOIN modulos m ON p.modulo_id = m.id
-                                        WHERE p.usuario_id = %s
-                                    """, (id_usuario_logado,))
-                                    resultado = cursor.fetchall()
-                                    st.session_state['modulos_permitidos'] = [
-                                        linha[0].strip() for linha in resultado
-                                    ] if resultado else []
-
-                                st.rerun()
-                            else:
-                                st.error("❌ Usuário ou senha incorretos.")
-                    except Exception as e:
-                        st.error(f"Erro ao tentar entrar no sistema: {e}")
-                    finally:
-                        devolver_conexao(conn)
-
-        st.markdown(
-            """
-            <p class="ap-login-signature">Transformando dados em decisões.</p>
-            <p class="ap-login-footer">Apprimory 2.0 · Inteligência para Gestão</p>
-            """,
-            unsafe_allow_html=True
-        )
-
+                        # Agora sim, com tudo salvo na memória, recarregamos a tela
+                        st.rerun()
+                    else:
+                        st.error("❌ Usuário ou senha incorretos.")
+                except Exception as e:
+                    st.error(f"Erro ao tentar entrar no sistema: {e}")
+                finally:
+                    devolver_conexao(conn)
 
 # --- PAINEL DO ADMINISTRADOR MASTER ---
 elif st.session_state['perfil'] == 'master':
@@ -2588,7 +2413,7 @@ Feliz aniversário! 🥳✨"""
             </style>
             <div class="ads-mov-header">
                 <div class="ads-mov-title">🔄 Movimentações</div>
-                <div class="ads-mov-context">Operações diárias · Apprimory 2.0</div>
+                <div class="ads-mov-context">Operações diárias · AppPrimory 2.0</div>
             </div>
         """, unsafe_allow_html=True)
         
