@@ -7,6 +7,13 @@ import calendar
 import urllib.parse
 import time as time_module  # renomeado para não conflitar com datetime.time
 
+# 🔧 DIAGNÓSTICO TEMPORÁRIO: faz o processo imprimir a pilha de chamadas exata
+# no log ANTES de morrer em caso de segfault (por padrão, um segfault mata o
+# processo sem dar chance ao Python de mostrar onde estava). Depois de
+# identificarmos e corrigirmos a causa, isso pode ser removido.
+import faulthandler
+faulthandler.enable()
+
 # Força o servidor inteiro a rodar no fuso correto
 os.environ['TZ'] = 'America/Fortaleza'
 time_module.tzset()
