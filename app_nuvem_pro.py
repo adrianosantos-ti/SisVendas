@@ -4257,7 +4257,11 @@ Feliz aniversário! 🥳✨"""
                         total_e = sum(item['total'] for item in st.session_state['troca_entrada']) if st.session_state['troca_entrada'] else 0.0
                         diferenca_balanco = total_s - total_e
 
-                        st.markdown("### ⚖️ Balanço provisório")
+                        st.markdown(
+                            '<div class="ads-screen-title">⚖️ Balanço provisório</div>'
+                            '<div class="ads-screen-caption">Compare o valor enviado à consultora com o retorno recebido antes de salvar a negociação.</div>',
+                            unsafe_allow_html=True
+                        )
                         with st.container(border=True):
                             c_m1, c_m2, c_m3 = st.columns(3)
                             c_m1.metric("📤 Total de saída", f"R$ {total_s:.2f}".replace('.', ','))
@@ -4282,8 +4286,11 @@ Feliz aniversário! 🥳✨"""
                                 )
                                 st.info("A empresa ficará com saldo pendente para a consultora ao finalizar o acerto.")
 
-                            st.caption(
-                                "Ao salvar, o estoque físico será atualizado imediatamente e a negociação permanecerá em standby até o fechamento financeiro."
+                            st.markdown(
+                                '<div class="ads-panel-caption" style="margin-top:.35rem; margin-bottom:.45rem;">'
+                                'Ao salvar, o estoque físico será atualizado imediatamente e a negociação permanecerá em standby até o fechamento financeiro.'
+                                '</div>',
+                                unsafe_allow_html=True
                             )
 
                             # 4. BOTÃO DE CONFIRMAÇÃO E GRAVAÇÃO
