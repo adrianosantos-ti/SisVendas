@@ -4009,11 +4009,16 @@ Feliz aniversário! 🥳✨"""
                     
         # ==========================================
         # ABA: MOVIMENTAÇÕES (TROCAS E EMPRÉSTIMOS)
+        # ADS 2.0 PREMIUM — Conciliação comercial e de estoque
         # ==========================================
         if tab_trocas:
             with tab_trocas:
-                st.markdown('<div class="ads-screen-title">🔄 Trocas e Empréstimos</div><div class="ads-screen-caption">Controle saídas, devoluções e pendências em standby.</div>', unsafe_allow_html=True)
-                
+                st.markdown(
+                    '<div class="ads-screen-title">🔄 Central de Trocas e Empréstimos</div>'
+                    '<div class="ads-screen-caption">Registre o que sai para a consultora, o que retorna ao estoque e acompanhe o acerto em standby.</div>',
+                    unsafe_allow_html=True
+                )
+
                 # --- INICIALIZAÇÃO DOS CARRINHOS DE TROCA ---
                 if 'troca_saida' not in st.session_state:
                     st.session_state['troca_saida'] = []
@@ -4021,235 +4026,455 @@ Feliz aniversário! 🥳✨"""
                     st.session_state['troca_entrada'] = []
 
                 # 1. SELEÇÃO DA CONSULTORA (Filtra apenas tipo = 'T')
-                df_consultoras = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s AND tipo='T' ORDER BY nome", (emp_id,))
-                
+                df_consultoras = carregar_dados_cached(
+                    "SELECT id, nome FROM clientes WHERE empresa_id=%s AND tipo='T' ORDER BY nome",
+                    (emp_id,)
+                )
+
                 if not df_consultoras.empty:
-                    lista_consultoras = df_consultoras['nome'].tolist()
-                    consultora_sel = st.selectbox("👤 Selecione a Consultora:", options=lista_consultoras)
-                    id_consultora = int(df_consultoras[df_consultoras['nome'] == consultora_sel].iloc[0]['id'])
-                    
-                    st.markdown("---")
-                    
+                    with st.container(border=True):
+                        col_consultora, col_contexto = st.columns([2.2, 1])
+                        lista_consultoras = df_consultoras['nome'].tolist()
+                        consultora_sel = col_consultora.selectbox(
+                            "👤 Consultora da negociação",
+                            options=lista_consultoras,
+                            key="troca_consultora_sel"
+                        )
+                        id_consultora = int(
+                            df_consultoras[df_consultoras['nome'] == consultora_sel].iloc[0]['id']
+                        )
+                        col_contexto.markdown("**Status da operação**")
+                        col_contexto.caption("🟡 Em preparação · estoque ainda não alterado")
+
                     # Carrega catálogo de produtos para os lançamentos
-                    df_produtos = carregar_dados_cached("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
-                    
+                    df_produtos = carregar_dados_cached(
+                        "SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s ORDER BY nome",
+                        (emp_id,)
+                    )
+
                     if not df_produtos.empty:
-                        df_produtos['display'] = df_produtos.apply(lambda x: f"{x['nome']} | R$ {x['valor']:.2f} (Estoque: {int(x['quantidade'])})", axis=1)
+                        df_produtos['display'] = df_produtos.apply(
+                            lambda x: f"{x['nome']} | R$ {x['valor']:.2f} (Estoque: {int(x['quantidade'])})",
+                            axis=1
+                        )
                         opcoes_prod = df_produtos['display'].tolist()
 
-                        # 2. INTERFACE DE LANÇAMENTO (ABAS INTERNAS)
-                        aba_saida, aba_entrada = st.tabs(["📤 O que está SAINDO (Para Consultora)", "📥 O que está ENTRANDO (Retorno)"])
-                        
-                        # --- ABA DE SAÍDA ---
-                        with aba_saida:
-                            st.subheader("Produtos que vão para a Consultora")
-                            with st.form("form_add_saida", clear_on_submit=True):
-                                c1, c2, c3 = st.columns([2, 1, 1])
-                                item_sel_s = c1.selectbox("Produto:", options=opcoes_prod)
-                                qtd_s = c2.number_input("Qtd Saída:", min_value=1, step=1, value=1)
-                                
-                                idx_s = opcoes_prod.index(item_sel_s)
-                                preco_base_s = float(df_produtos.iloc[idx_s]['valor'])
-                                preco_s = c3.number_input("Valor Unit (R$):", min_value=0.0, value=preco_base_s, step=1.0, format="%.2f")
-                                
-                                if st.form_submit_button("➕ Adicionar à Saída"):
-                                    item_info = df_produtos.iloc[idx_s]
-                                    if item_info['tipo'] == 'P' and qtd_s > item_info['quantidade']:
-                                        st.error("❌ Estoque insuficiente para esta saída!")
-                                    else:
-                                        st.session_state['troca_saida'].append({
+                        # 2. DOIS LADOS DA NEGOCIAÇÃO — VISÍVEIS AO MESMO TEMPO
+                        col_saida, col_entrada = st.columns(2, gap="large")
+
+                        # --- PAINEL DE SAÍDA ---
+                        with col_saida:
+                            with st.container(border=True):
+                                st.markdown("### 📤 Saída para a Consultora")
+                                st.caption("Produtos que deixam o estoque da empresa nesta negociação.")
+
+                                with st.form("form_add_saida", clear_on_submit=True):
+                                    item_sel_s = st.selectbox(
+                                        "Produto de saída",
+                                        options=opcoes_prod,
+                                        key="troca_produto_saida"
+                                    )
+                                    c_qtd_s, c_val_s = st.columns(2)
+                                    qtd_s = c_qtd_s.number_input(
+                                        "Quantidade",
+                                        min_value=1,
+                                        step=1,
+                                        value=1,
+                                        key="troca_qtd_saida"
+                                    )
+
+                                    idx_s = opcoes_prod.index(item_sel_s)
+                                    preco_base_s = float(df_produtos.iloc[idx_s]['valor'])
+                                    preco_s = c_val_s.number_input(
+                                        "Valor unitário (R$)",
+                                        min_value=0.0,
+                                        value=preco_base_s,
+                                        step=1.0,
+                                        format="%.2f",
+                                        key="troca_valor_saida"
+                                    )
+
+                                    if st.form_submit_button(
+                                        "➕ Adicionar à saída",
+                                        type="primary",
+                                        use_container_width=True
+                                    ):
+                                        item_info = df_produtos.iloc[idx_s]
+                                        if item_info['tipo'] == 'P' and qtd_s > item_info['quantidade']:
+                                            st.error("❌ Estoque insuficiente para esta saída!")
+                                        else:
+                                            st.session_state['troca_saida'].append({
+                                                'id': int(item_info['id']),
+                                                'nome': str(item_info['nome']),
+                                                'qtd': int(qtd_s),
+                                                'unit': float(preco_s),
+                                                'total': float(qtd_s * preco_s),
+                                                'tipo': str(item_info['tipo'])
+                                            })
+                                            st.rerun()
+
+                                if st.session_state['troca_saida']:
+                                    df_saida_ui = pd.DataFrame(st.session_state['troca_saida'])[
+                                        ['nome', 'qtd', 'unit', 'total']
+                                    ].rename(columns={
+                                        'nome': 'Produto',
+                                        'qtd': 'Qtd.',
+                                        'unit': 'Valor unit.',
+                                        'total': 'Total'
+                                    })
+                                    st.dataframe(
+                                        df_saida_ui,
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        column_config={
+                                            "Valor unit.": st.column_config.NumberColumn(format="R$ %.2f"),
+                                            "Total": st.column_config.NumberColumn(format="R$ %.2f")
+                                        }
+                                    )
+                                    if st.button(
+                                        "🗑️ Limpar saída",
+                                        key="limpar_s",
+                                        use_container_width=True
+                                    ):
+                                        st.session_state['troca_saida'] = []
+                                        st.rerun()
+                                else:
+                                    st.info("Nenhum produto adicionado à saída.")
+
+                        # --- PAINEL DE ENTRADA ---
+                        with col_entrada:
+                            with st.container(border=True):
+                                st.markdown("### 📥 Retorno para a Empresa")
+                                st.caption("Produtos recebidos da consultora e que retornarão ao estoque.")
+
+                                with st.form("form_add_entrada", clear_on_submit=True):
+                                    item_sel_e = st.selectbox(
+                                        "Produto de retorno",
+                                        options=opcoes_prod,
+                                        key="troca_produto_entrada"
+                                    )
+                                    c_qtd_e, c_val_e = st.columns(2)
+                                    qtd_e = c_qtd_e.number_input(
+                                        "Quantidade",
+                                        min_value=1,
+                                        step=1,
+                                        value=1,
+                                        key="troca_qtd_entrada"
+                                    )
+
+                                    idx_e = opcoes_prod.index(item_sel_e)
+                                    preco_base_e = float(df_produtos.iloc[idx_e]['valor'])
+                                    preco_e = c_val_e.number_input(
+                                        "Valor unitário (R$)",
+                                        min_value=0.0,
+                                        value=preco_base_e,
+                                        step=1.0,
+                                        format="%.2f",
+                                        key="troca_valor_entrada"
+                                    )
+
+                                    if st.form_submit_button(
+                                        "➕ Adicionar ao retorno",
+                                        type="primary",
+                                        use_container_width=True
+                                    ):
+                                        item_info = df_produtos.iloc[idx_e]
+                                        st.session_state['troca_entrada'].append({
                                             'id': int(item_info['id']),
                                             'nome': str(item_info['nome']),
-                                            'qtd': int(qtd_s),
-                                            'unit': float(preco_s),
-                                            'total': float(qtd_s * preco_s),
+                                            'qtd': int(qtd_e),
+                                            'unit': float(preco_e),
+                                            'total': float(qtd_e * preco_e),
                                             'tipo': str(item_info['tipo'])
                                         })
                                         st.rerun()
-                            
-                            if st.session_state['troca_saida']:
-                                st.table(pd.DataFrame(st.session_state['troca_saida'])[['nome', 'qtd', 'unit', 'total']])
-                                if st.button("🗑️ Limpar Lista de Saída", key="limpar_s"):
-                                    st.session_state['troca_saida'] = []
-                                    st.rerun()
 
-                        # --- ABA DE ENTRADA ---
-                        with aba_entrada:
-                            st.subheader("Produtos que retornam para o seu estoque")
-                            with st.form("form_add_entrada", clear_on_submit=True):
-                                c1, c2, c3 = st.columns([2, 1, 1])
-                                item_sel_e = c1.selectbox("Produto:", options=opcoes_prod)
-                                qtd_e = c2.number_input("Qtd Entrada:", min_value=1, step=1, value=1)
-                                
-                                idx_e = opcoes_prod.index(item_sel_e)
-                                preco_base_e = float(df_produtos.iloc[idx_e]['valor'])
-                                preco_e = c3.number_input("Valor Unit (R$):", min_value=0.0, value=preco_base_e, step=1.0, format="%.2f")
-                                
-                                if st.form_submit_button("➕ Adicionar à Entrada"):
-                                    item_info = df_produtos.iloc[idx_e]
-                                    st.session_state['troca_entrada'].append({
-                                        'id': int(item_info['id']),
-                                        'nome': str(item_info['nome']),
-                                        'qtd': int(qtd_e),
-                                        'unit': float(preco_e),
-                                        'total': float(qtd_e * preco_e),
-                                        'tipo': str(item_info['tipo'])
+                                if st.session_state['troca_entrada']:
+                                    df_entrada_ui = pd.DataFrame(st.session_state['troca_entrada'])[
+                                        ['nome', 'qtd', 'unit', 'total']
+                                    ].rename(columns={
+                                        'nome': 'Produto',
+                                        'qtd': 'Qtd.',
+                                        'unit': 'Valor unit.',
+                                        'total': 'Total'
                                     })
-                                    st.rerun()
-                                    
-                            if st.session_state['troca_entrada']:
-                                st.table(pd.DataFrame(st.session_state['troca_entrada'])[['nome', 'qtd', 'unit', 'total']])
-                                if st.button("🗑️ Limpar Lista de Entrada", key="limpar_e"):
-                                    st.session_state['troca_entrada'] = []
-                                    st.rerun()
+                                    st.dataframe(
+                                        df_entrada_ui,
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        column_config={
+                                            "Valor unit.": st.column_config.NumberColumn(format="R$ %.2f"),
+                                            "Total": st.column_config.NumberColumn(format="R$ %.2f")
+                                        }
+                                    )
+                                    if st.button(
+                                        "🗑️ Limpar retorno",
+                                        key="limpar_e",
+                                        use_container_width=True
+                                    ):
+                                        st.session_state['troca_entrada'] = []
+                                        st.rerun()
+                                else:
+                                    st.info("Nenhum produto adicionado ao retorno.")
 
-                    st.markdown("---")
-                    st.subheader("📊 Resumo da Operação Atual")
-                    
-                    total_s = sum(item['total'] for item in st.session_state['troca_saida']) if st.session_state['troca_saida'] else 0.0
-                    total_e = sum(item['total'] for item in st.session_state['troca_entrada']) if st.session_state['troca_entrada'] else 0.0
-                    diferenca_balanco = total_s - total_e
-                    
-                    c_m1, c_m2, c_m3 = st.columns(3)
-                    c_m1.metric("Total Saída", f"R$ {total_s:.2f}".replace('.', ','))
-                    c_m2.metric("Total Entrada", f"R$ {total_e:.2f}".replace('.', ','))
-                    
-                    if diferenca_balanco == 0:
-                        c_m3.metric("Balanço Provisório", "R$ 0,00", delta="Permuta Perfeita")
-                    elif diferenca_balanco > 0:
-                        c_m3.metric("Balanço Provisório", f"R$ {diferenca_balanco:.2f}".replace('.', ','), delta="Consultora Deve", delta_color="inverse")
-                    else:
-                        c_m3.metric("Balanço Provisório", f"R$ {abs(diferenca_balanco):.2f}".replace('.', ','), delta="Empresa Deve")
+                        # 3. BALANÇO PROVISÓRIO DA NEGOCIAÇÃO
+                        total_s = sum(item['total'] for item in st.session_state['troca_saida']) if st.session_state['troca_saida'] else 0.0
+                        total_e = sum(item['total'] for item in st.session_state['troca_entrada']) if st.session_state['troca_entrada'] else 0.0
+                        diferenca_balanco = total_s - total_e
 
-                    st.info("💡 Ao salvar, as quantidades físicas serão atualizadas imediatamente no estoque e a movimentação ficará em Standby.")
+                        st.markdown("### ⚖️ Balanço provisório")
+                        with st.container(border=True):
+                            c_m1, c_m2, c_m3 = st.columns(3)
+                            c_m1.metric("📤 Total de saída", f"R$ {total_s:.2f}".replace('.', ','))
+                            c_m2.metric("📥 Total de retorno", f"R$ {total_e:.2f}".replace('.', ','))
 
-                    # 4. BOTÃO DE CONFIRMAÇÃO E GRAVAÇÃO
-                    if st.button("💾 Salvar Movimentação em Standby", type="primary", use_container_width=True):
-                        if not st.session_state['troca_saida'] and not st.session_state['troca_entrada']:
-                            st.error("Adicione pelo menos um item em uma das listas para processar.")
-                        else:
-                            try:
-                                conn = conectar_banco()
-                                cur = conn.cursor()
-                                
-                                cur.execute("""
-                                    INSERT INTO trocas (empresa_id, cliente_id, total_saida, total_entrada, diferenca, status_financeiro)
-                                    VALUES (%s, %s, %s, %s, %s, 'Em Aberto') RETURNING id
-                                """, (emp_id, id_consultora, total_s, total_e, diferenca_balanco))
-                                id_troca_gerada = cur.fetchone()[0]
-                                
-                                for item in st.session_state['troca_saida']:
-                                    cur.execute("INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'S')",
-                                                (id_troca_gerada, item['id'], item['qtd'], item['unit']))
-                                    if item['tipo'] == 'P':
-                                        cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (item['qtd'], item['id']))
-                                        
-                                for item in st.session_state['troca_entrada']:
-                                    cur.execute("INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'E')",
-                                                (id_troca_gerada, item['id'], item['qtd'], item['unit']))
-                                    if item['tipo'] == 'P':
-                                        cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id=%s", (item['qtd'], item['id']))
-                                
-                                conn.commit()
-                                devolver_conexao(conn)
-                                
-                                st.session_state['troca_saida'] = []
-                                st.session_state['troca_entrada'] = []
-                                st.success(f"Troca Nº {id_troca_gerada} enviada para o Standby! Estoque físico atualizado.")
-                                limpar_cache()
-                                st.rerun()
-                                
-                            except Exception as e:
-                                st.error(f"Erro ao processar transação: {e}")
-                                if 'conn' in locals(): devolver_conexao(conn)
+                            if diferenca_balanco == 0:
+                                c_m3.metric("⚖️ Saldo", "R$ 0,00", delta="Valores equivalentes")
+                                st.success("Permuta equilibrada: não há diferença financeira provisória.")
+                            elif diferenca_balanco > 0:
+                                c_m3.metric(
+                                    "⚠️ Saldo",
+                                    f"R$ {diferenca_balanco:.2f}".replace('.', ','),
+                                    delta="Consultora deve",
+                                    delta_color="inverse"
+                                )
+                                st.warning("A consultora ficará com saldo pendente para a empresa ao finalizar o acerto.")
+                            else:
+                                c_m3.metric(
+                                    "ℹ️ Saldo",
+                                    f"R$ {abs(diferenca_balanco):.2f}".replace('.', ','),
+                                    delta="Empresa deve"
+                                )
+                                st.info("A empresa ficará com saldo pendente para a consultora ao finalizar o acerto.")
+
+                            st.caption(
+                                "Ao salvar, o estoque físico será atualizado imediatamente e a negociação permanecerá em standby até o fechamento financeiro."
+                            )
+
+                            # 4. BOTÃO DE CONFIRMAÇÃO E GRAVAÇÃO
+                            if st.button(
+                                "💾 Salvar negociação em standby",
+                                type="primary",
+                                use_container_width=True,
+                                key="salvar_troca_standby"
+                            ):
+                                if not st.session_state['troca_saida'] and not st.session_state['troca_entrada']:
+                                    st.error("Adicione pelo menos um item em uma das listas para processar.")
+                                else:
+                                    try:
+                                        conn = conectar_banco()
+                                        cur = conn.cursor()
+
+                                        cur.execute("""
+                                            INSERT INTO trocas (empresa_id, cliente_id, total_saida, total_entrada, diferenca, status_financeiro)
+                                            VALUES (%s, %s, %s, %s, %s, 'Em Aberto') RETURNING id
+                                        """, (emp_id, id_consultora, total_s, total_e, diferenca_balanco))
+                                        id_troca_gerada = cur.fetchone()[0]
+
+                                        for item in st.session_state['troca_saida']:
+                                            cur.execute(
+                                                "INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'S')",
+                                                (id_troca_gerada, item['id'], item['qtd'], item['unit'])
+                                            )
+                                            if item['tipo'] == 'P':
+                                                cur.execute(
+                                                    "UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s",
+                                                    (item['qtd'], item['id'])
+                                                )
+
+                                        for item in st.session_state['troca_entrada']:
+                                            cur.execute(
+                                                "INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'E')",
+                                                (id_troca_gerada, item['id'], item['qtd'], item['unit'])
+                                            )
+                                            if item['tipo'] == 'P':
+                                                cur.execute(
+                                                    "UPDATE produtos SET quantidade = quantidade + %s WHERE id=%s",
+                                                    (item['qtd'], item['id'])
+                                                )
+
+                                        conn.commit()
+                                        devolver_conexao(conn)
+
+                                        st.session_state['troca_saida'] = []
+                                        st.session_state['troca_entrada'] = []
+                                        st.success(
+                                            f"Negociação Nº {id_troca_gerada} enviada para o standby! Estoque físico atualizado."
+                                        )
+                                        limpar_cache()
+                                        st.rerun()
+
+                                    except Exception as e:
+                                        st.error(f"Erro ao processar transação: {e}")
+                                        if 'conn' in locals():
+                                            devolver_conexao(conn)
 
                     # ==========================================
-                    # VISÃO APP: ACOMPANHAMENTO DE TROCAS EM STANDBY
+                    # ACOMPANHAMENTO DE NEGOCIAÇÕES EM STANDBY
                     # ==========================================
                     st.markdown("---")
-                    st.markdown('<div class="ads-screen-title">📱 Trocas em Standby</div><div class="ads-screen-caption">Acompanhe operações abertas e finalize as devoluções.</div>', unsafe_allow_html=True)
-                    
+                    st.markdown(
+                        '<div class="ads-screen-title">🕒 Negociações em Standby</div>'
+                        '<div class="ads-screen-caption">Consulte produtos em circulação, confira o saldo e finalize o acerto financeiro.</div>',
+                        unsafe_allow_html=True
+                    )
+
                     df_trocas_abertas = carregar_dados_cached("""
                         SELECT t.id, t.data_movimentacao, c.nome AS consultora, t.total_saida, t.total_entrada, t.cliente_id
-                        FROM trocas t 
-                        JOIN clientes c ON t.cliente_id = c.id 
+                        FROM trocas t
+                        JOIN clientes c ON t.cliente_id = c.id
                         WHERE t.empresa_id = %s AND t.status_financeiro = 'Em Aberto'
                         ORDER BY t.data_movimentacao DESC
                     """, (emp_id,))
-                    
+
                     if not df_trocas_abertas.empty:
-                        for idx, troca_aberta in df_trocas_abertas.iterrows():
+                        qtd_abertas = len(df_trocas_abertas)
+                        saldo_consultoras = (
+                            df_trocas_abertas['total_saida'].astype(float)
+                            - df_trocas_abertas['total_entrada'].astype(float)
+                        )
+                        c_ab1, c_ab2, c_ab3 = st.columns(3)
+                        c_ab1.metric("Operações abertas", qtd_abertas)
+                        c_ab2.metric(
+                            "A receber de consultoras",
+                            f"R$ {saldo_consultoras[saldo_consultoras > 0].sum():.2f}".replace('.', ',')
+                        )
+                        c_ab3.metric(
+                            "Saldo a favor das consultoras",
+                            f"R$ {abs(saldo_consultoras[saldo_consultoras < 0].sum()):.2f}".replace('.', ',')
+                        )
+
+                        for _, troca_aberta in df_trocas_abertas.iterrows():
                             id_t = troca_aberta['id']
                             nome_con = troca_aberta['consultora']
                             data_t = troca_aberta['data_movimentacao']
-                            
+                            t_saida = float(troca_aberta['total_saida'])
+                            t_entrada = float(troca_aberta['total_entrada'])
+                            dif = t_saida - t_entrada
+
                             with st.container(border=True):
-                                st.markdown(f"🔄 **Troca Nº {id_t} - {nome_con}**")
-                                st.caption(f"📅 Aberta em: {data_t}")
-                                
-                                with st.expander("🔍 Ver Detalhes e Finalizar Acerto", expanded=False):
+                                col_ident, col_saldo = st.columns([2.2, 1])
+                                col_ident.markdown(f"**🔄 Negociação Nº {id_t} · {nome_con}**")
+                                col_ident.caption(f"📅 Aberta em: {data_t}")
+
+                                if dif == 0:
+                                    col_saldo.success("⚖️ Equilibrada")
+                                elif dif > 0:
+                                    col_saldo.warning(f"Consultora deve R$ {dif:.2f}".replace('.', ','))
+                                else:
+                                    col_saldo.info(f"Empresa deve R$ {abs(dif):.2f}".replace('.', ','))
+
+                                with st.expander("🔍 Ver itens e finalizar acerto", expanded=False):
                                     df_itens_t = carregar_dados_cached("""
-                                        SELECT ti.quantidade, ti.valor_unitario, ti.sentido, p.nome 
-                                        FROM trocas_itens ti 
-                                        JOIN produtos p ON ti.produto_id = p.id 
+                                        SELECT ti.quantidade, ti.valor_unitario, ti.sentido, p.nome
+                                        FROM trocas_itens ti
+                                        JOIN produtos p ON ti.produto_id = p.id
                                         WHERE ti.troca_id = %s
                                     """, (id_t,))
-                                    
+
                                     if not df_itens_t.empty:
-                                        df_s = df_itens_t[df_itens_t['sentido'] == 'S']
-                                        if not df_s.empty:
-                                            st.markdown("**📤 Saíram para a Consultora:**")
-                                            for _, it in df_s.iterrows():
-                                                st.caption(f"▪️ {it['quantidade']}x {it['nome']} (R$ {it['valor_unitario']:.2f})")
-                                                
-                                        df_e = df_itens_t[df_itens_t['sentido'] == 'E']
-                                        if not df_e.empty:
-                                            st.markdown("**📥 Retornaram dela:**")
-                                            for _, it in df_e.iterrows():
-                                                st.caption(f"▪️ {it['quantidade']}x {it['nome']} (R$ {it['valor_unitario']:.2f})")
-                                    
-                                    t_saida = float(troca_aberta['total_saida'])
-                                    t_entrada = float(troca_aberta['total_entrada'])
-                                    dif = t_saida - t_entrada
-                                    
-                                    st.markdown("---")
-                                    st.markdown(f"**Balanço:** Saída R$ {t_saida:.2f} | Entrada R$ {t_entrada:.2f}".replace('.', ','))
-                                    
+                                        det_saida, det_entrada = st.columns(2)
+
+                                        with det_saida:
+                                            st.markdown("**📤 Saída para a consultora**")
+                                            df_s = df_itens_t[df_itens_t['sentido'] == 'S'].copy()
+                                            if not df_s.empty:
+                                                df_s['Total'] = df_s['quantidade'] * df_s['valor_unitario']
+                                                st.dataframe(
+                                                    df_s[['nome', 'quantidade', 'valor_unitario', 'Total']].rename(columns={
+                                                        'nome': 'Produto',
+                                                        'quantidade': 'Qtd.',
+                                                        'valor_unitario': 'Valor unit.'
+                                                    }),
+                                                    use_container_width=True,
+                                                    hide_index=True,
+                                                    column_config={
+                                                        "Valor unit.": st.column_config.NumberColumn(format="R$ %.2f"),
+                                                        "Total": st.column_config.NumberColumn(format="R$ %.2f")
+                                                    }
+                                                )
+                                            else:
+                                                st.caption("Nenhum item de saída.")
+
+                                        with det_entrada:
+                                            st.markdown("**📥 Retorno para a empresa**")
+                                            df_e = df_itens_t[df_itens_t['sentido'] == 'E'].copy()
+                                            if not df_e.empty:
+                                                df_e['Total'] = df_e['quantidade'] * df_e['valor_unitario']
+                                                st.dataframe(
+                                                    df_e[['nome', 'quantidade', 'valor_unitario', 'Total']].rename(columns={
+                                                        'nome': 'Produto',
+                                                        'quantidade': 'Qtd.',
+                                                        'valor_unitario': 'Valor unit.'
+                                                    }),
+                                                    use_container_width=True,
+                                                    hide_index=True,
+                                                    column_config={
+                                                        "Valor unit.": st.column_config.NumberColumn(format="R$ %.2f"),
+                                                        "Total": st.column_config.NumberColumn(format="R$ %.2f")
+                                                    }
+                                                )
+                                            else:
+                                                st.caption("Nenhum item de retorno.")
+
+                                    st.markdown("**Resumo financeiro**")
+                                    r1, r2, r3 = st.columns(3)
+                                    r1.metric("Saída", f"R$ {t_saida:.2f}".replace('.', ','))
+                                    r2.metric("Retorno", f"R$ {t_entrada:.2f}".replace('.', ','))
+                                    r3.metric("Diferença", f"R$ {abs(dif):.2f}".replace('.', ','))
+
                                     if dif == 0:
-                                        st.success("⚖️ Valores equivalentes (Permuta Perfeita)")
+                                        st.success("⚖️ Valores equivalentes (permuta equilibrada).")
                                     elif dif > 0:
-                                        st.warning(f"⚠️ Consultora pendente em: **R$ {dif:.2f}**".replace('.', ','))
+                                        st.warning(f"⚠️ Consultora pendente em: R$ {dif:.2f}".replace('.', ','))
                                     else:
-                                        st.info(f"ℹ️ Empresa pendente em: **R$ {abs(dif):.2f}**".replace('.', ','))
-                                        
-                                    if st.button("🏁 Finalizar e Fechar Troca", key=f"btn_fechar_{id_t}", use_container_width=True, type="primary"):
+                                        st.info(f"ℹ️ Empresa pendente em: R$ {abs(dif):.2f}".replace('.', ','))
+
+                                    if st.button(
+                                        "🏁 Finalizar e fechar negociação",
+                                        key=f"btn_fechar_{id_t}",
+                                        use_container_width=True,
+                                        type="primary"
+                                    ):
                                         try:
                                             conn = conectar_banco()
                                             cur = conn.cursor()
-                                            
+
                                             if dif > 0:
                                                 status_fin = 'Pendente Consultora'
                                                 cur.execute("""
                                                     INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
                                                     VALUES (%s, %s, 1, 1, %s, %s, 'Pendente', %s)
-                                                """, (int(id_t + 90000), int(troca_aberta['cliente_id']), float(dif), date.today().strftime("%d/%m/%Y"), emp_id))
+                                                """, (
+                                                    int(id_t + 90000),
+                                                    int(troca_aberta['cliente_id']),
+                                                    float(dif),
+                                                    date.today().strftime("%d/%m/%Y"),
+                                                    emp_id
+                                                ))
                                             else:
                                                 status_fin = 'Compensado'
-                                                
-                                            cur.execute("UPDATE trocas SET status_financeiro = %s, diferenca = %s WHERE id = %s", (status_fin, dif, id_t))
+
+                                            cur.execute(
+                                                "UPDATE trocas SET status_financeiro = %s, diferenca = %s WHERE id = %s",
+                                                (status_fin, dif, id_t)
+                                            )
                                             conn.commit()
                                             devolver_conexao(conn)
-                                            st.success(f"Troca Nº {id_t} finalizada e resolvida financeiramente!")
+                                            st.success(f"Negociação Nº {id_t} finalizada e resolvida financeiramente!")
                                             limpar_cache()
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Erro ao finalizar: {e}")
-                                            if 'conn' in locals(): devolver_conexao(conn)
+                                            if 'conn' in locals():
+                                                devolver_conexao(conn)
                     else:
-                        st.info("Não há nenhuma movimentação de troca em standby no momento.")
-                        
+                        st.info("Não há nenhuma negociação em standby no momento.")
+
                 else:
-                    st.warning("Nenhuma Consultora cadastrada no sistema. Vá em Cadastros e altere o tipo de um registro para 'Consultora'.")
+                    st.warning(
+                        "Nenhuma Consultora cadastrada no sistema. Vá em Cadastros e altere o tipo de um registro para 'Consultora'."
+                    )
 
         # ==========================================
         # ABA: AGENDA DE ATENDIMENTOS
