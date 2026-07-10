@@ -2305,7 +2305,105 @@ Feliz aniversário! 🥳✨"""
     # MÓDULO 3: MOVIMENTAÇÕES (Vendas e Compras)
     # ==========================================
     elif modulo == "🔄 Movimentações":
-        st.markdown("### 🔄 Operações Diárias")
+        # ==========================================================
+        # ADS 2.0 — PADRÃO VISUAL DO MÓDULO DE MOVIMENTAÇÕES
+        # Alteração exclusivamente de UI/UX. Nenhuma regra de negócio,
+        # consulta SQL, cálculo ou gravação foi modificada.
+        # ==========================================================
+        st.markdown("""
+            <style>
+            /* Área de trabalho compacta para desktop e celular */
+            .block-container {
+                padding-top: 1.1rem;
+                padding-bottom: 1.5rem;
+            }
+
+            /* Abas do módulo */
+            div[data-baseweb="tab-list"] {
+                gap: .20rem;
+                overflow-x: auto;
+                scrollbar-width: thin;
+            }
+            button[data-baseweb="tab"] {
+                min-height: 2.25rem;
+                padding: .35rem .65rem;
+                font-size: .82rem;
+                white-space: nowrap;
+            }
+
+            /* Formulários e textos mais compactos */
+            div[data-testid="stWidgetLabel"] p,
+            .stSelectbox label p, .stTextInput label p,
+            .stNumberInput label p, .stDateInput label p,
+            .stTimeInput label p, .stTextArea label p {
+                font-size: .79rem !important;
+                font-weight: 650 !important;
+            }
+            div[data-baseweb="select"] > div,
+            .stTextInput input, .stNumberInput input,
+            .stDateInput input, .stTimeInput input {
+                min-height: 2.25rem;
+                font-size: .84rem;
+            }
+            .stButton > button, .stLinkButton > a {
+                min-height: 2.30rem;
+                padding: .38rem .72rem;
+                font-size: .82rem;
+                font-weight: 750;
+                border-radius: 9px;
+            }
+            div[data-testid="stForm"],
+            div[data-testid="stVerticalBlockBorderWrapper"] {
+                border-radius: 12px;
+            }
+            div[data-testid="stExpander"] details {
+                border-radius: 10px;
+            }
+            div[data-testid="stMetric"] {
+                padding: .55rem .65rem;
+            }
+            div[data-testid="stMetricLabel"] p { font-size: .76rem; }
+            div[data-testid="stMetricValue"] { font-size: 1.28rem; }
+            .stDataFrame { font-size: .80rem; }
+
+            /* Componentes ADS locais */
+            .ads-mov-header {
+                display:flex; align-items:center; justify-content:space-between;
+                gap:.75rem; padding:.10rem 0 .55rem 0;
+                margin:-.20rem 0 .55rem 0;
+                border-bottom:1px solid #e5e7eb;
+            }
+            .ads-mov-title {
+                font-size:1.02rem; font-weight:850; color:#111827;
+                line-height:1.15; margin:0;
+            }
+            .ads-mov-context {
+                font-size:.73rem; color:#64748b; text-align:right;
+                line-height:1.15; white-space:nowrap;
+            }
+            .ads-screen-title {
+                font-size:.98rem; font-weight:850; color:#1f2937;
+                margin:.15rem 0 .45rem 0; line-height:1.2;
+            }
+            .ads-screen-caption {
+                font-size:.76rem; color:#64748b; margin:-.25rem 0 .55rem 0;
+            }
+
+            @media (max-width: 768px) {
+                .block-container { padding-left:.75rem; padding-right:.75rem; padding-top:.65rem; }
+                .ads-mov-header { align-items:flex-start; margin-top:0; }
+                .ads-mov-title { font-size:.92rem; }
+                .ads-mov-context { font-size:.66rem; white-space:normal; max-width:44%; }
+                button[data-baseweb="tab"] { font-size:.74rem; padding:.30rem .48rem; }
+                .stButton > button, .stLinkButton > a { font-size:.78rem; }
+                div[data-testid="stMetricValue"] { font-size:1.10rem; }
+            }
+            </style>
+            <div class="ads-mov-header">
+                <div class="ads-mov-title">🔄 Movimentações</div>
+                <div class="ads-mov-context">Operações diárias · AppPrimory 2.0</div>
+            </div>
+        """, unsafe_allow_html=True)
         
         # 1. Puxa as permissões do usuário logado (A Mochila de Chaves)
         meus_acessos = st.session_state.get('modulos_permitidos', [])
@@ -3419,7 +3517,7 @@ Feliz aniversário! 🥳✨"""
                 
         if tab_orcamentos:
             with tab_orcamentos:
-                st.subheader("📋 Orçamentos Salvos")
+                st.markdown('<div class="ads-screen-title">📋 Orçamentos Salvos</div><div class="ads-screen-caption">Consulte, edite, converta ou exclua propostas comerciais.</div>', unsafe_allow_html=True)
                 
                 # Carrega todos os orçamentos ativos da empresa
                 df_orcs = carregar_dados_cached("SELECT id, cliente_nome, data_orcamento, valor_total, carrinho_json FROM orcamentos WHERE empresa_id=%s ORDER BY id DESC", (emp_id,))
@@ -3571,7 +3669,7 @@ Feliz aniversário! 🥳✨"""
 
         if tab_compra:
             with tab_compra:
-                st.subheader("📥 Entrada de Mercadorias e Estoque")
+                st.markdown('<div class="ads-screen-title">📥 Entrada de Mercadorias</div><div class="ads-screen-caption">Registre compras e atualize o estoque de forma organizada.</div>', unsafe_allow_html=True)
                 
                 # Seletor inteligente do método de entrada
                 metodo_entrada = st.radio(
@@ -3818,7 +3916,7 @@ Feliz aniversário! 🥳✨"""
                             
         if tab_historico_compras:
             with tab_historico_compras:
-                st.subheader("📋 Consulta e Estorno de Notas de Entrada")
+                st.markdown('<div class="ads-screen-title">📋 Histórico de Entradas</div><div class="ads-screen-caption">Consulte os itens recebidos e realize estornos quando necessário.</div>', unsafe_allow_html=True)
                 
                 # Filtros na parte superior
                 c_ini, c_fim = st.columns(2)
@@ -3914,7 +4012,7 @@ Feliz aniversário! 🥳✨"""
         # ==========================================
         if tab_trocas:
             with tab_trocas:
-                st.subheader("🔄 Trocas")
+                st.markdown('<div class="ads-screen-title">🔄 Trocas e Empréstimos</div><div class="ads-screen-caption">Controle saídas, devoluções e pendências em standby.</div>', unsafe_allow_html=True)
                 
                 # --- INICIALIZAÇÃO DOS CARRINHOS DE TROCA ---
                 if 'troca_saida' not in st.session_state:
@@ -4069,7 +4167,7 @@ Feliz aniversário! 🥳✨"""
                     # VISÃO APP: ACOMPANHAMENTO DE TROCAS EM STANDBY
                     # ==========================================
                     st.markdown("---")
-                    st.subheader("📱 Visão App: Trocas em Standby (Abertas)")
+                    st.markdown('<div class="ads-screen-title">📱 Trocas em Standby</div><div class="ads-screen-caption">Acompanhe operações abertas e finalize as devoluções.</div>', unsafe_allow_html=True)
                     
                     df_trocas_abertas = carregar_dados_cached("""
                         SELECT t.id, t.data_movimentacao, c.nome AS consultora, t.total_saida, t.total_entrada, t.cliente_id
@@ -4158,7 +4256,7 @@ Feliz aniversário! 🥳✨"""
         # ==========================================
         if tab_agenda:
             with tab_agenda:
-                st.subheader("📅 Agenda de Atendimentos")
+                st.markdown('<div class="ads-screen-title">📅 Agenda de Atendimentos</div><div class="ads-screen-caption">Visualize compromissos e marque novos horários em poucos passos.</div>', unsafe_allow_html=True)
                 
                 # Criamos duas sub-abas internas para organizar o espaço no celular
                 aba_ver_agenda, aba_novo_agendamento = st.tabs(["📱 Visualizar Agenda", "➕ Marcar Horário"])
@@ -4308,7 +4406,7 @@ Feliz aniversário! 🥳✨"""
                 # SUB-ABA 2: MARCAR NOVO HORÁRIO (AGENDA DINÂMICA)
                 # ---------------------------------------------------------
                 with aba_novo_agendamento:
-                    st.markdown("### 📝 Agendar Novo Serviço")
+                    st.markdown('<div class="ads-screen-title">📝 Novo Agendamento</div><div class="ads-screen-caption">Selecione serviço, cliente, profissional, data e horário.</div>', unsafe_allow_html=True)
                     
                     # Carrega as listas necessárias. 
                     df_cli_ag = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
