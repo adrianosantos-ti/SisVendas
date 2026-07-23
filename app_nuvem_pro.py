@@ -7,6 +7,12 @@ import calendar
 import urllib.parse
 import time as time_module  # renomeado para não conflitar com datetime.time
 
+# 🔧 Captura a pilha de chamadas exata em caso de crash nativo (segfault),
+# que por padrão mata o processo sem dar chance ao Python de mostrar onde
+# estava. Sem custo perceptível em uso normal.
+import faulthandler
+faulthandler.enable()
+
 # Força o servidor inteiro a rodar no fuso correto
 os.environ['TZ'] = 'America/Fortaleza'
 time_module.tzset()
@@ -22,7 +28,6 @@ from datetime import datetime, date, time, timedelta
 from PIL import Image
 
 hoje = date.today()
-PERF_RUN_START = time_module.perf_counter()
 
 # 1. Forçamos a leitura da imagem (use o nome exato do seu arquivo PNG)
 icone = Image.open("logo.png") 
@@ -60,75 +65,53 @@ DATABASE_URL = st.secrets["DATABASE_URL"]
 # automática. Simples, robusto e compatível
 # com o PgBouncer do Supabase (porta 6543).
 # ==========================================
-def conectar_banco(tentativas=3, espera=0.7):
-    """Abre conexão com retry para reduzir falhas temporárias no Streamlit Cloud/Supabase."""
-    ultimo_erro = None
-    for tentativa in range(1, tentativas + 1):
-        try:
-            return psycopg2.connect(DATABASE_URL, connect_timeout=10)
-        except psycopg2.OperationalError as e:
-            ultimo_erro = e
-            if tentativa < tentativas:
-                time_module.sleep(espera)
-            else:
-                raise ultimo_erro
+def conectar_banco():
+    return psycopg2.connect(DATABASE_URL)
 
 def devolver_conexao(conn):
     try:
-        if conn:
-            conn.close()
+        conn.close()
     except Exception:
         pass
 
 def carregar_dados(query, params=None):
     conn = conectar_banco()
-    inicio_sql = time_module.perf_counter()
     try:
         cursor = conn.cursor()
         if params:
             cursor.execute(query, params)
         else:
             cursor.execute(query)
-
-        registrar_sql_perf(query, time_module.perf_counter() - inicio_sql, "SELECT")
-
+        
         if cursor.description:
             cols = [desc[0] for desc in cursor.description]
             df = pd.DataFrame(cursor.fetchall(), columns=cols)
         else:
             df = pd.DataFrame()
         return df
-    except Exception:
-        registrar_sql_perf(query, time_module.perf_counter() - inicio_sql, "SELECT_ERRO")
-        raise
     finally:
         devolver_conexao(conn)
-
 
 def executar_escrita(operacoes):
     """
     Executa operações de escrita no banco de forma segura.
     Garante commit ou rollback e fechamento da conexão.
-
+    
     Uso:
         def minhas_operacoes(cur):
             cur.execute("UPDATE ...", (params,))
         executar_escrita(minhas_operacoes)
     """
     conn = conectar_banco()
-    inicio_sql = time_module.perf_counter()
     try:
         cur = conn.cursor()
         operacoes(cur)
         conn.commit()
-        registrar_sql_perf("TRANSAÇÃO DE ESCRITA", time_module.perf_counter() - inicio_sql, "WRITE")
     except Exception:
         conn.rollback()
-        registrar_sql_perf("TRANSAÇÃO DE ESCRITA COM ERRO", time_module.perf_counter() - inicio_sql, "WRITE_ERRO")
         raise
     finally:
         devolver_conexao(conn)
-
 
 # ==========================================
 # CACHE DE LEITURA (reduz chamadas ao banco)
@@ -139,118 +122,8 @@ def executar_escrita(operacoes):
 def carregar_dados_cached(query, params=None):
     return carregar_dados(query, params)
 
-
 def limpar_cache():
     st.cache_data.clear()
-
-# ==========================================
-# TELEMETRIA DE PERFORMANCE (MODO DEV)
-# Mede tempo SQL, quantidade de consultas e tempo total de renderização.
-# Visível apenas para perfis admin/master.
-# ==========================================
-def obter_perf():
-    """Inicializa e retorna o painel de telemetria da execução atual."""
-    perf = st.session_state.get('_perf_run')
-    if not perf or perf.get('run_start') != PERF_RUN_START:
-        perf = {
-            'run_start': PERF_RUN_START,
-            'sql_count': 0,
-            'sql_time': 0.0,
-            'write_count': 0,
-            'write_time': 0.0,
-            'queries': []
-        }
-        st.session_state['_perf_run'] = perf
-    return perf
-
-def normalizar_sql_para_perf(query):
-    """Compacta SQL para exibição curta no painel de performance."""
-    try:
-        sql = " ".join(str(query).split())
-        return sql[:180] + ("..." if len(sql) > 180 else "")
-    except Exception:
-        return "SQL não identificado"
-
-def registrar_sql_perf(query, tempo, tipo="SELECT"):
-    """Registra uma consulta ou escrita executada durante o rerun."""
-    try:
-        perf = obter_perf()
-        if tipo == "WRITE":
-            perf['write_count'] += 1
-            perf['write_time'] += tempo
-        else:
-            perf['sql_count'] += 1
-            perf['sql_time'] += tempo
-
-        perf['queries'].append({
-            'tipo': tipo,
-            'tempo': float(tempo),
-            'sql': normalizar_sql_para_perf(query)
-        })
-    except Exception:
-        # Telemetria nunca deve quebrar o ERP.
-        pass
-
-def exibir_telemetria_performance():
-    """Mostra resumo de performance no sidebar para administradores."""
-    try:
-        if not st.session_state.get('logado'):
-            return
-        if st.session_state.get('perfil') not in ['admin', 'master']:
-            return
-
-        perf = obter_perf()
-        tempo_total = time_module.perf_counter() - PERF_RUN_START
-        tempo_banco = perf.get('sql_time', 0.0) + perf.get('write_time', 0.0)
-        tempo_render = max(tempo_total - tempo_banco, 0.0)
-
-        with st.sidebar.expander("🛠️ Performance", expanded=False):
-            st.caption(f"Tela: {st.session_state.get('menu_principal', 'N/A')}")
-            c1, c2 = st.columns(2)
-            c1.metric("Total", f"{tempo_total:.2f}s")
-            c2.metric("Banco", f"{tempo_banco:.2f}s")
-            c3, c4 = st.columns(2)
-            c3.metric("Render", f"{tempo_render:.2f}s")
-            c4.metric("SQL", f"{perf.get('sql_count', 0) + perf.get('write_count', 0)}")
-
-            consultas = sorted(perf.get('queries', []), key=lambda x: x.get('tempo', 0), reverse=True)
-            if consultas:
-                st.caption("Consultas mais lentas:")
-                for item in consultas[:5]:
-                    st.caption(f"{item.get('tipo', 'SQL')} • {item.get('tempo', 0):.2f}s")
-                    st.code(item.get('sql', ''), language="sql")
-            else:
-                st.caption("Nenhuma consulta registrada neste rerun.")
-    except Exception:
-        pass
-
-@st.cache_data(show_spinner=False)
-def carregar_imagem_base64(caminho_imagem):
-    """Lê imagens locais uma única vez por cache, evitando I/O repetido em reruns."""
-    with open(caminho_imagem, "rb") as img_file:
-        return base64.b64encode(img_file.read()).decode()
-
-def executar_comando(query, params=None):
-    """Executa um único INSERT/UPDATE/DELETE com commit, rollback e fechamento seguro."""
-    def _operacao(cur):
-        cur.execute(query, params or ())
-    executar_escrita(_operacao)
-
-def buscar_linha(query, params=None):
-    """Executa uma consulta e retorna apenas a primeira linha, sempre fechando a conexão."""
-    conn = conectar_banco()
-    inicio_sql = time_module.perf_counter()
-    try:
-        cur = conn.cursor()
-        cur.execute(query, params or ())
-        registrar_sql_perf(query, time_module.perf_counter() - inicio_sql, "SELECT")
-        return cur.fetchone()
-    except Exception:
-        registrar_sql_perf(query, time_module.perf_counter() - inicio_sql, "SELECT_ERRO")
-        raise
-    finally:
-        devolver_conexao(conn)
-
 
 # ==========================================
 # PAINEL DE AVALIAÇÕES (visível no sistema)
@@ -369,14 +242,20 @@ if "avaliacao" in params and "empresa" in params:
 
     if st.button("📨 Enviar Avaliação", type="primary", use_container_width=True):
         try:
-            executar_comando("""
+            conn = conectar_banco()
+            cur = conn.cursor()
+            cur.execute("""
                 INSERT INTO avaliacoes (empresa_id, venda_codigo, cliente_nome, nota, comentario)
                 VALUES (%s, %s, %s, %s, %s)
             """, (int(emp_aval), int(cod_aval), nome_cliente, nota_valor, comentario))
+            cur.close()
+            conn.commit()
+            devolver_conexao(conn)
             st.session_state['avaliacao_enviada'] = True
             st.rerun()
         except Exception as e:
             st.error(f"Erro ao salvar avaliação: {e}")
+            if 'conn' in locals(): devolver_conexao(conn)
 
     st.stop()
 
@@ -393,8 +272,13 @@ if 'logado' not in st.session_state:
 
 # --- TELA DE LOGIN ---
 if not st.session_state['logado']:
-    # Converte a sua logo com cache para evitar leitura repetida do arquivo a cada rerun
-    img_base64 = carregar_imagem_base64("Apprimory_logo_branca.png")
+    # 1. Função para converter a imagem e poder usar no HTML
+    def get_base64_image(caminho_imagem):
+        with open(caminho_imagem, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+
+    # 2. Converte a sua logo (verifique se o nome do arquivo está certinho)
+    img_base64 = get_base64_image("Apprimory_logo_branca.png")
 
     # --- APLICAÇÃO DAS COLUNAS INVISÍVEIS PARA CENTRALIZAR O CARD ---
     col_vazia_esq, col_login, col_vazia_dir = st.columns([1, 1.2, 1])
@@ -420,51 +304,47 @@ if not st.session_state['logado']:
             senha_input = st.text_input("Senha", type="password")
             
             if st.button("Entrar no Sistema", type="primary", use_container_width=True):
-                conn = None
-                try:
-                    conn = conectar_banco()
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
-                    usuario = cursor.fetchone()
-                    # ==========================================
-                    # CORREÇÃO NO BLOCO DE LOGIN
-                    # ==========================================
-                    if usuario:
-                        st.session_state['logado'] = True
-                        st.session_state['usuario_id'] = usuario[0]
-                        st.session_state['usuario_nome'] = usuario[1]
-                        st.session_state['perfil'] = usuario[2]
-                        st.session_state['empresa_id'] = usuario[3]
+                conn = conectar_banco()
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, nome, perfil, empresa_id FROM usuarios WHERE login = %s AND senha = %s", (login_input, senha_input))
+                usuario = cursor.fetchone()
+                # ==========================================
+                # CORREÇÃO NO BLOCO DE LOGIN
+                # ==========================================
+                if usuario:
+                    st.session_state['logado'] = True
+                    st.session_state['usuario_id'] = usuario[0]
+                    st.session_state['usuario_nome'] = usuario[1]
+                    st.session_state['perfil'] = usuario[2]
+                    st.session_state['empresa_id'] = usuario[3]
+    
+                    perfil_usuario = usuario[2]
+                    id_usuario_logado = usuario[0]
 
-                        perfil_usuario = usuario[2]
-                        id_usuario_logado = usuario[0]
-
-                        if perfil_usuario in ['admin', 'master']:
-                            # Se for admin/master, puxa todas as chaves existentes no sistema
-                            cursor.execute("SELECT chave FROM modulos")
-                            resultado = cursor.fetchall()
-                            # 🌟 ADICIONADO .strip() AQUI PARA LIMPAR ESPAÇOS OCULTOS
-                            st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
-                        else:
-                            # Se for usuário comum, cruza com a tabela de permissões
-                            cursor.execute("""
-                                SELECT m.chave 
-                                FROM permissoes_acesso p
-                                JOIN modulos m ON p.modulo_id = m.id
-                                WHERE p.usuario_id = %s
-                            """, (id_usuario_logado,))
-                            resultado = cursor.fetchall()
-                            # 🌟 ADICIONADO .strip() AQUI TAMBÉM
-                            st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
-
-                        # Agora sim, com tudo salvo na memória, recarregamos a tela
-                        st.rerun()
+                    if perfil_usuario in ['admin', 'master']:
+                        # Se for admin/master, puxa todas as chaves existentes no sistema
+                        cursor.execute("SELECT chave FROM modulos")
+                        resultado = cursor.fetchall()
+                        # 🌟 ADICIONADO .strip() AQUI PARA LIMPAR ESPAÇOS OCULTOS
+                        st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
                     else:
-                        st.error("❌ Usuário ou senha incorretos.")
-                except Exception as e:
-                    st.error(f"Erro ao tentar entrar no sistema: {e}")
-                finally:
+                        # Se for usuário comum, cruza com a tabela de permissões
+                        cursor.execute("""
+                            SELECT m.chave 
+                            FROM permissoes_acesso p
+                            JOIN modulos m ON p.modulo_id = m.id
+                            WHERE p.usuario_id = %s
+                        """, (id_usuario_logado,))
+                        resultado = cursor.fetchall()
+                        # 🌟 ADICIONADO .strip() AQUI TAMBÉM
+                        st.session_state['modulos_permitidos'] = [linha[0].strip() for linha in resultado] if resultado else []
+
+                    # Agora sim, com tudo salvo na memória, fechamos o banco e recarregamos a tela
                     devolver_conexao(conn)
+                    st.rerun()
+                else:
+                    devolver_conexao(conn)
+                    st.error("❌ Usuário ou senha incorretos.")
 
 # --- PAINEL DO ADMINISTRADOR MASTER ---
 elif st.session_state['perfil'] == 'master':
@@ -485,10 +365,13 @@ elif st.session_state['perfil'] == 'master':
             logo_emp = st.text_input("URL da Logomarca (Opcional)", placeholder="Ex: https://github.com/.../logo.png?raw=true")
             
             if st.form_submit_button("Salvar"):
-                executar_comando(
+                conn = conectar_banco()
+                conn.cursor().execute(
                     "INSERT INTO empresas (nome, cnpj, logo_url) VALUES (%s, %s, %s)", 
                     (nome_emp, cnpj_emp, logo_emp)
                 )
+                conn.commit()
+                devolver_conexao(conn)
                 st.success(f"Empresa '{nome_emp}' cadastrada!")
                 limpar_cache()
                 st.rerun()
@@ -521,10 +404,13 @@ elif st.session_state['perfil'] == 'master':
                         e_logo = st.text_input("URL da Logomarca", value=val_logo, placeholder="Ex: https://github.com/.../logo.png?raw=true")
                         
                         if st.form_submit_button("💾 Salvar Alterações"):
-                            executar_comando(
+                            conn = conectar_banco()
+                            conn.cursor().execute(
                                 "UPDATE empresas SET nome=%s, cnpj=%s, logo_url=%s WHERE id=%s", 
                                 (e_nome, e_cnpj, e_logo, int(emp_selecionada))
                             )
+                            conn.commit()
+                            devolver_conexao(conn)
                             
                             st.success("✅ Cadastro da empresa atualizado com sucesso!")
                             limpar_cache()
@@ -558,10 +444,13 @@ elif st.session_state['perfil'] == 'master':
             perfil_usu = st.selectbox("Perfil de Acesso", ["comum", "admin"], help="Admins têm acesso a todas as telas automaticamente. Comuns precisam de permissões específicas.")
             
             if st.form_submit_button("Criar"):
-                executar_comando(
+                conn = conectar_banco()
+                conn.cursor().execute(
                     "INSERT INTO usuarios (nome, login, senha, empresa_id, perfil) VALUES (%s,%s,%s,%s,%s)", 
                     (nome_usu, login_usu, senha_usu, dict_empresas[emp_usu], perfil_usu)
                 )
+                conn.commit()
+                devolver_conexao(conn)
                 st.success(f"Usuário '{nome_usu}' criado com sucesso! Agora configure as permissões dele na aba abaixo.")
                 limpar_cache()
                 st.rerun()
@@ -617,19 +506,22 @@ elif st.session_state['perfil'] == 'master':
                                     selecoes[mod['id']] = st.checkbox(f"TELA: {mod['nome']}", value=tem_acesso)
                                 
                                 if st.form_submit_button("💾 Salvar Permissões"):
-                                    def _salvar_permissoes(cur):
-                                        # Limpa as permissões antigas do usuário para regravar do zero
-                                        cur.execute("DELETE FROM permissoes_acesso WHERE usuario_id = %s", (int(usu_perm_sel),))
-
-                                        # Grava apenas os checkboxes marcados
-                                        for mod_id, esta_marcado in selecoes.items():
-                                            if esta_marcado:
-                                                cur.execute(
-                                                    "INSERT INTO permissoes_acesso (usuario_id, modulo_id) VALUES (%s, %s)", 
-                                                    (int(usu_perm_sel), int(mod_id))
-                                                )
-
-                                    executar_escrita(_salvar_permissoes)
+                                    conn = conectar_banco()
+                                    cursor = conn.cursor()
+                                    
+                                    # Limpa as permissões antigas do usuário para regravar do zero
+                                    cursor.execute("DELETE FROM permissoes_acesso WHERE usuario_id = %s", (int(usu_perm_sel),))
+                                    
+                                    # Grava apenas os checkboxes marcados
+                                    for mod_id, esta_marcado in selecoes.items():
+                                        if esta_marcado:
+                                            cursor.execute(
+                                                "INSERT INTO permissoes_acesso (usuario_id, modulo_id) VALUES (%s, %s)", 
+                                                (int(usu_perm_sel), int(mod_id))
+                                            )
+                                    
+                                    conn.commit()
+                                    devolver_conexao(conn)
                                     st.success(f"Permissões de {linha_usu['nome']} atualizadas com sucesso!")
             else:
                 st.info("Cadastre um usuário primeiro.")
@@ -653,10 +545,13 @@ elif st.session_state['perfil'] == 'master':
                             e_emp = st.selectbox("Empresa", options=lista_nomes_empresas, index=idx_emp)
                             
                             if st.form_submit_button("💾 Salvar Alterações"):
-                                executar_comando(
+                                conn = conectar_banco()
+                                conn.cursor().execute(
                                     "UPDATE usuarios SET nome=%s, login=%s, empresa_id=%s, perfil=%s WHERE id=%s", 
                                     (e_nome, e_login, dict_empresas[e_emp], e_perfil, int(usu_ed_sel))
                                 )
+                                conn.commit()
+                                devolver_conexao(conn)
                                 st.success("✅ Usuário atualizado com sucesso!")
                                 limpar_cache()
                                 st.rerun()
@@ -668,7 +563,10 @@ elif st.session_state['perfil'] == 'master':
                     with st.form("f_exclui_usuario"):
                         st.warning("⚠️ O acesso será apagado permanentemente.")
                         if st.form_submit_button("🚨 Confirmar Exclusão"):
-                            executar_comando("DELETE FROM usuarios WHERE id=%s", (int(usu_del_sel),))
+                            conn = conectar_banco()
+                            conn.cursor().execute("DELETE FROM usuarios WHERE id=%s", (int(usu_del_sel),))
+                            conn.commit()
+                            devolver_conexao(conn)
                             st.success("🗑️ Usuário excluído!")
                             limpar_cache()
                             st.rerun()
@@ -685,7 +583,10 @@ elif st.session_state['perfil'] == 'master':
             usu_sel = st.selectbox("Selecione o Usuário", options=list(dict_todos_usu.keys()))
             nova_sen = st.text_input("Nova Senha", type="password")
             if st.button("Confirmar Alteração"):
-                executar_comando("UPDATE usuarios SET senha = %s WHERE id = %s", (nova_sen, dict_todos_usu[usu_sel]))
+                conn = conectar_banco()
+                conn.cursor().execute("UPDATE usuarios SET senha = %s WHERE id = %s", (nova_sen, dict_todos_usu[usu_sel]))
+                conn.commit()
+                devolver_conexao(conn)
                 st.success("Senha alterada!")
         else:
             st.info("Nenhum usuário para resetar a senha.")
@@ -751,12 +652,15 @@ else:
             s_atu = st.text_input("Atual", type="password")
             s_nov = st.text_input("Nova", type="password")
             if st.form_submit_button("Mudar"):
-                senha_atual = buscar_linha("SELECT senha FROM usuarios WHERE id=%s", (st.session_state['usuario_id'],))
-                if senha_atual and senha_atual[0] == s_atu:
-                    executar_comando("UPDATE usuarios SET senha=%s WHERE id=%s", (s_nov, st.session_state['usuario_id']))
+                conn = conectar_banco()
+                cursor = conn.cursor()
+                cursor.execute("SELECT senha FROM usuarios WHERE id=%s",(st.session_state['usuario_id'],))
+                if cursor.fetchone()[0] == s_atu:
+                    cursor.execute("UPDATE usuarios SET senha=%s WHERE id=%s",(s_nov, st.session_state['usuario_id']))
+                    conn.commit()
                     st.success("OK!")
-                else:
-                    st.error("Incorreta")
+                else: st.error("Incorreta")
+                devolver_conexao(conn)
 
     if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
         st.session_state.clear()
@@ -789,13 +693,15 @@ else:
             logo_html = f"<img src='{logo_customizada}' width='85' style='object-fit: contain; border-radius: 4px;'>"
         elif os.path.exists(logo_customizada):
             # Se for um caminho de ficheiro local no servidor, converte para Base64
-            img_base64 = carregar_imagem_base64(logo_customizada)
-            logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
+            with open(logo_customizada, "rb") as img_file:
+                img_base64 = base64.b64encode(img_file.read()).decode()
+                logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
                 
     # Cenário B: Não tem logo cadastrada, tenta usar a logo padrão do sistema ('logo.png')
     elif os.path.exists("logo.png"):
-        img_base64 = carregar_imagem_base64("logo.png")
-        logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
+        with open("logo.png", "rb") as img_file:
+            img_base64 = base64.b64encode(img_file.read()).decode()
+            logo_html = f"<img src='data:image/png;base64,{img_base64}' width='85' style='object-fit: contain;'>"
 
     # Renderiza o painel com Flexbox (fonte reduzida para 28px e gap aumentado para 20px)
     st.markdown(
@@ -822,7 +728,12 @@ else:
         # ==========================================
         st.subheader("🔍 Período de Análise")
         op_per = ["Mês Atual", "Hoje", "Últimos 7 Dias", "Últimos 15 Dias", "Últimos 30 Dias", "Mês Anterior", "Todo o Período", "Personalizado"]
-        per_sel = st.selectbox("Filtrar:", op_per)
+        # 🔧 MELHORIA UX: pills em vez de selectbox — no celular, evita abrir
+        # dropdown + rolar 8 opções + fechar para trocar o período (ação mais
+        # usada da tela). Mantém o mesmo valor default de antes ("Mês Atual").
+        per_sel = st.pills("Filtrar:", op_per, default="Mês Atual")
+        if per_sel is None:
+            per_sel = "Mês Atual"
         
         
         hoje = date.today()
@@ -850,179 +761,216 @@ else:
             d_fim = c2.date_input("Fim", value=hoje, format="DD/MM/YYYY")
 
         # ==========================================
+        # 1.5 FAIXA DE ALERTA DE ESTOQUE (sempre visível)
+        # ==========================================
+        # 🔧 MELHORIA UX: antes, só descobria estoque zerado/crítico clicando na
+        # aba "Alertas". Agora aparece resumido aqui em cima, antes de qualquer
+        # clique. A query já é cacheada (carregar_dados_cached), então repetir
+        # a chamada aqui e na aba Alertas não gera custo extra de banco.
+        df_estoque_resumo = carregar_dados_cached("""
+            SELECT quantidade AS "Qtd Atual"
+            FROM produtos
+            WHERE empresa_id = %s AND tipo='P'
+        """, (emp_id,))
+
+        if not df_estoque_resumo.empty:
+            limite_critico_resumo = 5
+            qtd_zerados_resumo = len(df_estoque_resumo[df_estoque_resumo['Qtd Atual'] == 0])
+            qtd_criticos_resumo = len(df_estoque_resumo[(df_estoque_resumo['Qtd Atual'] > 0) & (df_estoque_resumo['Qtd Atual'] <= limite_critico_resumo)])
+            total_atencao_resumo = qtd_zerados_resumo + qtd_criticos_resumo
+
+            if total_atencao_resumo > 0:
+                partes_alerta = []
+                if qtd_zerados_resumo > 0:
+                    partes_alerta.append(f"{qtd_zerados_resumo} produto(s) com estoque ZERADO")
+                if qtd_criticos_resumo > 0:
+                    partes_alerta.append(f"{qtd_criticos_resumo} produto(s) com estoque crítico")
+                st.error(f"🚨 {' e '.join(partes_alerta)} — veja detalhes na aba **🚨 Alertas**", icon="🚨")
+
+        # ==========================================
         # 2. ABAS DE ANÁLISE
         # ==========================================
         aba_dash, aba_crm, aba_hist, aba_alertas, aba_app = st.tabs(["📈 Análise de Vendas", "🎯 CRM e Clientes", "📋 Histórico", "🚨 Alertas", "📱 Visão App"])
         
         # --- ABA 1: DASHBOARD DE VENDAS (Seu código original adaptado) ---
         with aba_dash:
-            query_dash = """
-                SELECT v.codigo_venda, v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria
-                FROM vendas v
-                JOIN produtos p ON v.produto_id = p.id
-                WHERE v.empresa_id = %s
-                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') >= %s
-                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') <= %s
-            """
-            df_dash = carregar_dados_cached(query_dash, (emp_id, d_ini, d_fim))
+            query_dash = "SELECT v.codigo_venda, v.data_venda, v.valor_total, v.quantidade, p.nome AS produto, p.categoria FROM vendas v JOIN produtos p ON v.produto_id = p.id WHERE v.empresa_id = %s"
+            df_dash = carregar_dados_cached(query_dash, (emp_id,))
             
             if not df_dash.empty and d_ini and d_fim:
                 df_dash['Data_Obj'] = pd.to_datetime(df_dash['data_venda'], format='%d/%m/%Y', errors='coerce').dt.date
+                
+                # Aplica o filtro global
+                df_dash = df_dash[(df_dash['Data_Obj'] >= d_ini) & (df_dash['Data_Obj'] <= d_fim)]
                 
                 if not df_dash.empty:
                     col1, col2, col3 = st.columns(3)
                     fat = df_dash['valor_total'].sum()
                     qtd_vendas_reais = df_dash['codigo_venda'].nunique()
                     ticket_medio = fat / qtd_vendas_reais if qtd_vendas_reais > 0 else 0
-                    
-                    col1.metric("Faturamento", f"R$ {fat:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
-                    col2.metric("Vendas Fechadas", qtd_vendas_reais)
-                    col3.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","))
+
+                    # 🔧 MELHORIA UX: calcula o período anterior de mesmo tamanho
+                    # (ex: se o filtro é "Últimos 7 dias", compara com os 7 dias
+                    # anteriores a esses) para mostrar se o número está melhorando
+                    # ou piorando — hoje o KPI só mostrava o valor absoluto, sem
+                    # dizer se é bom ou ruim sem o usuário decorar o número de antes.
+                    # "Todo o Período" fica sem comparação (não existe "anterior").
+                    delta_fat_str, delta_vendas_str, delta_ticket_str = None, None, None
+                    if per_sel != "Todo o Período":
+                        dias_periodo = (d_fim - d_ini).days
+                        d_ini_ant = d_ini - timedelta(days=dias_periodo + 1)
+                        d_fim_ant = d_ini - timedelta(days=1)
+                        df_dash_ant = df_dash_completo_periodo_anterior = None
+                        # Reaproveita o df_dash já carregado (antes do filtro de
+                        # data) para não fazer nova query — só refiltra em memória.
+                        df_dash_bruto = carregar_dados_cached(query_dash, (emp_id,))
+                        df_dash_bruto['Data_Obj'] = pd.to_datetime(df_dash_bruto['data_venda'], format='%d/%m/%Y', errors='coerce').dt.date
+                        df_dash_ant = df_dash_bruto[(df_dash_bruto['Data_Obj'] >= d_ini_ant) & (df_dash_bruto['Data_Obj'] <= d_fim_ant)]
+
+                        fat_ant = df_dash_ant['valor_total'].sum()
+                        qtd_vendas_ant = df_dash_ant['codigo_venda'].nunique()
+                        ticket_ant = fat_ant / qtd_vendas_ant if qtd_vendas_ant > 0 else 0
+
+                        if fat_ant > 0:
+                            delta_fat_str = f"{((fat - fat_ant) / fat_ant * 100):.0f}% vs. período anterior"
+                        if qtd_vendas_ant > 0:
+                            delta_vendas_str = f"{((qtd_vendas_reais - qtd_vendas_ant) / qtd_vendas_ant * 100):.0f}% vs. período anterior"
+                        if ticket_ant > 0:
+                            delta_ticket_str = f"{((ticket_medio - ticket_ant) / ticket_ant * 100):.0f}% vs. período anterior"
+
+                    col1.metric("Faturamento", f"R$ {fat:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","), delta=delta_fat_str)
+                    col2.metric("Vendas Fechadas", qtd_vendas_reais, delta=delta_vendas_str)
+                    col3.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}".replace(".", "v").replace(",", ".").replace("v", ","), delta=delta_ticket_str)
                     
                     st.markdown("---")
                     
-                    # FEATURE 002 — Curva de Vendas por Dia
-                    # Objetivo: exibir somente dias com vendas, sem horários no eixo X,
-                    # mantendo linha + marcadores para facilitar a leitura de picos e quedas.
-                    df_fat_dia = (
-                        df_dash.groupby('Data_Obj')['valor_total']
-                        .sum()
-                        .reset_index()
-                        .dropna(subset=['Data_Obj'])
-                        .sort_values('Data_Obj')
+                    df_fat_dia = df_dash.groupby('Data_Obj')['valor_total'].sum().reset_index()
+                    st.plotly_chart(px.line(df_fat_dia, x='Data_Obj', y='valor_total', title="Curva de Vendas por Dia", template="plotly_white"), use_container_width=True)
+                    
+                    # 🔧 Mapa de cores único por categoria, usado nos dois gráficos
+                    # (ranking de produtos e pizza) — assim a mesma categoria (ex:
+                    # "Maquiagem") aparece sempre com a mesma cor nos dois, deixando
+                    # a leitura cruzada entre os gráficos mais fácil. Construído
+                    # explicitamente (em vez de deixar o Plotly escolher sozinho)
+                    # para garantir que a correspondência nunca desalinhe.
+                    df_cat_sum = df_dash.groupby('categoria')['valor_total'].sum().reset_index()
+                    paleta_categorias = px.colors.qualitative.Bold
+                    mapa_cor_categoria = {
+                        cat: paleta_categorias[i % len(paleta_categorias)]
+                        for i, cat in enumerate(df_cat_sum['categoria'])
+                    }
+                    
+                    # 🔧 Seletor de quantidade: dá à consultora a opção de ver um
+                    # recorte rápido (Top 5/10) ou o panorama completo do período.
+                    opcao_qtd_top = st.radio(
+                        "Produtos mais vendidos — quantos exibir?",
+                        ["Top 5", "Top 10", "Todos"], horizontal=True, key="radio_top_produtos"
                     )
-
-                    if not df_fat_dia.empty:
-                        df_fat_dia['Dia'] = df_fat_dia['Data_Obj'].apply(lambda d: d.strftime('%d/%m/%Y'))
-
-                        fig_fat_dia = px.line(
-                            df_fat_dia,
-                            x='Dia',
-                            y='valor_total',
-                            markers=True,
-                            title="Curva de Vendas por Dia",
-                            template="plotly_white"
-                        )
-
-                        fig_fat_dia.update_traces(
-                            mode="lines+markers",
-                            line=dict(width=3),
-                            marker=dict(size=8),
-                            hovertemplate=(
-                                "<b>%{x}</b><br>"
-                                "Faturamento: R$ %{y:,.2f}"
-                                "<extra></extra>"
-                            )
-                        )
-
-                        fig_fat_dia.update_xaxes(
-                            type='category',
-                            title_text="Dia",
-                            tickangle=-35
-                        )
-
-                        fig_fat_dia.update_yaxes(
-                            title_text="Faturamento (R$)"
-                        )
-
-                        fig_fat_dia.update_layout(
-                            height=420,
-                            margin=dict(l=40, r=40, t=60, b=80)
-                        )
-
-                        st.plotly_chart(fig_fat_dia, use_container_width=True)
-                    else:
-                        st.info("Sem vendas suficientes para gerar a curva diária.")
+                    mapa_qtd_top = {"Top 5": 5, "Top 10": 10, "Todos": None}
+                    mapa_titulo_top = {
+                        "Top 5": "🏆 Top 5 Produtos Mais Vendidos",
+                        "Top 10": "🏆 Top 10 Produtos Mais Vendidos",
+                        "Todos": "🏆 Todos os Produtos Vendidos no Período"
+                    }
+                    qtd_top_selecionada = mapa_qtd_top[opcao_qtd_top]
                     
                     c1, c2 = st.columns(2)
-
-                    # FEATURE 001.1 — Ranking Inteligente de Produtos
-                    # Objetivo: nomes completos, ranking configurável, barras mais finas e tooltip gerencial.
-                    with c1:
-                        opcoes_ranking_produtos = ["Top 5", "Top 10", "Top 20", "Todos"]
-                        ranking_produtos_sel = st.radio(
-                            "🏆 Ranking de produtos:",
-                            options=opcoes_ranking_produtos,
-                            index=0,
-                            horizontal=True,
-                            key="feature0011_ranking_produtos"
-                        )
-
-                        df_ranking_produtos = (
-                            df_dash.groupby('produto')
-                            .agg(
-                                quantidade=('quantidade', 'sum'),
-                                faturamento=('valor_total', 'sum')
-                            )
-                            .reset_index()
-                            .sort_values('quantidade', ascending=False)
-                        )
-
-                        total_qtd_ranking = df_ranking_produtos['quantidade'].sum()
-                        df_ranking_produtos['participacao_pct'] = (
-                            df_ranking_produtos['quantidade'] / total_qtd_ranking * 100
-                        ) if total_qtd_ranking else 0
-                        df_ranking_produtos['ranking'] = range(1, len(df_ranking_produtos) + 1)
-
-                        if ranking_produtos_sel == "Todos":
-                            df_top = df_ranking_produtos.copy()
-                            titulo_ranking = "🏆 Ranking Completo dos Produtos Mais Vendidos"
-                        else:
-                            qtd_top = int(ranking_produtos_sel.replace("Top ", ""))
-                            df_top = df_ranking_produtos.head(qtd_top).copy()
-                            titulo_ranking = f"🏆 {ranking_produtos_sel} Produtos Mais Vendidos"
-
-                        df_top = df_top.sort_values('quantidade', ascending=True)
-                        df_top['faturamento_fmt'] = df_top['faturamento'].apply(
-                            lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                        )
-                        df_top['participacao_fmt'] = df_top['participacao_pct'].apply(lambda x: f"{x:.1f}%")
-                        df_top['rotulo_barra'] = df_top.apply(
-                            lambda row: f"{int(row['quantidade'])} • {row['participacao_fmt']}",
-                            axis=1
-                        )
-
-                        altura_ranking = max(420, len(df_top) * 42)
-                        max_qtd_ranking = df_top['quantidade'].max() if not df_top.empty else 0
-
-                        fig_top = px.bar(
-                            df_top,
-                            x='quantidade',
-                            y='produto',
-                            orientation='h',
-                            text='rotulo_barra',
-                            title=titulo_ranking,
-                            custom_data=['ranking', 'faturamento_fmt', 'participacao_fmt']
-                        )
-
-                        fig_top.update_traces(
-                            width=0.42,
-                            textposition='outside',
-                            cliponaxis=False,
-                            hovertemplate=(
-                                "<b>%{y}</b><br><br>"
-                                "Ranking: #%{customdata[0]}<br>"
-                                "Quantidade vendida: %{x}<br>"
-                                "Faturamento: %{customdata[1]}<br>"
-                                "Participação: %{customdata[2]}"
-                                "<extra></extra>"
-                            )
-                        )
-
-                        fig_top.update_layout(
-                            xaxis_title="Quantidade vendida",
-                            yaxis_title="",
-                            height=altura_ranking,
-                            margin=dict(l=320, r=80, t=70, b=40),
-                            showlegend=False
-                        )
-
-                        fig_top.update_xaxes(range=[0, max_qtd_ranking * 1.20 if max_qtd_ranking else 1])
-                        fig_top.update_yaxes(automargin=True)
-
-                        st.plotly_chart(fig_top, use_container_width=True)
-
-                    fig_cat = px.pie(df_dash.groupby('categoria')['valor_total'].sum().reset_index(), values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria", color_discrete_sequence=px.colors.qualitative.Bold)
+                    df_top_base = df_dash.groupby('produto')['quantidade'].sum().reset_index().sort_values('quantidade', ascending=False)
+                    if qtd_top_selecionada:
+                        df_top_base = df_top_base.head(qtd_top_selecionada)
+                    # 🔧 CORREÇÃO: em gráfico de barra horizontal do Plotly, a primeira
+                    # linha do DataFrame vira a barra do TOPO. Para o mais vendido
+                    # aparecer em cima (formato ranking, do maior para o menor
+                    # descendo), a ordenação aqui precisa ser descendente.
+                    df_top = df_top_base.sort_values('quantidade', ascending=False)
+                    
+                    # Traz a categoria de cada produto (para colorir a barra igual
+                    # à fatia da pizza correspondente).
+                    df_cat_por_produto = df_dash[['produto', 'categoria']].drop_duplicates(subset='produto')
+                    df_top = df_top.merge(df_cat_por_produto, on='produto', how='left')
+                    
+                    # 🔧 CORREÇÃO: em vez de cortar o nome em 22 caracteres com "...",
+                    # quebra em várias linhas (respeitando palavras inteiras). Isso é
+                    # essencial para produtos parecidos (ex: mesma base, tonalidades
+                    # diferentes), onde a diferença geralmente fica bem no final do
+                    # nome — cortar ali tornava produtos distintos indistinguíveis.
+                    def _quebrar_nome_produto(texto, largura=20):
+                        palavras = str(texto).split()
+                        linhas, linha_atual = [], ""
+                        for palavra in palavras:
+                            candidato = (linha_atual + " " + palavra).strip()
+                            if len(candidato) <= largura:
+                                linha_atual = candidato
+                            else:
+                                if linha_atual:
+                                    linhas.append(linha_atual)
+                                linha_atual = palavra
+                        if linha_atual:
+                            linhas.append(linha_atual)
+                        return "<br>".join(linhas)
+                    
+                    df_top['produto_curto'] = df_top['produto'].apply(_quebrar_nome_produto)
+                    
+                    # 🔧 Visual: agora colorido por CATEGORIA (mesmo mapa da pizza ao
+                    # lado), em vez de uma cor aleatória por produto — assim dá pra
+                    # ver de relance a que categoria cada item do ranking pertence.
+                    fig_top = px.bar(
+                        df_top, x='quantidade', y='produto', orientation='h', text='quantidade',
+                        color='categoria', color_discrete_map=mapa_cor_categoria,
+                        title=mapa_titulo_top[opcao_qtd_top], template="plotly_white"
+                    )
+                    fig_top.update_traces(
+                        texttemplate='%{text}', textposition='outside',
+                        textfont=dict(size=14, color='#333333'),
+                        marker_line_width=0
+                    )
+                    # automargin=True: o Plotly recalcula o espaço reservado para os
+                    # rótulos do eixo Y automaticamente, já que agora eles ocupam
+                    # mais de uma linha e teriam sido cortados pela margem fixa.
+                    # 🔧 CORREÇÃO: ao colorir por categoria, o Plotly passa a agrupar
+                    # as barras por cor (todas da mesma categoria juntas), quebrando
+                    # a ordem de ranking por quantidade. categoryorder='array' +
+                    # categoryarray força a posição de cada barra a seguir uma ordem
+                    # explícita — mas esse modo posiciona o PRIMEIRO item da lista
+                    # embaixo (e o último em cima), o oposto do comportamento
+                    # automático que tínhamos antes. Por isso a lista aqui vai do
+                    # menos vendido para o mais vendido: o mais vendido, sendo o
+                    # último da lista, fica no topo do gráfico.
+                    ordem_ranking_invertida = df_top.sort_values('quantidade', ascending=True)['produto'].tolist()
+                    fig_top.update_yaxes(
+                        tickmode='array', tickvals=df_top['produto'], ticktext=df_top['produto_curto'], title="", automargin=True,
+                        categoryorder='array', categoryarray=ordem_ranking_invertida
+                    )
+                    # 🔧 CORREÇÃO: no celular a tela é estreita e o número (que fica
+                    # fora da barra) estava sendo cortado na borda direita. Margem
+                    # fixa em pixels não escala bem com telas estreitas — a solução
+                    # confiável é abrir espaço dentro do próprio eixo (25% além do
+                    # maior valor), reservando espaço proporcional ao tamanho do
+                    # gráfico, não em pixels fixos.
+                    maior_valor_x = df_top['quantidade'].max()
+                    fig_top.update_xaxes(showgrid=False, title="", range=[0, maior_valor_x * 1.25])
+                    # 🔧 Altura dinâmica: com "Todos" o número de barras varia bastante
+                    # (pode ser 6 ou 60 produtos), então a altura fixa de antes ou
+                    # espremia tudo ou desperdiçava espaço. Calcula com base na
+                    # quantidade real de itens, com um teto para não ficar absurdo.
+                    altura_dinamica = min(max(420, 55 * len(df_top) + 100), 1400)
+                    fig_top.update_layout(
+                        # 🔧 Sem legenda aqui: a pizza ao lado já mostra qual cor é
+                        # qual categoria, então repetir a legenda no ranking só
+                        # ocupava espaço e ficava apertada.
+                        showlegend=False,
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        height=altura_dinamica,
+                        margin=dict(l=10, r=30, t=50, b=10)
+                    )
+                    c1.plotly_chart(fig_top, use_container_width=True)
+                    
+                    # 🔧 Reaproveita df_cat_sum e mapa_cor_categoria já calculados
+                    # acima — color_discrete_map explícito garante a cor exata,
+                    # independentemente de qualquer reordenação interna que o
+                    # Plotly faça para exibição (ex: por percentual das fatias).
+                    fig_cat = px.pie(df_cat_sum, values='valor_total', names='categoria', hole=0.4, title="Vendas por Categoria", color='categoria', color_discrete_map=mapa_cor_categoria)
                     c2.plotly_chart(fig_cat, use_container_width=True)
                 else: 
                     st.warning(f"Sem vendas registradas no período de {d_ini.strftime('%d/%m/%Y')} a {d_fim.strftime('%d/%m/%Y')}.")
@@ -1122,7 +1070,14 @@ Feliz aniversário! 🥳✨"""
                         return None
                     
                     df_nivers['Ação'] = df_nivers.apply(lambda row: gerar_link_wpp(row['telefone'], row['nome']), axis=1)
+                    # 🔧 CORREÇÃO DE SEGFAULT: dtype 'string' explícito. Sem isso, a coluna
+                    # fica 'object' misturando str (link) e None (telefone inválido), e
+                    # versões recentes do PyArrow podem travar em nível nativo (C) ao
+                    # tentar inferir o tipo Arrow dessa mistura, em vez de lançar uma
+                    # exceção tratável do Python.
+                    df_nivers['Ação'] = df_nivers['Ação'].astype('string')
                     df_nivers = df_nivers.rename(columns={'nome': 'Cliente', 'telefone': 'Contato'})
+                    df_nivers['Contato'] = df_nivers['Contato'].astype('string')
                     
                     st.dataframe(
                         df_nivers[['Cliente', 'Aniversário', 'Contato', 'Ação']],
@@ -1180,11 +1135,9 @@ Feliz aniversário! 🥳✨"""
                 LEFT JOIN clientes c ON v.cliente_id = c.id 
                 LEFT JOIN produtos p ON v.produto_id = p.id 
                 WHERE v.empresa_id = %s
-                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') >= %s
-                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') <= %s
                 ORDER BY v.codigo_venda DESC, v.id DESC
             """
-            df_todas_vendas = carregar_dados_cached(query_todas_vendas, (emp_id, d_ini, d_fim))
+            df_todas_vendas = carregar_dados_cached(query_todas_vendas, (emp_id,))
             
             if not df_todas_vendas.empty:
                 col_opcoes1, col_opcoes2 = st.columns(2)
@@ -1196,10 +1149,10 @@ Feliz aniversário! 🥳✨"""
                         
                         if venda_edit_selecionada:
                             venda_id_edit = int(venda_edit_selecionada.split("Item ")[1].split(")")[0])
-                            dados_v_edit = buscar_linha(
-                                "SELECT data_venda, forma_pagamento, prazo, valor_unitario, desconto, valor_entrada, quantidade FROM vendas WHERE id = %s AND empresa_id = %s",
-                                (venda_id_edit, emp_id)
-                            )
+                            conn = conectar_banco()
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT data_venda, forma_pagamento, prazo, valor_unitario, desconto, valor_entrada, quantidade FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_edit, emp_id))
+                            dados_v_edit = cursor.fetchone()
                             
                             if dados_v_edit:
                                 v_data_str, v_pag, v_prazo, v_tabela, v_desc, v_ent, v_qtd = dados_v_edit
@@ -1226,11 +1179,10 @@ Feliz aniversário! 🥳✨"""
                                     if st.form_submit_button("💾 Salvar Alterações"):
                                         novo_total = (novo_tabela - novo_desc) * v_qtd
                                         novo_restante = novo_total - nova_entrada
-                                        executar_comando(
-                                            "UPDATE vendas SET data_venda=%s, forma_pagamento=%s, prazo=%s, valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s, valor_restante=%s WHERE id=%s AND empresa_id=%s",
-                                            (nova_data.strftime("%d/%m/%Y"), novo_pag, novo_prazo, novo_tabela, novo_desc, novo_total, nova_entrada, novo_restante, venda_id_edit, emp_id)
-                                        )
-                                        st.success("Atualizado!"); limpar_cache(); st.rerun()
+                                        cursor.execute("UPDATE vendas SET data_venda=%s, forma_pagamento=%s, prazo=%s, valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s, valor_restante=%s WHERE id=%s AND empresa_id=%s", 
+                                                     (nova_data.strftime("%d/%m/%Y"), novo_pag, novo_prazo, novo_tabela, novo_desc, novo_total, nova_entrada, novo_restante, venda_id_edit, emp_id))
+                                        conn.commit(); devolver_conexao(conn); st.success("Atualizado!"); limpar_cache(); st.rerun()
+                            else: devolver_conexao(conn)
 
                 with col_opcoes2:
                     with st.expander("❌ Cancelar / Estornar Item", expanded=False):
@@ -1240,20 +1192,18 @@ Feliz aniversário! 🥳✨"""
                             
                             if st.form_submit_button("🚨 Confirmar Cancelamento", type="primary"):
                                 venda_id_del = int(venda_para_apagar.split("Item ")[1].split(")")[0])
-                                try:
-                                    def _cancelar_venda(cur):
-                                        cur.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
-                                        venda_info = cur.fetchone()
-                                        if not venda_info:
-                                            raise ValueError("Venda não encontrada para cancelamento.")
-                                        p_id, p_qtd, cod_venda = venda_info
-                                        cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
-                                        cur.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
-                                        cur.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
-                                    executar_escrita(_cancelar_venda)
-                                    st.success("Cancelado!"); limpar_cache(); st.rerun()
-                                except Exception as e:
-                                    st.error(f"Erro ao cancelar venda: {e}")
+                                conn = conectar_banco()
+                                cursor = conn.cursor()
+                                cursor.execute("SELECT produto_id, quantidade, codigo_venda FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
+                                venda_info = cursor.fetchone()
+                                
+                                if venda_info:
+                                    p_id, p_qtd, cod_venda = venda_info
+                                    cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s", (p_qtd, p_id, emp_id))
+                                    cursor.execute("DELETE FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_del, emp_id))
+                                    cursor.execute("DELETE FROM contas_receber WHERE venda_codigo = %s AND empresa_id = %s", (cod_venda, emp_id))
+                                    conn.commit(); devolver_conexao(conn); st.success("Cancelado!"); limpar_cache(); st.rerun()
+                                else: devolver_conexao(conn); st.error("Erro.")
                 
                 #st.markdown("---")
 
@@ -1272,28 +1222,22 @@ Feliz aniversário! 🥳✨"""
                         # Extraímos o código da venda a partir do texto do selectbox
                         venda_id_recibo = int(venda_recibo_sel.split("Nº ")[1].split(" |")[0])
                         
-                        try:
-                            conn = conectar_banco()
-                            cursor = conn.cursor()
-                            
-                            # 2. Buscamos TODOS os itens daquele codigo_venda
-                            cursor.execute("""
-                                SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
-                                       v.valor_total, v.valor_entrada, v.valor_restante, 
-                                       v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
-                                FROM vendas v 
-                                JOIN clientes c ON v.cliente_id = c.id 
-                                JOIN produtos p ON v.produto_id = p.id 
-                                WHERE v.codigo_venda = %s AND v.empresa_id = %s
-                            """, (venda_id_recibo, emp_id))
-                            
-                            dados_recibo = cursor.fetchall()
-                        except Exception as e:
-                            dados_recibo = []
-                            st.error("Erro ao buscar dados do recibo. Tente novamente em alguns segundos.")
-                        finally:
-                            if 'conn' in locals():
-                                devolver_conexao(conn)
+                        conn = conectar_banco()
+                        cursor = conn.cursor()
+                        
+                        # 2. Buscamos TODOS os itens daquele codigo_venda
+                        cursor.execute("""
+                            SELECT c.telefone, c.nome, v.data_venda, p.nome, v.quantidade, 
+                                   v.valor_total, v.valor_entrada, v.valor_restante, 
+                                   v.forma_pagamento, v.valor_unitario, v.qtd_parcelas
+                            FROM vendas v 
+                            JOIN clientes c ON v.cliente_id = c.id 
+                            JOIN produtos p ON v.produto_id = p.id 
+                            WHERE v.codigo_venda = %s AND v.empresa_id = %s
+                        """, (venda_id_recibo, emp_id))
+                        
+                        dados_recibo = cursor.fetchall()
+                        devolver_conexao(conn)
 
                         if dados_recibo:
                             tel = dados_recibo[0][0]
@@ -1516,47 +1460,29 @@ Feliz aniversário! 🥳✨"""
             mes_num = meses_nomes.index(mes_str) + 1
             ano_sel = int(ano_str)
             
-            # Consulta SQL Otimizada: soma vendas e calcula status financeiro em um único agrupamento
-            ultimo_dia_app = calendar.monthrange(ano_sel, mes_num)[1]
-            app_ini = date(ano_sel, mes_num, 1)
-            app_fim = date(ano_sel, mes_num, ultimo_dia_app)
-
+            # Consulta SQL Otimizada: Usando SUM para somar todos os itens do carrinho corretamente
             query_app = """
-                WITH cr_status AS (
-                    SELECT
-                        venda_codigo,
-                        empresa_id,
-                        COUNT(*) FILTER (WHERE status = 'Pendente') AS pendentes,
-                        COUNT(*) FILTER (
-                            WHERE status = 'Pendente'
-                              AND TO_DATE(data_vencimento, 'DD/MM/YYYY') < CURRENT_DATE
-                        ) AS atrasadas
-                    FROM contas_receber
-                    WHERE empresa_id = %s
-                    GROUP BY venda_codigo, empresa_id
-                )
                 SELECT 
                     v.codigo_venda,
                     MAX(v.data_venda) AS "Data",
                     MAX(c.nome) AS "Cliente",
                     SUM(v.valor_total) AS "Valor Total (R$)",
                     CASE 
-                        WHEN COALESCE(MAX(cr.pendentes), 0) = 0 THEN '🟢 QUITADO'
-                        WHEN COALESCE(MAX(cr.atrasadas), 0) > 0 THEN '🔴 ATRASADO'
+                        WHEN (SELECT COUNT(id) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pendente') = 0 THEN '🟢 QUITADO'
+                        WHEN (SELECT COUNT(id) FROM contas_receber WHERE venda_codigo = v.codigo_venda AND status = 'Pendente' AND TO_DATE(data_vencimento, 'DD/MM/YYYY') < CURRENT_DATE) > 0 THEN '🔴 ATRASADO'
                         ELSE '🔵 PENDENTE'
                     END AS "Status"
                 FROM vendas v
                 LEFT JOIN clientes c ON v.cliente_id = c.id
-                LEFT JOIN cr_status cr ON cr.venda_codigo = v.codigo_venda AND cr.empresa_id = v.empresa_id
-                WHERE TO_DATE(v.data_venda, 'DD/MM/YYYY') >= %s
-                  AND TO_DATE(v.data_venda, 'DD/MM/YYYY') <= %s
+                WHERE EXTRACT(MONTH FROM TO_DATE(v.data_venda, 'DD/MM/YYYY')) = %s 
+                  AND EXTRACT(YEAR FROM TO_DATE(v.data_venda, 'DD/MM/YYYY')) = %s
                   AND v.empresa_id = %s
                 GROUP BY v.codigo_venda
                 ORDER BY TO_DATE(MAX(v.data_venda), 'DD/MM/YYYY') DESC
             """
             
             # Aqui fazemos a busca (se der erro de data, ajuste o cast de data_venda no SQL)
-            df_app = carregar_dados_cached(query_app, (emp_id, app_ini, app_fim, emp_id))
+            df_app = carregar_dados_cached(query_app, (mes_num, ano_sel, emp_id))
             
             if not df_app.empty:
                 # Calculadora do rodapé
@@ -1635,12 +1561,7 @@ Feliz aniversário! 🥳✨"""
         # ==========================================
         with tab_prod:
             # --- Buscando apenas PRODUTOS FÍSICOS ('P') ---
-            df_p = carregar_dados_cached("""
-                SELECT id, referencia, nome, marca, categoria, valor, preco_custo, markup, quantidade, classe, tipo, empresa_id
-                FROM produtos
-                WHERE empresa_id=%s AND tipo='P'
-                ORDER BY nome
-            """, (emp_id,))
+            df_p = carregar_dados_cached("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='P' ORDER BY nome", (emp_id,))
             df_c = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
             
@@ -1794,7 +1715,7 @@ Feliz aniversário! 🥳✨"""
             # --- EXPANDER 3: MONTAGEM DE KITS PROMOCIONAIS ---
             with st.expander("🎁 Montar Kit Promocional"):
                 # Kits promocionais só fazem sentido com produtos de Venda
-                df_produtos_base = df_p[(df_p['quantidade'] > 0) & (df_p.get('classe', 'Venda') == 'Venda')] if not df_p.empty else pd.DataFrame()
+                df_produtos_base = df_p[(df_p['quantidade'] > 0) & (df_p.get('classe', 'Venda') == 'Venda')].copy() if not df_p.empty else pd.DataFrame()
                 
                 if not df_produtos_base.empty:
                     st.caption("Monte combos unindo produtos de revenda para atrair mais clientes.")
@@ -1898,7 +1819,7 @@ Feliz aniversário! 🥳✨"""
                 cat_selecionada = col_f_cat.selectbox("📑 Filtrar por Categoria:", options=opcoes_cat)
                 
                 if cat_selecionada != "📦 Todas as Categorias":
-                    df_filtrado = df_filtrado[df_filtrado['categoria'] == cat_selecionada]
+                    df_filtrado = df_filtrado[df_filtrado['categoria'] == cat_selecionada].copy()
                 
                 if not df_filtrado.empty:
                     df_filtrado['display_pesquisa'] = df_filtrado.apply(lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1)
@@ -1946,7 +1867,7 @@ Feliz aniversário! 🥳✨"""
             #st.markdown("### 🛠️ Gestão de Serviços Prestados")
             
             # --- Buscando apenas SERVIÇOS ('S') com todas as colunas ---
-            df_s = carregar_dados_cached("SELECT id, referencia, nome, categoria, valor, tempo_minutos, tipo, empresa_id FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
+            df_s = carregar_dados_cached("SELECT * FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
             
             # Carregando categorias
             df_c_serv = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
@@ -2116,7 +2037,7 @@ Feliz aniversário! 🥳✨"""
                         limpar_cache()
                         st.rerun()
 
-            df_clientes = carregar_dados_cached("SELECT id, nome, data_nascimento, telefone, tipo, empresa_id FROM clientes WHERE empresa_id = %s ORDER BY nome", (emp_id,))
+            df_clientes = carregar_dados_cached("SELECT * FROM clientes WHERE empresa_id = %s ORDER BY nome", (emp_id,))
             
             with sub_edit_cli:
                 if not df_clientes.empty:
@@ -2305,117 +2226,7 @@ Feliz aniversário! 🥳✨"""
     # MÓDULO 3: MOVIMENTAÇÕES (Vendas e Compras)
     # ==========================================
     elif modulo == "🔄 Movimentações":
-        # ==========================================================
-        # ADS 2.0 — PADRÃO VISUAL DO MÓDULO DE MOVIMENTAÇÕES
-        # Alteração exclusivamente de UI/UX. Nenhuma regra de negócio,
-        # consulta SQL, cálculo ou gravação foi modificada.
-        # ==========================================================
-        st.markdown("""
-            <style>
-            /* Área de trabalho compacta para desktop e celular */
-            .block-container {
-                padding-top: 1.1rem;
-                padding-bottom: 1.5rem;
-            }
-
-            /* Abas do módulo */
-            div[data-baseweb="tab-list"] {
-                gap: .20rem;
-                overflow-x: auto;
-                scrollbar-width: thin;
-            }
-            button[data-baseweb="tab"] {
-                min-height: 2.25rem;
-                padding: .35rem .65rem;
-                font-size: .82rem;
-                white-space: nowrap;
-            }
-
-            /* Formulários e textos mais compactos */
-            div[data-testid="stWidgetLabel"] p,
-            .stSelectbox label p, .stTextInput label p,
-            .stNumberInput label p, .stDateInput label p,
-            .stTimeInput label p, .stTextArea label p {
-                font-size: .79rem !important;
-                font-weight: 650 !important;
-            }
-            div[data-baseweb="select"] > div,
-            .stTextInput input, .stNumberInput input,
-            .stDateInput input, .stTimeInput input {
-                min-height: 2.25rem;
-                font-size: .84rem;
-            }
-            .stButton > button, .stLinkButton > a {
-                min-height: 2.30rem;
-                padding: .38rem .72rem;
-                font-size: .82rem;
-                font-weight: 750;
-                border-radius: 9px;
-            }
-            div[data-testid="stForm"],
-            div[data-testid="stVerticalBlockBorderWrapper"] {
-                border-radius: 12px;
-            }
-            div[data-testid="stExpander"] details {
-                border-radius: 10px;
-            }
-            div[data-testid="stMetric"] {
-                padding: .55rem .65rem;
-            }
-            div[data-testid="stMetricLabel"] p { font-size: .76rem; }
-            div[data-testid="stMetricValue"] { font-size: 1.28rem; }
-            .stDataFrame { font-size: .80rem; }
-
-            /* Componentes ADS locais */
-            .ads-mov-header {
-                display:flex; align-items:center; justify-content:space-between;
-                gap:.75rem; padding:.10rem 0 .55rem 0;
-                margin:-.20rem 0 .55rem 0;
-                border-bottom:1px solid #e5e7eb;
-            }
-            .ads-mov-title {
-                font-size:1.02rem; font-weight:850; color:#111827;
-                line-height:1.15; margin:0;
-            }
-            .ads-mov-context {
-                font-size:.73rem; color:#64748b; text-align:right;
-                line-height:1.15; white-space:nowrap;
-            }
-            .ads-screen-title {
-                font-size:.98rem; font-weight:850; color:#1f2937;
-                margin:.15rem 0 .45rem 0; line-height:1.2;
-            }
-            .ads-screen-caption {
-                font-size:.76rem; color:#64748b; margin:-.25rem 0 .55rem 0;
-            }
-            .ads-panel-title {
-                font-size:.94rem; font-weight:900; color:#1f2937;
-                margin:0 0 .18rem 0; line-height:1.2;
-            }
-            .ads-panel-caption {
-                font-size:.74rem; color:#64748b;
-                margin:0 0 .48rem 0; line-height:1.25;
-            }
-            .ads-context-title {
-                font-size:.82rem; font-weight:850; color:#1f2937;
-                margin:.05rem 0 .20rem 0; line-height:1.2;
-            }
-
-            @media (max-width: 768px) {
-                .block-container { padding-left:.75rem; padding-right:.75rem; padding-top:.65rem; }
-                .ads-mov-header { align-items:flex-start; margin-top:0; }
-                .ads-mov-title { font-size:.92rem; }
-                .ads-mov-context { font-size:.66rem; white-space:normal; max-width:44%; }
-                button[data-baseweb="tab"] { font-size:.74rem; padding:.30rem .48rem; }
-                .stButton > button, .stLinkButton > a { font-size:.78rem; }
-                div[data-testid="stMetricValue"] { font-size:1.10rem; }
-            }
-            </style>
-            <div class="ads-mov-header">
-                <div class="ads-mov-title">🔄 Movimentações</div>
-                <div class="ads-mov-context">Operações diárias · AppPrimory 2.0</div>
-            </div>
-        """, unsafe_allow_html=True)
+        st.markdown("### 🔄 Operações Diárias")
         
         # 1. Puxa as permissões do usuário logado (A Mochila de Chaves)
         meus_acessos = st.session_state.get('modulos_permitidos', [])
@@ -2460,518 +2271,356 @@ Feliz aniversário! 🥳✨"""
                 
         if tab_venda:
             with tab_venda:
-                # ==========================================================
-                # PDV 2.0 — Tela de Vendas redesenhada
-                # Mantém a lógica de negócio original e reorganiza a experiência.
-                # ==========================================================
-                # PDV 2.1 — Cabeçalho compacto e ergonomia mobile
-                # Reduz textos, espaçamentos e fontes para melhorar a navegação em desktop e celular.
-                st.markdown("""
-                    <style>
-                    .pdv2-header {
-                        border-bottom: 1px solid #e5e7eb;
-                        padding: 2px 0 8px 0;
-                        margin: -4px 0 10px 0;
-                        display: flex;
-                        align-items: center;
-                        justify-content: space-between;
-                        gap: 10px;
-                    }
-                    .pdv2-title {
-                        font-size: 1.05rem;
-                        font-weight: 900;
-                        color: #111827;
-                        line-height: 1.15;
-                    }
-                    .pdv2-subtitle {
-                        color: #64748b;
-                        font-size: 0.78rem;
-                        line-height: 1.2;
-                        text-align: right;
-                        white-space: nowrap;
-                    }
-                    .pdv2-section-title {
-                        font-weight: 900;
-                        color: #1f2937;
-                        font-size: 0.94rem;
-                        margin-bottom: 4px;
-                    }
-                    .pdv2-total-box {
-                        border-radius: 14px;
-                        padding: 12px 14px;
-                        margin: 4px 0 10px 0;
-                        background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
-                        border: 1px solid #dbeafe;
-                    }
-                    .pdv2-total-label {
-                        font-size: 0.76rem;
-                        color: #475569;
-                        font-weight: 800;
-                        text-transform: uppercase;
-                        letter-spacing: .035em;
-                    }
-                    .pdv2-total-value {
-                        font-size: 1.8rem;
-                        color: #0f172a;
-                        font-weight: 950;
-                        line-height: 1.0;
-                        margin-top: 2px;
-                    }
-                    .pdv2-small-note {
-                        color: #64748b;
-                        font-size: 0.78rem;
-                    }
-                    div[data-testid="stVerticalBlock"] {
-                        gap: 0.55rem;
-                    }
-                    @media (max-width: 768px) {
-                        .pdv2-header {
-                            display: block;
-                            padding: 0 0 6px 0;
-                            margin: -8px 0 8px 0;
-                        }
-                        .pdv2-title {
-                            font-size: 0.98rem;
-                        }
-                        .pdv2-subtitle {
-                            text-align: left;
-                            white-space: normal;
-                            font-size: 0.72rem;
-                            margin-top: 2px;
-                        }
-                        .pdv2-section-title {
-                            font-size: 0.88rem;
-                        }
-                        .pdv2-total-box {
-                            padding: 10px 12px;
-                            border-radius: 12px;
-                        }
-                        .pdv2-total-value {
-                            font-size: 1.55rem;
-                        }
-                        .stButton button, .stDownloadButton button, .stLinkButton a {
-                            min-height: 2.25rem;
-                            padding: 0.25rem 0.6rem;
-                            font-size: 0.85rem;
-                        }
-                        div[data-testid="stMetricValue"] {
-                            font-size: 1.25rem;
-                        }
-                    }
-                    </style>
-                """, unsafe_allow_html=True)
-
-                if 'pdv_reset' not in st.session_state:
-                    st.session_state['pdv_reset'] = 0
-                if 'reset_prod' not in st.session_state:
-                    st.session_state['reset_prod'] = 0
-
-                # Painel de pós-venda/WhatsApp fica no topo para o operador não precisar rolar a tela.
-                if 'zap_link' in st.session_state and st.session_state['zap_link']:
-                    with st.container(border=True):
-                        st.success(f"🎉 {st.session_state['zap_codigo']} pronto! Total: R$ {st.session_state['zap_total']:.2f}".replace('.', ','))
-                        st.markdown("#### 📲 Recibo pelo WhatsApp")
-                        st.text_area("Mensagem preparada:", value=st.session_state['zap_msg'], height=120, disabled=True)
-                        col_zap1, col_zap2 = st.columns([2, 1])
-                        col_zap1.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
-                        if col_zap2.button("➕ Nova venda", use_container_width=True):
-                            for chave in ['zap_link', 'zap_msg', 'zap_codigo', 'zap_total']:
-                                if chave in st.session_state:
-                                    del st.session_state[chave]
-                            st.session_state['carrinho'] = []
-                            st.session_state['pdv_reset'] += 1
-                            st.session_state['reset_prod'] += 1
-                            st.rerun()
-                    st.markdown("---")
-
-                st.markdown("""
-                    <div class="pdv2-header">
-                        <div class="pdv2-title">🛒 Nova Venda</div>
-                        <div class="pdv2-subtitle">Cliente → produto → carrinho → fechamento</div>
-                    </div>
-                """, unsafe_allow_html=True)
-
+                st.subheader("🛒 Vendas")
+            
                 # Carrega dados atualizados para o PDV
                 df_cli = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
+                
+                # Traz apenas produtos comerciais de Venda ou Serviços
                 df_pro = carregar_dados_cached("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s AND tipo='P' AND classe='Venda' ORDER BY nome", (emp_id,))
-
+            
                 if not df_cli.empty and not df_pro.empty:
-                    reset_key = st.session_state['pdv_reset']
-                    df_pro = df_pro.copy()
+                    # 1. Configurações da Venda
+                    st.markdown("#### 1️⃣ Dados da Venda")
+                    with st.container(border=True):
+                        c_cli, c_data = st.columns(2)
+                        cliente_pdv = c_cli.selectbox("Cliente:", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione o cliente...")
+                        data_venda_input = c_data.date_input("Data da Venda", format="DD/MM/YYYY", value=date.today())
+                    
+                        c_pag, c_parc = st.columns(2)
+                        f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...")
+                        
+                        qtd_parcelas = 1
+                        data_1_venc = date.today()
+                        
+                        if f_pag:
+                            qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1)
+                            sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
+                            data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY")
+                
+                    # 2. Seleção de Produto
+                    st.markdown("#### 2️⃣ Adicionar Produto")
+
                     df_pro['display_pesquisa'] = df_pro.apply(
                         lambda x: f"{x['nome']} - Estoque: {int(x['quantidade'])}", axis=1
                     )
+                
+                    # NOVO: Cria um contador de reset se ele não existir
+                    if 'reset_prod' not in st.session_state:
+                        st.session_state['reset_prod'] = 0
+                
+                    with st.container(border=True):
+                        # NOVO: Adiciona o contador no final do nome da key
+                        prod_display = st.selectbox(
+                            "🔍 Pesquise o Produto (Digite o nome):", 
+                            options=df_pro['display_pesquisa'].tolist(), 
+                            index=None, 
+                            placeholder="Digite ou selecione um produto...", 
+                            key=f"busca_produto_pdv_{st.session_state['reset_prod']}"
+                        )       
+                        
+                        if cliente_pdv and f_pag and prod_display:
+                            p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
+                            estoque_atual = int(p_info['quantidade'])
+                            preco_tabela = float(p_info['valor'])
 
-                    col_operacao, col_carrinho = st.columns([1.08, 1], gap="large")
-
-                    with col_operacao:
-                        with st.container(border=True):
-                            st.markdown('<div class="pdv2-section-title">👤 Dados da venda</div>', unsafe_allow_html=True)
-                            cliente_pdv = st.selectbox(
-                                "Cliente",
-                                options=df_cli['nome'].tolist(),
-                                index=None,
-                                placeholder="Selecione o cliente...",
-                                key=f"pdv_cliente_{reset_key}"
-                            )
-
-                            c_data, c_pag, c_parc = st.columns([1, 1.25, 0.85])
-                            data_venda_input = c_data.date_input(
-                                "Data",
-                                format="DD/MM/YYYY",
-                                value=date.today(),
-                                key=f"pdv_data_{reset_key}"
-                            )
-                            f_pag = c_pag.selectbox(
-                                "Pagamento",
-                                ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"],
-                                index=None,
-                                placeholder="Forma...",
-                                key=f"pdv_pagamento_{reset_key}"
-                            )
-
-                            qtd_parcelas = 1
-                            data_1_venc = date.today()
-                            if f_pag:
-                                qtd_parcelas = c_parc.number_input(
-                                    "Parcelas",
-                                    min_value=1,
-                                    max_value=12,
-                                    value=1,
-                                    step=1,
-                                    key=f"pdv_parcelas_{reset_key}"
-                                )
-                                sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
-                                data_1_venc = st.date_input(
-                                    "Data do 1º vencimento",
-                                    value=sugestao_venc,
-                                    format="DD/MM/YYYY",
-                                    key=f"pdv_vencimento_{reset_key}"
-                                )
-
-                        with st.container(border=True):
-                            st.markdown('<div class="pdv2-section-title">🔎 Produto</div>', unsafe_allow_html=True)
-                            prod_display = st.selectbox(
-                                "Pesquisar produto",
-                                options=df_pro['display_pesquisa'].tolist(),
-                                index=None,
-                                placeholder="Digite ou selecione um produto...",
-                                key=f"busca_produto_pdv_{st.session_state['reset_prod']}"
-                            )
-
-                            if not cliente_pdv or not f_pag:
-                                st.info("Selecione cliente e forma de pagamento para adicionar produtos.")
-                            elif prod_display:
-                                p_info = df_pro[df_pro['display_pesquisa'] == prod_display].iloc[0]
-                                estoque_atual = int(p_info['quantidade'])
-                                preco_tabela = float(p_info['valor'])
-
-                                if estoque_atual <= 0:
-                                    st.error(f"🚨 Estoque zerado | Preço: R$ {preco_tabela:.2f}".replace('.', ','))
-                                elif estoque_atual == 1:
-                                    st.warning(f"⚠️ Última unidade | Preço: R$ {preco_tabela:.2f}".replace('.', ','))
-                                elif estoque_atual <= 3:
-                                    st.warning(f"⚠️ Estoque baixo: {estoque_atual} unidades | Preço: R$ {preco_tabela:.2f}".replace('.', ','))
-                                else:
-                                    st.info(f"📦 Estoque: {estoque_atual} unidades | 🏷️ Preço: R$ {preco_tabela:.2f}".replace('.', ','))
-
-                                with st.form("form_add_carrinho", clear_on_submit=True):
-                                    c_qtd, c_preco, c_desc_rs, c_desc_perc = st.columns([0.8, 1, 1, 1])
-                                    limite_qtd = estoque_atual if estoque_atual > 0 else 999
-                                    q_pdv = c_qtd.number_input("Qtde", min_value=1, max_value=limite_qtd, step=1, value=1)
-                                    preco_custom = c_preco.number_input("Preço un. (R$)", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
-                                    desc_rs = c_desc_rs.number_input("Desc. R$", min_value=0.0, step=1.0, format="%.2f")
-                                    desc_perc = c_desc_perc.number_input("Desc. %", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
-
-                                    if st.form_submit_button("➕ ADICIONAR AO CARRINHO", disabled=(estoque_atual <= 0), use_container_width=True):
-                                        if estoque_atual >= q_pdv:
-                                            desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
-                                            st.session_state['carrinho'].append({
-                                                'id': int(p_info['id']),
-                                                'nome': str(p_info['nome']),
-                                                'qtd': int(q_pdv),
-                                                'unit': float(preco_custom),
-                                                'desc': float(desconto_final),
-                                                'total': float((preco_custom - desconto_final) * q_pdv),
-                                                'tipo': 'P',
-                                                'colab_id': None
-                                            })
-                                            st.session_state['reset_prod'] += 1
-                                            st.rerun()
-                                        else:
-                                            st.error("Estoque insuficiente!")
+                            if estoque_atual <= 0:
+                                st.error(f"🚨 ESTOQUE ZERADO! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                            elif estoque_atual == 1:
+                                st.warning(f"⚠️ ÚLTIMA UNIDADE! | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                            elif estoque_atual <= 3:
+                                st.warning(f"⚠️ Estoque Baixo: Restam apenas {estoque_atual} unidades. | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
                             else:
-                                st.caption("Após selecionar um produto, você poderá definir quantidade, preço e desconto.")
-
-                    with col_carrinho:
-                        with st.container(border=True):
-                            st.markdown('<div class="pdv2-section-title">🛒 Carrinho</div>', unsafe_allow_html=True)
-
-                            total_pdv = 0.0
-                            desconto_total_pdv = 0.0
-                            qtd_itens_pdv = 0
-
-                            if st.session_state['carrinho']:
-                                col_h1, col_h2, col_h3, col_h4 = st.columns([4, 1, 1.6, 0.6], gap="small")
-                                col_h1.markdown("**Item**")
-                                col_h2.markdown("**Qtd**")
-                                col_h3.markdown("**Total**")
-                                st.markdown("<hr style='margin: 4px 0 8px 0; opacity: .25;'>", unsafe_allow_html=True)
-
-                                for i, item in enumerate(st.session_state['carrinho']):
-                                    item_total = float(item['total'])
-                                    item_qtd = int(item['qtd'])
-                                    item_desc = float(item.get('desc', 0)) * item_qtd
-                                    total_pdv += item_total
-                                    desconto_total_pdv += item_desc
-                                    qtd_itens_pdv += item_qtd
-
-                                    col_i1, col_i2, col_i3, col_i4 = st.columns([4, 1, 1.6, 0.6], gap="small")
-                                    col_i1.write(f"▫️ {item['nome']}")
-                                    col_i2.write(f"{item_qtd}x")
-                                    col_i3.write(f"R$ {item_total:.2f}".replace('.', ','))
-                                    if col_i4.button("🗑️", key=f"del_pdv_{i}", help="Remover item"):
-                                        st.session_state['carrinho'].pop(i)
+                                st.info(f"📦 Estoque atual: {estoque_atual} unidades | 🏷️ Preço de Tabela: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                        
+                            with st.form("form_add_carrinho", clear_on_submit=True):
+                                c1, c2, c3, c4 = st.columns(4)
+                            
+                                limite_qtd = estoque_atual if estoque_atual > 0 else 999
+                                q_pdv = c1.number_input("Quantidade:", min_value=1, max_value=limite_qtd, step=1, value=1)
+                                preco_custom = c2.number_input("Preço Unitário (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
+                                desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f")
+                                desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f")
+                            
+                                if st.form_submit_button("➕ Adicionar ao Carrinho", disabled=(estoque_atual <= 0)):
+                                    if estoque_atual >= q_pdv:
+                                        desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
+                                        st.session_state['carrinho'].append({
+                                            'id': int(p_info['id']),
+                                            'nome': str(p_info['nome']),
+                                            'qtd': int(q_pdv),
+                                            'unit': float(preco_custom),
+                                            'desc': float(desconto_final),
+                                            'total': float((preco_custom - desconto_final) * q_pdv),
+                                            'tipo': 'P',
+                                            'colab_id': None
+                                        })
+                                        
+                                        # CORREÇÃO: Força o selectbox a se recriar limpo!
+                                        st.session_state['reset_prod'] += 1 
                                         st.rerun()
-                            else:
-                                st.info("Carrinho vazio. Adicione produtos para iniciar a venda.")
-
-                            subtotal_bruto = total_pdv + desconto_total_pdv
-                            total_pdv_fmt = f"R$ {total_pdv:.2f}".replace('.', ',')
-                            subtotal_fmt = f"R$ {subtotal_bruto:.2f}".replace('.', ',')
-                            desconto_fmt = f"R$ {desconto_total_pdv:.2f}".replace('.', ',')
-
-                            st.markdown("---")
-                            st.markdown(f"""
-                                <div class="pdv2-total-box">
-                                    <div class="pdv2-total-label">Total da venda</div>
-                                    <div class="pdv2-total-value">{total_pdv_fmt}</div>
-                                    <div class="pdv2-small-note">{qtd_itens_pdv} item(ns) • Subtotal {subtotal_fmt} • Descontos {desconto_fmt}</div>
-                                </div>
-                            """, unsafe_allow_html=True)
-
-                            valor_entrada = 0.0
-                            valor_restante = float(total_pdv)
-                            datas_parcelas = []
-
-                            if st.session_state['carrinho']:
-                                if f_pag == "Crediário":
-                                    valor_entrada = st.number_input(
-                                        "Valor da entrada (R$)",
-                                        min_value=0.0,
-                                        max_value=float(total_pdv),
-                                        value=0.0,
-                                        step=10.0,
-                                        key=f"pdv_entrada_{reset_key}"
-                                    )
-
-                                valor_restante = float(total_pdv - valor_entrada)
-
-                                if qtd_parcelas > 1 or f_pag == "Crediário":
-                                    with st.expander("📅 Cronograma de vencimentos", expanded=False):
-                                        if f_pag == "Crediário" and valor_entrada > 0:
-                                            datas_parcelas.append(data_venda_input)
-                                            if qtd_parcelas > 1:
-                                                cols_p = st.columns(min(int(qtd_parcelas) - 1, 4))
-                                                for i in range(2, int(qtd_parcelas) + 1):
-                                                    sugestao_p = data_1_venc + timedelta(days=30 * (i - 2))
-                                                    with cols_p[(i-2) % min(int(qtd_parcelas) - 1, 4)]:
-                                                        dt_p = st.date_input(f"{i}ª Parc.", value=sugestao_p, format="DD/MM/YYYY", key=f"venc_p_{reset_key}_{i}")
-                                                        datas_parcelas.append(dt_p)
-                                        else:
-                                            cols_p = st.columns(min(int(qtd_parcelas), 4))
-                                            for i in range(1, int(qtd_parcelas) + 1):
-                                                sugerido = data_1_venc + timedelta(days=30 * (i - 1))
-                                                with cols_p[(i-1) % min(int(qtd_parcelas), 4)]:
-                                                    dt_p = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"venc_p_{reset_key}_{i}")
-                                                    datas_parcelas.append(dt_p)
-                                else:
-                                    datas_parcelas.append(data_1_venc)
-
-                                if f_pag == "Crediário" and valor_entrada > 0:
-                                    parcelas_restantes = max(int(qtd_parcelas - 1), 1)
-                                    st.info(f"💵 Entrada: R$ {valor_entrada:.2f} | Restante: R$ {valor_restante:.2f} em {parcelas_restantes}x".replace('.', ','))
-                                elif qtd_parcelas > 1:
-                                    st.info(f"💳 Parcelamento: {int(qtd_parcelas)}x de R$ {(total_pdv / qtd_parcelas):.2f}".replace('.', ','))
-
-                                st.markdown("#### Ações")
-                                if st.button("✅ FINALIZAR VENDA", type="primary", use_container_width=True):
-                                    try:
-                                        conn = conectar_banco()
-                                        cur = conn.cursor()
-
-                                        cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
-                                        resultado = cur.fetchone()[0]
-                                        novo_cod = int(resultado + 1) if resultado else 1
-
-                                        data_v = data_venda_input.strftime("%d/%m/%Y")
-                                        cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
-
-                                        for it in st.session_state['carrinho']:
-                                            cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
-                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                       (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), it['colab_id']))
-
-                                            if it['tipo'] == 'P':
-                                                cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
-
-                                        if f_pag == "Crediário" and valor_entrada > 0:
-                                            cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
-                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                        (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), data_v, 'Pago', data_v, int(emp_id)))
-
-                                            if qtd_parcelas > 1:
-                                                valor_parc_restante = valor_restante / (qtd_parcelas - 1)
-                                                for i in range(2, int(qtd_parcelas) + 1):
-                                                    data_venc_str = datas_parcelas[i-1].strftime("%d/%m/%Y")
-                                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
-                                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                                (int(novo_cod), int(cli_id_v), i, int(qtd_parcelas), float(valor_parc_restante), data_venc_str, 'Pendente', int(emp_id)))
-                                        else:
-                                            valor_parcela = total_pdv / qtd_parcelas
-                                            for i in range(1, int(qtd_parcelas) + 1):
-                                                data_venc_str = datas_parcelas[i-1].strftime("%d/%m/%Y")
-                                                status_pg = 'Pago' if f_pag in ['Pix', 'Crédito', 'Débito', 'Dinheiro'] else 'Pendente'
-                                                data_pg = data_v if status_pg == 'Pago' else None
-
-                                                cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
-                                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                            (int(novo_cod), int(cli_id_v), i, int(qtd_parcelas), float(valor_parcela), data_venc_str, status_pg, data_pg, int(emp_id)))
-
-                                        cur_cli = carregar_dados_cached("SELECT telefone FROM clientes WHERE nome=%s AND empresa_id=%s", (cliente_pdv, emp_id))
-                                        tel_cli = cur_cli.iloc[0]['telefone'] if not cur_cli.empty else None
-
-                                        lista_produtos_msg = ""
-                                        for it in st.session_state['carrinho']:
-                                            lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
-                                            if float(it.get('desc', 0)) > 0:
-                                                desc_total_item = float(it['desc']) * int(it['qtd'])
-                                                lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
-
-                                        msg = f"Olá, {cliente_pdv}! 🌸\n\n"
-                                        msg += f"Aqui está o resumo do seu pedido do dia *{data_v}*:\n\n"
-                                        msg += f"🧾 *Pedido Confirmado Nº {novo_cod}*\n\n"
-                                        msg += f"*Itens:*\n{lista_produtos_msg}\n"
-                                        msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
-
-                                        if qtd_parcelas > 1:
-                                            msg += "\n📅 *Datas de Vencimento:*\n"
-                                            if f_pag == "Crediário" and valor_entrada > 0:
-                                                msg += f"▪️ Entrada: R$ {valor_entrada:.2f} (Paga em {datas_parcelas[0].strftime('%d/%m/%Y')})\n".replace('.', ',')
-                                                v_rest_calc = valor_restante / (qtd_parcelas - 1)
-                                                for i in range(2, int(qtd_parcelas) + 1):
-                                                    msg += f"▪️ {i}ª Parcela: R$ {v_rest_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
-                                            else:
-                                                v_parc_calc = total_pdv / qtd_parcelas
-                                                for i in range(1, int(qtd_parcelas) + 1):
-                                                    msg += f"▪️ {i}ª Parcela: R$ {v_parc_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
-                                        else:
-                                            msg += f"💳 *Forma de Pagto:* {f_pag}\n"
-
-                                        msg += "\n\nMuito obrigada pela preferência! ✨"
-
-                                        if tel_cli:
-                                            tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
-                                            if len(tel_limpo) >= 10:
-                                                if not tel_limpo.startswith('55'):
-                                                    tel_limpo = '55' + tel_limpo
-                                                st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
-                                                st.session_state['zap_msg'] = msg
-                                                st.session_state['zap_codigo'] = f"PEDIDO Nº {novo_cod}"
-                                                st.session_state['zap_total'] = total_pdv
-
-                                        conn.commit()
-                                        devolver_conexao(conn)
-                                        st.session_state['carrinho'] = []
-                                        st.session_state['pdv_reset'] += 1
-                                        st.session_state['reset_prod'] += 1
-                                        limpar_cache()
-                                        st.rerun()
-
-                                    except Exception as e:
-                                        st.error(f"Erro no banco: {e}")
-                                        if 'conn' in locals():
-                                            devolver_conexao(conn)
-
-                                c_orc, c_limpar = st.columns(2)
-                                if c_orc.button("📋 Salvar orçamento", use_container_width=True):
-                                    try:
-                                        carrinho_texto = json.dumps(st.session_state['carrinho'])
-                                        conn = conectar_banco()
-                                        cur = conn.cursor()
-                                        data_hoje_str = date.today().strftime('%d/%m/%Y')
-
-                                        cur.execute("""INSERT INTO orcamentos (empresa_id, cliente_nome, data_orcamento, valor_total, carrinho_json) 
-                                                       VALUES (%s,%s,%s,%s,%s)""",
-                                                    (int(emp_id), cliente_pdv, data_hoje_str, float(total_pdv), carrinho_texto))
-                                        conn.commit()
-                                        devolver_conexao(conn)
-                                    except Exception as e:
-                                        st.error(f"Erro ao salvar orçamento: {e}")
-
-                                    cur_cli = carregar_dados_cached("SELECT telefone FROM clientes WHERE nome=%s AND empresa_id=%s", (cliente_pdv, emp_id))
-                                    tel_cli = cur_cli.iloc[0]['telefone'] if not cur_cli.empty else None
-
-                                    lista_produtos_msg = ""
-                                    for it in st.session_state['carrinho']:
-                                        lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
-                                        if float(it.get('desc', 0)) > 0:
-                                            desc_total_item = float(it['desc']) * int(it['qtd'])
-                                            lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
-
-                                    msg = f"Olá, {cliente_pdv}! 🌸\n\n"
-                                    msg += f"Segue a simulação do seu *ORÇAMENTO* feito hoje ({date.today().strftime('%d/%m/%Y')}):\n\n"
-                                    msg += f"*Itens Solicitados:*\n{lista_produtos_msg}\n"
-                                    msg += f"💰 *Valor Total Estimado:* R$ {total_pdv:.2f}\n".replace('.', ',')
-
-                                    if qtd_parcelas > 1:
-                                        msg += "\n🗓️ *Simulação de Parcelamento:*\n"
-                                        if f_pag == "Crediário" and valor_entrada > 0:
-                                            msg += f"▪️ Entrada sugerida: R$ {valor_entrada:.2f}\n".replace('.', ',')
-                                            v_rest_calc = valor_restante / (qtd_parcelas - 1)
-                                            for i in range(2, int(qtd_parcelas) + 1):
-                                                msg += f"▪️ {i}ª Parcela: R$ {v_rest_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
-                                        else:
-                                            v_parc_calc = total_pdv / qtd_parcelas
-                                            for i in range(1, int(qtd_parcelas) + 1):
-                                                msg += f"▪️ {i}ª Parcela: R$ {v_parc_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
                                     else:
-                                        msg += f"💳 *Meio de pagamento simulado:* {f_pag}\n"
+                                        st.error("Estoque insuficiente!")
+                        else:
+                            st.info("👆 preencha o cliente, a forma de pagamento e selecione um item para configurar a venda.")
 
-                                    msg += "\n*Este orçamento é válido por 5 dias.* Tem interesse em fechar o pedido? ✨"
-
-                                    if tel_cli:
-                                        tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
-                                        if len(tel_limpo) >= 10:
-                                            if not tel_limpo.startswith('55'):
-                                                tel_limpo = '55' + tel_limpo
-                                            st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
-                                            st.session_state['zap_msg'] = msg
-                                            st.session_state['zap_codigo'] = "ORÇAMENTO EM ABERTO"
-                                            st.session_state['zap_total'] = total_pdv
-
+                    # 3. Carrinho e Configurações Financeiras
+                    st.markdown("#### 3️⃣ Carrinho e Finalização")
+                    if st.session_state['carrinho']:
+                        with st.container(border=True):
+                            st.markdown("**🛍️ Itens no Carrinho**")
+                            
+                            col_c1, col_c2, col_c3, col_c4, col_vazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
+                            col_c1.markdown("**Item**")
+                            col_c2.markdown("**Qtd**")
+                            col_c3.markdown("**Subtotal**")
+                            
+                            st.markdown("<hr style='margin: 4px 0px 8px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
+                            
+                            total_pdv = 0.0
+                            
+                            for i, item in enumerate(st.session_state['carrinho']):
+                                col_i1, col_i2, col_i3, col_i4, col_ivazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
+                                col_i1.write(f"▫️ {item['nome']}")
+                                col_i2.write(f"{item['qtd']}x")
+                                col_i3.write(f"R$ {item['total']:.2f}".replace('.', ','))
+                                
+                                if col_i4.button("🗑️", key=f"del_pdv_{i}", help="Remover item"):
+                                    st.session_state['carrinho'].pop(i)
                                     st.rerun()
+                                    
+                                total_pdv += float(item['total'])
+                            
+                            st.markdown("<hr style='margin: 10px 0px 10px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
+                            st.metric("Total Atual", f"R$ {total_pdv:.2f}".replace('.', ','))
+                    
+                        # --- CONFIGURAÇÃO DE ENTRADA ---
+                        valor_entrada = 0.0
+                        if f_pag == "Crediário":
+                            valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0)
+                    
+                        valor_restante = float(total_pdv - valor_entrada)
+                    
+                        # --- EDICÃO DINÂMICA DAS DATAS DAS PARCELAS ---
+                        datas_parcelas = []
+                        if qtd_parcelas > 1 or f_pag == "Crediário":
+                            st.markdown("📅 **Cronograma de Vencimentos (Clique na data para alterar):**")
+                        
+                            if f_pag == "Crediário" and valor_entrada > 0:
+                                datas_parcelas.append(data_venda_input)
+                            
+                                if qtd_parcelas > 1:
+                                    cols_p = st.columns(min(int(qtd_parcelas) - 1, 4))
+                                    for i in range(2, int(qtd_parcelas) + 1):
+                                        sugestao_p = data_1_venc + timedelta(days=30 * (i - 2))
+                                        with cols_p[(i-2) % min(int(qtd_parcelas) - 1, 4)]:
+                                            dt_p = st.date_input(f"{i}ª Parc. (Restante)", value=sugestao_p, format="DD/MM/YYYY", key=f"venc_p_{i}")
+                                            datas_parcelas.append(dt_p)
+                            else:
+                                cols_p = st.columns(min(int(qtd_parcelas), 4))
+                                for i in range(1, int(qtd_parcelas) + 1):
+                                    sugerido = data_1_venc + timedelta(days=30 * (i - 1))
+                                    with cols_p[(i-1) % min(int(qtd_parcelas), 4)]:
+                                        dt_p = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"venc_p_{i}")
+                                        datas_parcelas.append(dt_p)
+                        else:
+                            datas_parcelas.append(data_1_venc)
 
-                                if c_limpar.button("🧹 Limpar carrinho", use_container_width=True):
-                                    st.session_state['carrinho'] = []
-                                    st.session_state['reset_prod'] += 1
-                                    st.rerun()
-                else:
+                        if f_pag == "Crediário" and valor_entrada > 0:
+                            st.info(f"💵 Entrada: R$ {valor_entrada:.2f} (Paga hoje) | ⏳ Restante: R$ {valor_restante:.2f} lançado em {int(qtd_parcelas - 1)}x de R$ {(valor_restante / (qtd_parcelas - 1)):.2f}".replace('.', ','))
+                        elif qtd_parcelas > 1:
+                            st.info(f"💳 Parcelamento: {int(qtd_parcelas)}x de R$ {(total_pdv / qtd_parcelas):.2f} ".replace('.', ','))
+                    
+                        st.markdown("---")             
+                        st.markdown("**✅ Concluir**")
+                        c1_finalizar, c2_orcamento, c3_limpar = st.columns(3)
+                    
+                        # --- AÇÃO: FINALIZAR VENDA (PERSISTE NO BANCO) ---
+                        if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
+                            try:
+                                conn = conectar_banco()
+                                cur = conn.cursor()
+                            
+                                cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
+                                resultado = cur.fetchone()[0]
+                                novo_cod = int(resultado + 1) if resultado else 1
+                            
+                                data_v = data_venda_input.strftime("%d/%m/%Y")
+                                cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
+                            
+                                for it in st.session_state['carrinho']:
+                                    cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
+                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                               (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), it['colab_id']))
+                                
+                                    if it['tipo'] == 'P':
+                                        cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (int(it['qtd']), int(it['id'])))
+                            
+                                if f_pag == "Crediário" and valor_entrada > 0:
+                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                               (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', data_v, int(emp_id)))
+                                    
+                                    if qtd_parcelas > 1:
+                                        val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
+                                        for i in range(2, int(qtd_parcelas) + 1):
+                                            dt_venc = datas_parcelas[i-1]
+                                            cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
+                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                       (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc_rest), dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
+                                else:
+                                    val_parc = float(total_pdv / qtd_parcelas)
+                                    for i in range(1, int(qtd_parcelas) + 1):
+                                        dt_venc = datas_parcelas[i-1]
+                                        status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
+                                        data_pag_val = data_v if status_venda == 'Pago' else None
+                                        
+                                        cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                   (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))                        
+                            
+                                # Mensagem do WhatsApp
+                                cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
+                                resultado_tel = cur.fetchone()
+                                tel_cli = resultado_tel[0] if resultado_tel else None
+                            
+                                lista_produtos_msg = ""
+                                for it in st.session_state['carrinho']:
+                                    lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                                    # CORREÇÃO 2A: Inclui a linha de desconto no recibo da venda se houver desconto
+                                    if float(it.get('desc', 0)) > 0:
+                                        desc_total_item = float(it['desc']) * int(it['qtd'])
+                                        lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
+                            
+                                msg = f"Olá, {cliente_pdv}! 🌸\n\n"
+                                msg += f"Aqui está o resumo do seu pedido do dia *{data_v}*:\n\n"
+                                msg += f"🧾 *Pedido Confirmado Nº {novo_cod}*\n\n"
+                                msg += f"*Itens:*\n{lista_produtos_msg}\n"
+                                msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
+                            
+                                if qtd_parcelas > 1:
+                                    msg += "\n📅 *Datas de Vencimento:*\n"
+                                    if f_pag == "Crediário" and valor_entrada > 0:
+                                        msg += f"▪️ Entrada: R$ {valor_entrada:.2f} (Paga em {datas_parcelas[0].strftime('%d/%m/%Y')})\n".replace('.', ',')
+                                        v_rest_calc = valor_restante / (qtd_parcelas - 1)
+                                        for i in range(2, int(qtd_parcelas) + 1):
+                                            msg += f"▪️ {i}ª Parcela: R$ {v_rest_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
+                                    else:
+                                        v_parc_calc = total_pdv / qtd_parcelas
+                                        for i in range(1, int(qtd_parcelas) + 1):
+                                            msg += f"▪️ {i}ª Parcela: R$ {v_parc_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
+                                else:
+                                    msg += f"💳 *Forma de Pagto:* {f_pag}\n"
+                                
+                                msg += "\n\nMuito obrigada pela preferência! ✨"
+                            
+                                if tel_cli:
+                                    tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
+                                    if len(tel_limpo) >= 10:
+                                        if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
+                                        st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                        st.session_state['zap_msg'] = msg
+                                        st.session_state['zap_codigo'] = f"PEDIDO Nº {novo_cod}"
+                                        st.session_state['zap_total'] = total_pdv
+                            
+                                conn.commit()
+                                devolver_conexao(conn)
+                                st.session_state['carrinho'] = []
+                                st.success(f"Venda {novo_cod} salva com sucesso como PEDIDO!")
+                                limpar_cache()
+                                st.rerun()
+                            
+                            except Exception as e:
+                                st.error(f"Erro no banco: {e}")
+                                if 'conn' in locals(): devolver_conexao(conn)
+
+                        # --- AÇÃO: ORÇAMENTO ---
+                        if c2_orcamento.button("📋 Salvar Orçamento", use_container_width=True):
+                            try:
+                                carrinho_texto = json.dumps(st.session_state['carrinho'])
+                                conn = conectar_banco()
+                                cur = conn.cursor()
+                                data_hoje_str = date.today().strftime('%d/%m/%Y')
+                                
+                                cur.execute("""INSERT INTO orcamentos (empresa_id, cliente_nome, data_orcamento, valor_total, carrinho_json) 
+                                               VALUES (%s,%s,%s,%s,%s)""", 
+                                            (int(emp_id), cliente_pdv, data_hoje_str, float(total_pdv), carrinho_texto))
+                                conn.commit()
+                                devolver_conexao(conn)
+                                st.success("Orçamento gravado no sistema com sucesso!")
+                            except Exception as e:
+                                st.error(f"Erro ao salvar orçamento: {e}")
+                                
+                            cur_cli = carregar_dados_cached("SELECT telefone FROM clientes WHERE nome=%s AND empresa_id=%s", (cliente_pdv, emp_id))
+                            tel_cli = cur_cli.iloc[0]['telefone'] if not cur_cli.empty else None
+                        
+                            lista_produtos_msg = ""
+                            for it in st.session_state['carrinho']:
+                                lista_produtos_msg += f"▫️ {int(it['qtd'])}x {it['nome']} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                                # CORREÇÃO 2B: Inclui a linha de desconto no recibo de orçamento se houver desconto
+                                if float(it.get('desc', 0)) > 0:
+                                    desc_total_item = float(it['desc']) * int(it['qtd'])
+                                    lista_produtos_msg += f"   ↳ 📉 Desconto: - R$ {desc_total_item:.2f}\n".replace('.', ',')
+                        
+                            msg = f"Olá, {cliente_pdv}! 🌸\n\n"
+                            msg += f"Segue a simulação do seu *ORÇAMENTO* feito hoje ({date.today().strftime('%d/%m/%Y')}):\n\n"
+                            msg += f"*Itens Solicitados:*\n{lista_produtos_msg}\n"
+                            msg += f"💰 *Valor Total Estimado:* R$ {total_pdv:.2f}\n".replace('.', ',')
+                        
+                            if qtd_parcelas > 1:
+                                msg += "\n🗓️ *Simulação de Parcelamento:*\n"
+                                if f_pag == "Crediário" and valor_entrada > 0:
+                                    msg += f"▪️ Entrada sugerida: R$ {valor_entrada:.2f}\n".replace('.', ',')
+                                    v_rest_calc = valor_restante / (qtd_parcelas - 1)
+                                    for i in range(2, int(qtd_parcelas) + 1):
+                                        msg += f"▪️ {i}ª Parcela: R$ {v_rest_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
+                                else:
+                                    v_parc_calc = total_pdv / qtd_parcelas
+                                    for i in range(1, int(qtd_parcelas) + 1):
+                                        msg += f"▪️ {i}ª Parcela: R$ {v_parc_calc:.2f} -> {datas_parcelas[i-1].strftime('%d/%m/%Y')}\n".replace('.', ',')
+                            else:
+                                msg += f"💳 *Meio de pagamento simulado:* {f_pag}\n"
+                        
+                            msg += "\n*Este orçamento é válido por 5 dias.* Tem interesse em fechar o pedido? ✨"
+                        
+                            if tel_cli:
+                                tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
+                                if len(tel_limpo) >= 10:
+                                    if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
+                                    st.session_state['zap_link'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                    st.session_state['zap_msg'] = msg
+                                    st.session_state['zap_codigo'] = "ORÇAMENTO EM ABERTO"
+                                    st.session_state['zap_total'] = total_pdv
+                        
+                            st.success("Orçamento gerado! Os dados de estoque e contas a receber permaneceram intactos.")
+                            st.rerun()
+
+                        if c3_limpar.button("🗑️ Limpar Carrinho", use_container_width=True): 
+                            st.session_state['carrinho'] = []
+                            st.rerun()
+                else: 
                     st.warning("Cadastre clientes e produtos antes de vender.")
+                
+                # --- TELA DO RECIBO OU ORÇAMENTO DO WHATSAPP ---
+                if 'zap_link' in st.session_state and st.session_state['zap_link']:
+                    st.markdown("---")
+                    with st.container(border=True):
+                        st.success(f"🎉 {st.session_state['zap_codigo']} pronto! Total: R$ {st.session_state['zap_total']:.2f}".replace('.', ','))
+                        st.subheader("📲 Enviar Documento via WhatsApp")
+                        st.text_area("Visualização da mensagem:", value=st.session_state['zap_msg'], height=180, disabled=True)
+                        st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
+                        if st.button("❌ Fechar Painel", use_container_width=True):
+                            del st.session_state['zap_link']
+                            if 'zap_msg' in st.session_state: del st.session_state['zap_msg']
+                            if 'zap_codigo' in st.session_state: del st.session_state['zap_codigo']
+                            if 'zap_total' in st.session_state: del st.session_state['zap_total']
+                            st.rerun()
 
                 # --- EXPANDER: EDITAR FORMA DE PAGAMENTO ---
                 # Fica FORA do bloco condicional para aparecer sempre
                 st.markdown("---")
-                st.markdown("### ⚙️ Ajustes administrativos")
-                # 🔧 Isolado em @st.fragment: este bloco cresce muito (de 3 para 10+
-                # widgets, incluindo um número VARIÁVEL de colunas de data conforme o
-                # número de parcelas escolhido). Isso é exatamente o padrão que causa o
-                # vazamento de conteúdo de outras abas (Serviços/Entradas/Trocas) para
-                # baixo da tela — sem o fragmento, cada interação aqui dispara um rerun
-                # completo do script, recalculando todas as abas junto.
-                @st.fragment
-                def fragmento_corrigir_pagamento_venda():
-                    st.caption("Área de manutenção: busque a venda pelo número ou cliente, altere a forma de pagamento e as parcelas serão recriadas.")
+                with st.expander("✏️ Corrigir Forma de Pagamento de uma Venda"):
+                    st.caption("Busque a venda pelo número ou cliente, altere a forma de pagamento e as parcelas serão recriadas.")
 
                     col_busca1, col_busca2 = st.columns(2)
                     busca_cod = col_busca1.number_input("Nº da Venda:", min_value=0, step=1, value=0, key="edit_fp_cod")
@@ -3096,450 +2745,295 @@ Feliz aniversário! 🥳✨"""
                                 st.error(f"Erro ao atualizar: {e}")
                                 if 'conn' in locals(): devolver_conexao(conn)        
 
-                with st.expander("✏️ Corrigir forma de pagamento de uma venda", expanded=False):
-                    fragmento_corrigir_pagamento_venda()
-
         # Inicializa o carrinho de serviços se não existir
         if 'carrinho_servicos' not in st.session_state:
             st.session_state['carrinho_servicos'] = []
 
         if tab_lanca_serv:
             with tab_lanca_serv:
-                # ==========================================================
-                # SERVIÇOS 2.0 — Tela de Serviços com identidade do PDV
-                # Mantém a lógica original: serviço, profissional, insumos,
-                # financeiro, recibo WhatsApp e link de avaliação.
-                # ==========================================================
-                st.markdown("""
-                    <style>
-                    .serv2-header {
-                        border-bottom: 1px solid #e5e7eb;
-                        padding: 2px 0 8px 0;
-                        margin: -4px 0 10px 0;
-                        display: flex;
-                        align-items: center;
-                        justify-content: space-between;
-                        gap: 10px;
-                    }
-                    .serv2-title {
-                        font-size: 1.05rem;
-                        font-weight: 900;
-                        color: #111827;
-                        line-height: 1.15;
-                    }
-                    .serv2-subtitle {
-                        color: #64748b;
-                        font-size: 0.78rem;
-                        line-height: 1.2;
-                        text-align: right;
-                        white-space: nowrap;
-                    }
-                    .serv2-section-title {
-                        font-weight: 900;
-                        color: #1f2937;
-                        font-size: 0.94rem;
-                        margin-bottom: 4px;
-                    }
-                    .serv2-total-box {
-                        border-radius: 14px;
-                        padding: 12px 14px;
-                        margin: 4px 0 10px 0;
-                        background: linear-gradient(135deg, #f8fafc 0%, #f5f3ff 100%);
-                        border: 1px solid #ddd6fe;
-                    }
-                    .serv2-total-label {
-                        font-size: 0.76rem;
-                        color: #6d28d9;
-                        font-weight: 800;
-                        text-transform: uppercase;
-                        letter-spacing: .035em;
-                    }
-                    .serv2-total-value {
-                        font-size: 1.8rem;
-                        color: #0f172a;
-                        font-weight: 950;
-                        line-height: 1.0;
-                        margin-top: 2px;
-                    }
-                    .serv2-small-note {
-                        color: #64748b;
-                        font-size: 0.78rem;
-                    }
-                    div[data-testid="stVerticalBlock"] { gap: 0.55rem; }
-                    @media (max-width: 768px) {
-                        .serv2-header {
-                            display: block;
-                            padding: 0 0 6px 0;
-                            margin: -8px 0 8px 0;
-                        }
-                        .serv2-title { font-size: 0.98rem; }
-                        .serv2-subtitle {
-                            text-align: left;
-                            white-space: normal;
-                            font-size: 0.72rem;
-                            margin-top: 2px;
-                        }
-                        .serv2-total-value { font-size: 1.45rem; }
-                        .serv2-total-box { padding: 10px 12px; }
-                    }
-                    </style>
-                """, unsafe_allow_html=True)
-
-                st.markdown(
-                    """
-                    <div class="serv2-header">
-                        <div class="serv2-title">✨ Lançar Serviço</div>
-                        <div class="serv2-subtitle">Serviço • Profissional • Insumos • Avaliação</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
+                st.subheader("✨ Lançamento de Serviços e Ficha Técnica")
+                
                 # Carrega dados
                 df_cli = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
                 df_serv = carregar_dados_cached("SELECT id, nome, valor FROM produtos WHERE empresa_id=%s AND tipo='S' ORDER BY nome", (emp_id,))
                 df_prod_insumo = carregar_dados_cached("SELECT id, nome FROM produtos WHERE empresa_id=%s AND tipo='P' AND classe='Insumo' ORDER BY nome", (emp_id,))
                 df_colab = carregar_dados_cached("SELECT id, nome FROM colaboradores WHERE ativo = TRUE AND empresa_id = %s", (emp_id,))
-
+            
                 if not df_cli.empty and not df_serv.empty and not df_colab.empty:
-                    # Painel do recibo fica logo no topo da aba para o operador não precisar procurar após finalizar.
-                    if 'zap_link_serv' in st.session_state and st.session_state['zap_link_serv']:
+                    # 1. Configurações do Atendimento
+                    st.markdown("#### 1️⃣ Dados do Atendimento")
+                    with st.container(border=True):
+                        c_cli, c_data = st.columns(2)
+                        cliente_pdv = c_cli.selectbox("Cliente (Ficha Técnica):", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione a cliente...", key="cli_serv")
+                        data_venda_input = c_data.date_input("Data do Serviço", format="DD/MM/YYYY", value=date.today(), key="dt_serv")
+                    
+                        c_pag, c_parc = st.columns(2)
+                        f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...", key="fpag_serv")
+                        
+                        # Inicialização padrão para evitar falhas se f_pag não estiver selecionado
+                        qtd_parcelas = 1
+                        data_1_venc = date.today()
+                        
+                        if f_pag:
+                            qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1, key="parc_serv")
+                            sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
+                            data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY", key="venc1_serv")
+                
+                    # 2. Seleção do Serviço, Profissional e Insumos
+                    st.markdown("#### 2️⃣ Procedimento")
+                    col_s1, col_s2 = st.columns(2)
+                    
+                    serv_display = col_s1.selectbox("✨ Selecione o Serviço:", options=df_serv['nome'].tolist(), index=None, placeholder="Escolha o procedimento...")
+                    nome_colab = col_s2.selectbox("👤 Quem executou?", options=df_colab['nome'].tolist(), index=None, placeholder="Selecione o profissional executor...")
+                    
+                    opcoes_insumos = df_prod_insumo['nome'].tolist() if not df_prod_insumo.empty else []
+                    msg_placeholder = "Selecione os produtos utilizados (opcional)..." if opcoes_insumos else "⚠️ Nenhum produto classificado como 'Insumo' no banco."
+                    insumos_selecionados = st.multiselect("🧴 Produtos/Insumos Utilizados na Sessão (Histórico do Cliente):", options=opcoes_insumos, placeholder=msg_placeholder, help="Estes itens ficarão salvos na ficha da cliente para consultas futuras.")
+                
+                    # --- NOVO FLUXO: Mostra detalhes do serviço assim que ele for selecionado ---
+                    if serv_display:
+                        s_info = df_serv[df_serv['nome'] == serv_display].iloc[0]
+                        preco_tabela = float(s_info['valor'])
+                        
+                        st.info(f"🏷️ Preço Base do Serviço: **R$ {preco_tabela:.2f}**".replace('.', ','))
+                        
+                        # Trocado st.form por st.container para que a validação do botão seja em tempo real
                         with st.container(border=True):
-                            st.success(f"🎉 {st.session_state['zap_codigo_serv']} finalizado! Total: R$ {st.session_state['zap_total_serv']:.2f}".replace('.', ','))
-                            st.markdown('<div class="serv2-section-title">📲 Enviar recibo e avaliação via WhatsApp</div>', unsafe_allow_html=True)
-
-                            msg_editada = st.text_area(
-                                "✏️ Edite a mensagem antes de enviar:",
-                                value=st.session_state['zap_msg_serv'],
-                                height=220,
-                                key="msg_editada_serv_top"
-                            )
-
-                            tel_serv = st.session_state.get('zap_tel_serv', '')
-                            if tel_serv:
-                                link_atualizado = f"https://wa.me/{tel_serv}?text={urllib.parse.quote(msg_editada)}"
-                            else:
-                                link_atualizado = st.session_state['zap_link_serv']
-
-                            c_w1, c_w2 = st.columns([2, 1])
-                            c_w1.link_button("🟢 Abrir WhatsApp e Enviar", link_atualizado, type="primary", use_container_width=True)
-                            if c_w2.button("➕ Novo atendimento", use_container_width=True, key="novo_atend_serv_top"):
-                                for k in ['zap_link_serv', 'zap_msg_serv', 'zap_codigo_serv', 'zap_total_serv', 'zap_tel_serv']:
-                                    if k in st.session_state:
-                                        del st.session_state[k]
+                            c1, c2, c3, c4 = st.columns(4)
+                        
+                            q_pdv = c1.number_input("Quantidade de Sessões:", min_value=1, step=1, value=1)
+                            preco_custom = c2.number_input("Preço do Serviço (R$):", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f")
+                            desc_rs = c3.number_input("Desconto (R$):", min_value=0.0, step=1.0, format="%.2f", key="d_rs_s")
+                            desc_perc = c4.number_input("Desconto (%):", min_value=0.0, max_value=100.0, step=1.0, format="%.1f", key="d_perc_s")
+                        
+                            trava_add = (cliente_pdv is None) or (f_pag is None) or (nome_colab is None)
+                            
+                            if trava_add:
+                                st.warning("⚠️ Preencha Cliente, Forma de Pagamento e Profissional para habilitar a adição ao carrinho.")
+                        
+                            if st.button("➕ Adicionar Serviço", type="primary", disabled=trava_add):
+                                desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
+                                
+                                idx_colab = df_colab['nome'].tolist().index(nome_colab)
+                                profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
+                                
+                                insumos_ids = []
+                                for ins in insumos_selecionados:
+                                    ins_id = df_prod_insumo[df_prod_insumo['nome'] == ins].iloc[0]['id']
+                                    insumos_ids.append(int(ins_id))
+                                
+                                nome_carrinho = f"{serv_display} (Profissional: {nome_colab})"
+                                if insumos_selecionados:
+                                    nome_carrinho += f" | Insumos: {', '.join(insumos_selecionados)}"
+                                
+                                st.session_state['carrinho_servicos'].append({
+                                    'id': int(s_info['id']), 
+                                    'nome': nome_carrinho, 
+                                    'qtd': int(q_pdv), 
+                                    'unit': float(preco_custom), 
+                                    'desc': float(desconto_final), 
+                                    'total': float((preco_custom - desconto_final) * q_pdv),
+                                    'colab_id': profissional_selecionado,
+                                    'insumos_ids': insumos_ids
+                                })
                                 st.rerun()
 
-                    col_operacao, col_resumo = st.columns([1.05, 1], gap="medium")
-
-                    with col_operacao:
+                    # 3. Carrinho e Configurações Financeiras
+                    st.markdown("#### 3️⃣ Carrinho e Finalização")
+                    if st.session_state['carrinho_servicos']:
                         with st.container(border=True):
-                            st.markdown('<div class="serv2-section-title">👤 Atendimento</div>', unsafe_allow_html=True)
-                            c_cli, c_data = st.columns([1.8, 1], gap="small")
-                            cliente_pdv = c_cli.selectbox(
-                                "Cliente",
-                                options=df_cli['nome'].tolist(),
-                                index=None,
-                                placeholder="Selecione a cliente...",
-                                key="cli_serv"
-                            )
-                            data_venda_input = c_data.date_input(
-                                "Data",
-                                format="DD/MM/YYYY",
-                                value=date.today(),
-                                key="dt_serv"
-                            )
-
-                            c_pag, c_parc = st.columns([1.5, 1], gap="small")
-                            f_pag = c_pag.selectbox(
-                                "Pagamento",
-                                ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"],
-                                index=None,
-                                placeholder="Forma...",
-                                key="fpag_serv"
-                            )
-
-                            qtd_parcelas = 1
-                            data_1_venc = date.today()
-                            if f_pag:
-                                qtd_parcelas = c_parc.number_input(
-                                    "Parcelas",
-                                    min_value=1,
-                                    max_value=12,
-                                    value=1,
-                                    step=1,
-                                    key="parc_serv"
-                                )
-                                sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
-                                data_1_venc = st.date_input(
-                                    "Data do 1º vencimento",
-                                    value=sugestao_venc,
-                                    format="DD/MM/YYYY",
-                                    key="venc1_serv"
-                                )
-
-                        with st.container(border=True):
-                            st.markdown('<div class="serv2-section-title">✨ Procedimento</div>', unsafe_allow_html=True)
-                            col_s1, col_s2 = st.columns([1.4, 1], gap="small")
-                            serv_display = col_s1.selectbox(
-                                "Serviço",
-                                options=df_serv['nome'].tolist(),
-                                index=None,
-                                placeholder="Escolha o procedimento...",
-                                key="servico_serv2"
-                            )
-                            nome_colab = col_s2.selectbox(
-                                "Profissional",
-                                options=df_colab['nome'].tolist(),
-                                index=None,
-                                placeholder="Executor...",
-                                key="colab_serv2"
-                            )
-
-                            opcoes_insumos = df_prod_insumo['nome'].tolist() if not df_prod_insumo.empty else []
-                            msg_placeholder = "Selecione os insumos utilizados..." if opcoes_insumos else "⚠️ Nenhum insumo cadastrado."
-                            insumos_selecionados = st.multiselect(
-                                "Insumos utilizados na sessão",
-                                options=opcoes_insumos,
-                                placeholder=msg_placeholder,
-                                help="Estes itens ficam salvos na ficha da cliente para consultas futuras.",
-                                key="insumos_serv2"
-                            )
-
-                            if serv_display:
-                                s_info = df_serv[df_serv['nome'] == serv_display].iloc[0]
-                                preco_tabela = float(s_info['valor'])
-                                st.info(f"🏷️ Preço base: R$ {preco_tabela:.2f}".replace('.', ','))
-
-                                c1, c2, c3, c4 = st.columns([0.9, 1.1, 1, 1], gap="small")
-                                q_pdv = c1.number_input("Sessões", min_value=1, step=1, value=1, key="qtd_serv2")
-                                preco_custom = c2.number_input("Preço (R$)", min_value=0.0, value=float(preco_tabela), step=1.0, format="%.2f", key="preco_serv2")
-                                desc_rs = c3.number_input("Desc. R$", min_value=0.0, step=1.0, format="%.2f", key="d_rs_s")
-                                desc_perc = c4.number_input("Desc. %", min_value=0.0, max_value=100.0, step=1.0, format="%.1f", key="d_perc_s")
-
-                                trava_add = (cliente_pdv is None) or (f_pag is None) or (nome_colab is None)
-                                if trava_add:
-                                    st.warning("Preencha cliente, pagamento e profissional para adicionar o serviço.")
-
-                                if st.button("➕ ADICIONAR SERVIÇO", type="primary", disabled=trava_add, use_container_width=True, key="add_serv2"):
-                                    desconto_final = preco_custom * (desc_perc / 100.0) if desc_perc > 0 else desc_rs
-
-                                    idx_colab = df_colab['nome'].tolist().index(nome_colab)
-                                    profissional_selecionado = int(df_colab.iloc[idx_colab]['id'])
-
-                                    insumos_ids = []
-                                    for ins in insumos_selecionados:
-                                        ins_id = df_prod_insumo[df_prod_insumo['nome'] == ins].iloc[0]['id']
-                                        insumos_ids.append(int(ins_id))
-
-                                    nome_carrinho = f"{serv_display} (Profissional: {nome_colab})"
-                                    if insumos_selecionados:
-                                        nome_carrinho += f" | Insumos: {', '.join(insumos_selecionados)}"
-
-                                    st.session_state['carrinho_servicos'].append({
-                                        'id': int(s_info['id']),
-                                        'nome': nome_carrinho,
-                                        'qtd': int(q_pdv),
-                                        'unit': float(preco_custom),
-                                        'desc': float(desconto_final),
-                                        'total': float((preco_custom - desconto_final) * q_pdv),
-                                        'colab_id': profissional_selecionado,
-                                        'insumos_ids': insumos_ids
-                                    })
-                                    st.rerun()
-                            else:
-                                st.caption("Selecione um serviço para informar profissional, insumos, sessões e desconto.")
-
-                    with col_resumo:
-                        with st.container(border=True):
-                            st.markdown('<div class="serv2-section-title">🛒 Serviços adicionados</div>', unsafe_allow_html=True)
-
+                            st.markdown("**🛍️ Serviços Adicionados**")
+                            
+                            col_c1, col_c2, col_c3, col_c4, col_vazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
+                            col_c1.markdown("**Procedimento**")
+                            col_c2.markdown("**Sessões**")
+                            col_c3.markdown("**Subtotal**")
+                            
+                            st.markdown("<hr style='margin: 4px 0px 8px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
+                            
                             total_pdv = 0.0
-                            desconto_total_serv = 0.0
-                            qtd_sessoes_serv = 0
-
-                            if st.session_state['carrinho_servicos']:
-                                col_c1, col_c2, col_c3, col_c4 = st.columns([4, 1, 1.6, 0.6], gap="small")
-                                col_c1.markdown("**Procedimento**")
-                                col_c2.markdown("**Qtd**")
-                                col_c3.markdown("**Total**")
-                                st.markdown("<hr style='margin: 4px 0 8px 0; opacity: .25;'>", unsafe_allow_html=True)
-
-                                for i, item in enumerate(st.session_state['carrinho_servicos']):
-                                    item_total = float(item['total'])
-                                    item_qtd = int(item['qtd'])
-                                    item_desc = float(item.get('desc', 0)) * item_qtd
-                                    total_pdv += item_total
-                                    desconto_total_serv += item_desc
-                                    qtd_sessoes_serv += item_qtd
-
-                                    col_i1, col_i2, col_i3, col_i4 = st.columns([4, 1, 1.6, 0.6], gap="small")
-                                    col_i1.write(f"▫️ {item['nome']}")
-                                    col_i2.write(f"{item_qtd}x")
-                                    col_i3.write(f"R$ {item_total:.2f}".replace('.', ','))
-                                    if col_i4.button("🗑️", key=f"del_serv_{i}", help="Remover serviço"):
-                                        st.session_state['carrinho_servicos'].pop(i)
-                                        st.rerun()
-                            else:
-                                st.info("Nenhum serviço adicionado ainda.")
-
-                            subtotal_bruto = total_pdv + desconto_total_serv
-                            total_pdv_fmt = f"R$ {total_pdv:.2f}".replace('.', ',')
-                            subtotal_fmt = f"R$ {subtotal_bruto:.2f}".replace('.', ',')
-                            desconto_fmt = f"R$ {desconto_total_serv:.2f}".replace('.', ',')
-
-                            st.markdown("---")
-                            st.markdown(f"""
-                                <div class="serv2-total-box">
-                                    <div class="serv2-total-label">Total do atendimento</div>
-                                    <div class="serv2-total-value">{total_pdv_fmt}</div>
-                                    <div class="serv2-small-note">{qtd_sessoes_serv} sessão(ões) • Subtotal {subtotal_fmt} • Descontos {desconto_fmt}</div>
-                                </div>
-                            """, unsafe_allow_html=True)
-
-                            valor_entrada = 0.0
-                            valor_restante = float(total_pdv)
-                            datas_parcelas = []
-
-                            if st.session_state['carrinho_servicos']:
-                                if f_pag == "Crediário":
-                                    valor_entrada = st.number_input(
-                                        "Valor da entrada (R$)",
-                                        min_value=0.0,
-                                        max_value=float(total_pdv),
-                                        value=0.0,
-                                        step=10.0,
-                                        key="ent_s"
-                                    )
-
-                                valor_restante = float(total_pdv - valor_entrada)
-
-                                if qtd_parcelas > 1 or f_pag == "Crediário":
-                                    with st.expander("📅 Cronograma de vencimentos", expanded=False):
-                                        if f_pag == "Crediário" and valor_entrada > 0:
-                                            datas_parcelas.append(data_venda_input)
-                                            if qtd_parcelas > 1:
-                                                cols_p = st.columns(min(int(qtd_parcelas) - 1, 4))
-                                                for i in range(2, int(qtd_parcelas) + 1):
-                                                    sugestao_p = data_1_venc + timedelta(days=30 * (i - 2))
-                                                    with cols_p[(i-2) % min(int(qtd_parcelas) - 1, 4)]:
-                                                        dt_p = st.date_input(f"{i}ª Parc.", value=sugestao_p, format="DD/MM/YYYY", key=f"v_p_s_{i}")
-                                                        datas_parcelas.append(dt_p)
-                                        else:
-                                            cols_p = st.columns(min(int(qtd_parcelas), 4))
-                                            for i in range(1, int(qtd_parcelas) + 1):
-                                                sugerido = data_1_venc + timedelta(days=30 * (i - 1))
-                                                with cols_p[(i-1) % min(int(qtd_parcelas), 4)]:
-                                                    dt_p = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"v_p_s_{i}")
-                                                    datas_parcelas.append(dt_p)
-                                else:
-                                    datas_parcelas.append(data_1_venc)
-
-                                c1_finalizar, c3_limpar = st.columns([2, 1], gap="small")
-
-                                if c1_finalizar.button("✅ FINALIZAR ATENDIMENTO", type="primary", use_container_width=True):
-                                    try:
-                                        conn = conectar_banco()
-                                        cur = conn.cursor()
-
-                                        cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
-                                        resultado = cur.fetchone()[0]
-                                        novo_cod = int(resultado + 1) if resultado else 1
-
-                                        data_v = data_venda_input.strftime("%d/%m/%Y")
-                                        cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
-
-                                        for it in st.session_state['carrinho_servicos']:
-                                            cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
-                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                       (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), int(it['colab_id'])))
-
-                                            if it['insumos_ids']:
-                                                for insumo_id in it['insumos_ids']:
-                                                    cur.execute("""INSERT INTO historico_insumos (venda_codigo, cliente_id, produto_id, data_uso, empresa_id) 
-                                                                   VALUES (%s,%s,%s,%s,%s)""",
-                                                                (int(novo_cod), int(cli_id_v), int(insumo_id), data_venda_input, int(emp_id)))
-
-                                        if f_pag == "Crediário" and valor_entrada > 0:
-                                            cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
-                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                       (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', data_v, int(emp_id)))
-
-                                            if qtd_parcelas > 1:
-                                                val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
-                                                for i in range(2, int(qtd_parcelas) + 1):
-                                                    dt_venc = datas_parcelas[i-1]
-                                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
-                                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                               (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc_rest), dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
-                                        else:
-                                            val_parc = float(total_pdv / qtd_parcelas)
-                                            for i in range(1, int(qtd_parcelas) + 1):
-                                                dt_venc = datas_parcelas[i-1]
-                                                status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
-                                                data_pag_val = data_v if status_venda == 'Pago' else None
-
-                                                cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
-                                                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                                                           (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))
-
-                                        cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
-                                        resultado_tel = cur.fetchone()
-                                        tel_cli = resultado_tel[0] if resultado_tel else None
-
-                                        lista_produtos_msg = ""
-                                        for it in st.session_state['carrinho_servicos']:
-                                            partes = it['nome'].split(' | Insumos:')
-                                            nome_serv = partes[0]
-                                            lista_produtos_msg += f"▫️ {nome_serv} (R$ {it['unit']:.2f})\n".replace('.', ',')
-
-                                        link_avaliacao = f"https://wa.me/?text=Atendimento%20N%C2%BA%20{novo_cod}%20-%20Avalia%C3%A7%C3%A3o"
-                                        url_base = st.secrets.get("APP_URL", "")
-                                        if url_base:
-                                            nome_encoded = urllib.parse.quote(cliente_pdv)
-                                            link_avaliacao = f"{url_base}?avaliacao={novo_cod}&empresa={emp_id}&cliente={nome_encoded}"
-
-                                        msg = f"Olá, {cliente_pdv}! ✨\n\n"
-                                        msg += f"Obrigada por escolher nossos serviços hoje ({data_v}). Aqui está o seu recibo:\n\n"
-                                        msg += f"🧾 *Atendimento Nº {novo_cod}*\n\n"
-                                        msg += f"*Procedimentos Realizados:*\n{lista_produtos_msg}\n"
-                                        msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
-                                        msg += f"💳 *Forma de Pagto:* {f_pag}\n\n"
-                                        msg += "Foi um prazer atender você. Até a próxima! 🌸\n\n"
-                                        msg += f"⭐ *Avalie seu atendimento:*\n{link_avaliacao}"
-
-                                        if tel_cli:
-                                            tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
-                                            if len(tel_limpo) >= 10:
-                                                if not tel_limpo.startswith('55'):
-                                                    tel_limpo = '55' + tel_limpo
-                                                st.session_state['zap_link_serv'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
-                                                st.session_state['zap_msg_serv'] = msg
-                                                st.session_state['zap_codigo_serv'] = f"ATENDIMENTO Nº {novo_cod}"
-                                                st.session_state['zap_total_serv'] = total_pdv
-                                                st.session_state['zap_tel_serv'] = tel_limpo
-
-                                        conn.commit()
-                                        devolver_conexao(conn)
-                                        st.session_state['carrinho_servicos'] = []
-                                        st.success(f"Ficha técnica e Atendimento {novo_cod} salvos com sucesso!")
-                                        limpar_cache()
-                                        st.rerun()
-
-                                    except Exception as e:
-                                        st.error(f"Erro no banco: {e}")
-                                        if 'conn' in locals():
-                                            devolver_conexao(conn)
-
-                                if c3_limpar.button("🗑️ Limpar", use_container_width=True):
-                                    st.session_state['carrinho_servicos'] = []
+                            
+                            for i, item in enumerate(st.session_state['carrinho_servicos']):
+                                col_i1, col_i2, col_i3, col_i4, col_ivazia = st.columns([5, 1, 1.5, 0.5, 3], gap="small")
+                                col_i1.write(f"▫️ {item['nome']}")
+                                col_i2.write(f"{item['qtd']}x")
+                                col_i3.write(f"R$ {item['total']:.2f}".replace('.', ','))
+                                
+                                if col_i4.button("🗑️", key=f"del_serv_{i}", help="Remover serviço"):
+                                    st.session_state['carrinho_servicos'].pop(i)
                                     st.rerun()
-                else:
-                    st.warning("Cadastre clientes, colaboradores e serviços para habilitar esta tela.")
+                                    
+                                total_pdv += float(item['total'])
+                            
+                            st.markdown("<hr style='margin: 10px 0px 10px 0px; opacity: 0.3;'>", unsafe_allow_html=True)
+                            st.metric("Total a Pagar", f"R$ {total_pdv:.2f}".replace('.', ','))
+                    
+                        # --- CONFIGURAÇÃO DE ENTRADA E PARCELAS ---
+                        valor_entrada = 0.0
+                        if f_pag == "Crediário":
+                            valor_entrada = st.number_input("Valor da Entrada (R$)", min_value=0.0, max_value=float(total_pdv), value=0.0, step=10.0, key="ent_s")
+                    
+                        valor_restante = float(total_pdv - valor_entrada)
+                    
+                        datas_parcelas = []
+                        if qtd_parcelas > 1 or f_pag == "Crediário":
+                            st.markdown("📅 **Cronograma de Vencimentos:**")
+                            if f_pag == "Crediário" and valor_entrada > 0:
+                                datas_parcelas.append(data_venda_input)
+                                if qtd_parcelas > 1:
+                                    cols_p = st.columns(min(int(qtd_parcelas) - 1, 4))
+                                    for i in range(2, int(qtd_parcelas) + 1):
+                                        sugestao_p = data_1_venc + timedelta(days=30 * (i - 2))
+                                        with cols_p[(i-2) % min(int(qtd_parcelas) - 1, 4)]:
+                                            dt_p = st.date_input(f"{i}ª Parc.", value=sugestao_p, format="DD/MM/YYYY", key=f"v_p_s_{i}")
+                                            datas_parcelas.append(dt_p)
+                            else:
+                                cols_p = st.columns(min(int(qtd_parcelas), 4))
+                                for i in range(1, int(qtd_parcelas) + 1):
+                                    sugerido = data_1_venc + timedelta(days=30 * (i - 1))
+                                    with cols_p[(i-1) % min(int(qtd_parcelas), 4)]:
+                                        dt_p = st.date_input(f"{i}ª Parcela", value=sugerido, format="DD/MM/YYYY", key=f"v_p_s_{i}")
+                                        datas_parcelas.append(dt_p)
+                        else:
+                            datas_parcelas.append(data_1_venc)
 
+                        st.markdown("---")             
+                        st.markdown("**✅ Concluir**")
+                        c1_finalizar, c3_limpar = st.columns([2, 1])
+                    
+                        # --- AÇÃO: FINALIZAR SERVIÇO (PERSISTE NO BANCO) ---
+                        if c1_finalizar.button("✅ Lançar Atendimento e Gerar Financeiro", type="primary", use_container_width=True):
+                            try:
+                                conn = conectar_banco()
+                                cur = conn.cursor()
+                            
+                                cur.execute("SELECT MAX(codigo_venda) FROM vendas WHERE empresa_id=%s", (int(emp_id),))
+                                resultado = cur.fetchone()[0]
+                                novo_cod = int(resultado + 1) if resultado else 1
+                            
+                                data_v = data_venda_input.strftime("%d/%m/%Y")
+                                cli_id_v = int(df_cli[df_cli['nome'] == cliente_pdv].iloc[0]['id'])
+                            
+                                for it in st.session_state['carrinho_servicos']:
+                                    cur.execute("""INSERT INTO vendas (codigo_venda, cliente_id, produto_id, quantidade, data_venda, valor_total, empresa_id, valor_unitario, desconto, forma_pagamento, valor_entrada, valor_restante, qtd_parcelas, colaborador_id) 
+                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                               (int(novo_cod), int(cli_id_v), int(it['id']), int(it['qtd']), str(data_v), float(it['total']), int(emp_id), float(it['unit']), float(it['desc']), str(f_pag), float(valor_entrada), float(valor_restante), int(qtd_parcelas), int(it['colab_id'])))
+                                    
+                                    if it['insumos_ids']:
+                                        for insumo_id in it['insumos_ids']:
+                                            cur.execute("""INSERT INTO historico_insumos (venda_codigo, cliente_id, produto_id, data_uso, empresa_id) 
+                                                           VALUES (%s,%s,%s,%s,%s)""",
+                                                        (int(novo_cod), int(cli_id_v), int(insumo_id), data_venda_input, int(emp_id)))
+                            
+                                if f_pag == "Crediário" and valor_entrada > 0:
+                                    cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                               (int(novo_cod), int(cli_id_v), 1, int(qtd_parcelas), float(valor_entrada), datas_parcelas[0].strftime("%d/%m/%Y"), 'Pago', data_v, int(emp_id)))
+                                    
+                                    if qtd_parcelas > 1:
+                                        val_parc_rest = float(valor_restante / (qtd_parcelas - 1))
+                                        for i in range(2, int(qtd_parcelas) + 1):
+                                            dt_venc = datas_parcelas[i-1]
+                                            cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id) 
+                                                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                       (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc_rest), dt_venc.strftime("%d/%m/%Y"), 'Pendente', int(emp_id)))
+                                else:
+                                    val_parc = float(total_pdv / qtd_parcelas)
+                                    for i in range(1, int(qtd_parcelas) + 1):
+                                        dt_venc = datas_parcelas[i-1]
+                                        status_venda = 'Pendente' if qtd_parcelas > 1 else ('Pago' if f_pag != "Crediário" else 'Pendente')
+                                        data_pag_val = data_v if status_venda == 'Pago' else None
+                                        
+                                        cur.execute("""INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, data_pagamento, empresa_id) 
+                                                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                                   (int(novo_cod), int(cli_id_v), int(i), int(qtd_parcelas), float(val_parc), dt_venc.strftime("%d/%m/%Y"), status_venda, data_pag_val, int(emp_id)))                        
+                            
+                                cur.execute("SELECT telefone FROM clientes WHERE id = %s", (cli_id_v,))
+                                resultado_tel = cur.fetchone()
+                                tel_cli = resultado_tel[0] if resultado_tel else None
+                            
+                                # Monta lista de serviços com profissional e insumos visíveis
+                                lista_produtos_msg = ""
+                                for it in st.session_state['carrinho_servicos']:
+                                    partes = it['nome'].split(' | Insumos:')
+                                    nome_serv = partes[0]  # inclui "(Profissional: Nome)"
+                                    lista_produtos_msg += f"▫️ {nome_serv} (R$ {it['unit']:.2f})\n".replace('.', ',')
+                            
+                                # Link de avaliação personalizado por atendimento
+                                link_avaliacao = f"https://wa.me/?text=Atendimento%20N%C2%BA%20{novo_cod}%20-%20Avalia%C3%A7%C3%A3o"
+                                url_base = st.secrets.get("APP_URL", "")
+                                if url_base:
+                                    nome_encoded = urllib.parse.quote(cliente_pdv)
+                                    link_avaliacao = f"{url_base}?avaliacao={novo_cod}&empresa={emp_id}&cliente={nome_encoded}"
+
+                                msg = f"Olá, {cliente_pdv}! ✨\n\n"
+                                msg += f"Obrigada por escolher nossos serviços hoje ({data_v}). Aqui está o seu recibo:\n\n"
+                                msg += f"🧾 *Atendimento Nº {novo_cod}*\n\n"
+                                msg += f"*Procedimentos Realizados:*\n{lista_produtos_msg}\n"
+                                msg += f"💰 *Valor Total:* R$ {total_pdv:.2f}\n".replace('.', ',')
+                                msg += f"💳 *Forma de Pagto:* {f_pag}\n\n"
+                                msg += "Foi um prazer atender você. Até a próxima! 🌸\n\n"
+                                msg += f"⭐ *Avalie seu atendimento:*\n{link_avaliacao}"
+                            
+                                if tel_cli:
+                                    tel_limpo = ''.join(filter(str.isdigit, str(tel_cli)))
+                                    if len(tel_limpo) >= 10:
+                                        if not tel_limpo.startswith('55'): tel_limpo = '55' + tel_limpo
+                                        st.session_state['zap_link_serv'] = f"https://wa.me/{tel_limpo}?text={urllib.parse.quote(msg)}"
+                                        st.session_state['zap_msg_serv'] = msg
+                                        st.session_state['zap_codigo_serv'] = f"ATENDIMENTO Nº {novo_cod}"
+                                        st.session_state['zap_total_serv'] = total_pdv
+                                        st.session_state['zap_tel_serv'] = tel_limpo
+                            
+                                conn.commit()
+                                devolver_conexao(conn)
+                                st.session_state['carrinho_servicos'] = []
+                                st.success(f"Ficha técnica e Atendimento {novo_cod} salvos com sucesso!")
+                                limpar_cache()
+                                st.rerun()
+                            
+                            except Exception as e:
+                                st.error(f"Erro no banco: {e}")
+                                if 'conn' in locals(): devolver_conexao(conn)
+
+                        if c3_limpar.button("🗑️ Limpar Painel", use_container_width=True): 
+                            st.session_state['carrinho_servicos'] = []
+                            st.rerun()
+                else: 
+                    st.warning("Cadastre clientes, colaboradores e serviços para habilitar esta tela.")
                 
+                # --- TELA DO RECIBO DO WHATSAPP ---
+                if 'zap_link_serv' in st.session_state and st.session_state['zap_link_serv']:
+                    st.markdown("---")
+                    with st.container(border=True):
+                        st.success(f"🎉 {st.session_state['zap_codigo_serv']} finalizado! Total: R$ {st.session_state['zap_total_serv']:.2f}".replace('.', ','))
+                        st.subheader("📲 Enviar Recibo via WhatsApp")
+                        
+                        # Mensagem editável antes do envio
+                        msg_editada = st.text_area(
+                            "✏️ Edite a mensagem antes de enviar:",
+                            value=st.session_state['zap_msg_serv'],
+                            height=250
+                        )
+                        
+                        # Atualiza o link do WhatsApp com a mensagem editada
+                        tel_serv = st.session_state.get('zap_tel_serv', '')
+                        if tel_serv:
+                            link_atualizado = f"https://wa.me/{tel_serv}?text={urllib.parse.quote(msg_editada)}"
+                        else:
+                            link_atualizado = st.session_state['zap_link_serv']
+                        
+                        st.link_button("🟢 Abrir WhatsApp e Enviar", link_atualizado, type="primary", use_container_width=True)
+                        
+                        if st.button("❌ Fechar Painel", use_container_width=True, key="fechar_zap_s"):
+                            del st.session_state['zap_link_serv']
+                            for k in ['zap_msg_serv', 'zap_codigo_serv', 'zap_total_serv', 'zap_tel_serv']:
+                                if k in st.session_state: del st.session_state[k]
+                            st.rerun()         
+                            
         if tab_orcamentos:
             with tab_orcamentos:
-                st.markdown('<div class="ads-screen-title">📋 Orçamentos Salvos</div><div class="ads-screen-caption">Consulte, edite, converta ou exclua propostas comerciais.</div>', unsafe_allow_html=True)
+                st.subheader("📋 Orçamentos Salvos")
                 
                 # Carrega todos os orçamentos ativos da empresa
                 df_orcs = carregar_dados_cached("SELECT id, cliente_nome, data_orcamento, valor_total, carrinho_json FROM orcamentos WHERE empresa_id=%s ORDER BY id DESC", (emp_id,))
@@ -3691,7 +3185,45 @@ Feliz aniversário! 🥳✨"""
 
         if tab_compra:
             with tab_compra:
-                st.markdown('<div class="ads-screen-title">📥 Entrada de Mercadorias</div><div class="ads-screen-caption">Registre compras e atualize o estoque de forma organizada.</div>', unsafe_allow_html=True)
+                st.subheader("📥 Entrada de Mercadorias e Estoque")
+                
+                # 🔧 Exibe a mensagem de sucesso guardada antes do st.rerun() da finalização.
+                # Sem isso, a mensagem aparecia e sumia quase na hora, porque o rerun
+                # recarrega a tela antes de dar tempo de ler.
+                if 'msg_sucesso_compra' in st.session_state:
+                    st.success(st.session_state.pop('msg_sucesso_compra'))
+                    # Após o rerun, o navegador mantém a posição de rolagem onde o
+                    # usuário estava (lá embaixo, no botão "Finalizar"). Tenta vários
+                    # alvos possíveis (a estrutura interna do Streamlit varia entre
+                    # versões) e repete algumas vezes, já que a página pode ainda
+                    # estar recalculando a altura do conteúdo no instante do rerun.
+                    st.components.v1.html("""
+                        <script>
+                            function irParaOTopo() {
+                                var doc = window.parent.document;
+                                var alvos = [
+                                    doc.querySelector('[data-testid="stAppViewContainer"]'),
+                                    doc.querySelector('[data-testid="stMain"]'),
+                                    doc.querySelector('section.main'),
+                                    doc.documentElement,
+                                    doc.body
+                                ];
+                                alvos.forEach(function(el) {
+                                    if (el) { el.scrollTop = 0; }
+                                });
+                                window.parent.scrollTo(0, 0);
+                            }
+                            irParaOTopo();
+                            setTimeout(irParaOTopo, 100);
+                            setTimeout(irParaOTopo, 300);
+                            setTimeout(irParaOTopo, 600);
+                        </script>
+                    """, height=0)
+                
+                # Inicia o carrinho da compra na sessão se não existir — compartilhado
+                # pelos dois fluxos (PDF e Manual) agora que finalizam na mesma tela.
+                if 'carrinho_compra' not in st.session_state:
+                    st.session_state['carrinho_compra'] = []
                 
                 # Seletor inteligente do método de entrada
                 metodo_entrada = st.radio(
@@ -3709,29 +3241,68 @@ Feliz aniversário! 🥳✨"""
                         if st.button("🔍 Processar PDF do Pedido", type="primary"):
                             
                             try:
+                                # 🔧 CORREÇÃO: acumula preservando as quebras de linha (\n) de cada
+                                # página, em vez de juntar tudo com espaço. Isso é essencial porque
+                                # código, nome, preço, quantidade e subtotal sempre vêm juntos na
+                                # MESMA linha do PDF — é a informação "Pontos: NN" da linha seguinte
+                                # que atrapalhava quando tudo virava uma string só achatada.
                                 texto_extraido = ""
                                 with pdfplumber.open(arquivo_pdf) as pdf:
                                     for pagina in pdf.pages:
-                                        texto_extraido += pagina.extract_text() + " "
+                                        texto_extraido += (pagina.extract_text() or "") + "\n"
                                 
-                                if texto_extraido:
-                                    texto_limpo = texto_extraido.replace('\n', ' ')
-                                    padrao = r'(\d{8})\s+(.*?)\s+R\$\s*([\d.,]+)\s+(\d+)'
+                                if texto_extraido.strip():
+                                    # 🔧 CORREÇÃO: regex aplicado linha a linha (não mais na string
+                                    # inteira achatada). Cada linha de produto tem o formato:
+                                    # "<código 8 dígitos> <nome> R$<preço> <qtd> R$<subtotal>"
+                                    padrao_linha = re.compile(r'^(\d{8})\s+(.+?)\s+R\$\s*([\d.,]+)\s+(\d+)\s+R\$\s*([\d.,]+)\s*$')
                                     
                                     produtos_extraidos = []
-                                    for match in re.finditer(padrao, texto_limpo):
-                                        codigo = match.group(1)
-                                        nome_produto = match.group(2).strip()
-                                        preco_str = match.group(3).replace('.', '').replace(',', '.')
-                                        quantidade = int(match.group(4))
+                                    chaves_vistas = set()  # 🔧 evita duplicar itens quando o PDF repete a lista em várias páginas (caso do pedido Mary Kay)
+                                    
+                                    for linha in texto_extraido.split('\n'):
+                                        m = padrao_linha.match(linha.strip())
+                                        if not m:
+                                            continue
                                         
-                                        if "Desconto" not in nome_produto and "Folheto" not in nome_produto:
-                                            produtos_extraidos.append({
-                                                "Código": codigo,
-                                                "Produto": nome_produto,
-                                                "Preço Un. (R$)": float(preco_str),
-                                                "Quantidade": quantidade
-                                            })
+                                        codigo = m.group(1)
+                                        nome_produto = m.group(2).strip()
+                                        preco_str = m.group(3).replace('.', '').replace(',', '.')
+                                        quantidade = int(m.group(4))
+                                        subtotal_str = m.group(5).replace('.', '').replace(',', '.')
+                                        
+                                        if "Desconto" in nome_produto or "Folheto" in nome_produto:
+                                            continue
+                                        
+                                        chave = (codigo, preco_str, quantidade, subtotal_str)
+                                        if chave in chaves_vistas:
+                                            continue
+                                        chaves_vistas.add(chave)
+                                        
+                                        produtos_extraidos.append({
+                                            "Código": codigo,
+                                            "Produto": nome_produto,
+                                            "Preço Un. (R$)": float(preco_str),
+                                            "Quantidade": quantidade
+                                        })
+                                    
+                                    # 🔧 CORREÇÃO: detecta desconto percentual do pedido (comum em
+                                    # pedidos de consultoras, ex: "50,00% de Desconto") e aplica
+                                    # automaticamente sobre cada item — sem isso, o contas_pagar
+                                    # seria gravado pelo preço de catálogo cheio, não pelo valor
+                                    # realmente devido ao fornecedor.
+                                    percentual_desconto = 0.0
+                                    m_desc = re.search(r'([\d]+[,.]\d+)\s*%\s*de\s*Desconto', texto_extraido)
+                                    if m_desc:
+                                        percentual_desconto = float(m_desc.group(1).replace(',', '.'))
+                                    
+                                    if percentual_desconto > 0 and produtos_extraidos:
+                                        fator = 1 - (percentual_desconto / 100)
+                                        for p in produtos_extraidos:
+                                            p["Preço Un. (R$)"] = round(p["Preço Un. (R$)"] * fator, 2)
+                                        st.session_state['desconto_pdf_detectado'] = percentual_desconto
+                                    else:
+                                        st.session_state['desconto_pdf_detectado'] = 0.0
                                     
                                     if produtos_extraidos:
                                         st.session_state['produtos_pedido'] = produtos_extraidos
@@ -3739,206 +3310,300 @@ Feliz aniversário! 🥳✨"""
                                     else:
                                         st.error("❌ Não encontramos produtos no padrão. Verifique se é o PDF oficial do pedido.")
                                         with st.expander("Ver texto extraído (Debug)"):
-                                            st.write(texto_extraido[:1000])
+                                            st.write(texto_extraido[:2000])
                                 else:
                                     st.error("❌ Não foi possível extrair texto do documento.")
                                     
                             except Exception as erro_leitura:
                                 st.error(f"Erro ao processar o arquivo PDF: {erro_leitura}")
+                    
+                    # 🔧 PARTE QUE FALTAVA: a "planilha" editável prometida na mensagem acima,
+                    # mais o botão que efetivamente joga os itens revisados no carrinho de
+                    # compra — o mesmo carrinho usado pelo Lançamento Manual logo abaixo, que
+                    # já sabe gravar tudo no banco (estoque, financeiro, etc.).
+                    if 'produtos_pedido' in st.session_state and st.session_state['produtos_pedido']:
+                        st.markdown("---")
+                        st.markdown("### 📝 Revise os itens antes de importar")
+                        st.caption("Ajuste quantidades ou preços se necessário, e remova linhas indesejadas (ex: itens bonificados) antes de confirmar.")
+                        
+                        desconto_detectado = st.session_state.get('desconto_pdf_detectado', 0.0)
+                        if desconto_detectado > 0:
+                            st.info(f"💰 Desconto de {desconto_detectado:.2f}% detectado no pedido e já aplicado nos preços unitários abaixo — confira se está correto antes de importar.")
+                        
+                        df_edicao_pdf = pd.DataFrame(st.session_state['produtos_pedido'])
+                        
+                        df_editado = st.data_editor(
+                            df_edicao_pdf,
+                            column_config={
+                                "Código": st.column_config.TextColumn("Código", disabled=True),
+                                "Produto": st.column_config.TextColumn("Produto", width="large"),
+                                "Preço Un. (R$)": st.column_config.NumberColumn("Preço Un. (R$)", format="%.2f", min_value=0.0),
+                                "Quantidade": st.column_config.NumberColumn("Quantidade", min_value=1, step=1),
+                            },
+                            hide_index=True,
+                            use_container_width=True,
+                            num_rows="dynamic",
+                            key="editor_produtos_pdf"
+                        )
+                        
+                        col_conf1, col_conf2 = st.columns([1, 1])
+                        
+                        if col_conf1.button("➕ Adicionar itens ao carrinho de compra", type="primary", use_container_width=True):
+                            if 'carrinho_compra' not in st.session_state:
+                                st.session_state['carrinho_compra'] = []
+                            
+                            # Verifica quais códigos já existem cadastrados, para reaproveitar o
+                            # mesmo mecanismo de atualização direta por ID que o Lançamento Manual usa
+                            codigos_pdf = [str(c).strip() for c in df_editado['Código'].tolist()]
+                            df_existentes = carregar_dados_cached(
+                                "SELECT id, referencia FROM produtos WHERE empresa_id = %s AND referencia = ANY(%s)",
+                                (emp_id, codigos_pdf)
+                            )
+                            mapa_ids = dict(zip(df_existentes['referencia'].astype(str), df_existentes['id'])) if not df_existentes.empty else {}
+                            
+                            qtd_adicionada = 0
+                            for _, row in df_editado.iterrows():
+                                cod_item = str(row['Código']).strip()
+                                item_carrinho = {
+                                    "Código": cod_item,
+                                    "Produto": str(row['Produto']).strip(),
+                                    "Quantidade": int(row['Quantidade']),
+                                    "Preço Un. (R$)": float(row['Preço Un. (R$)'])
+                                }
+                                if cod_item in mapa_ids:
+                                    item_carrinho["id"] = int(mapa_ids[cod_item])
+                                
+                                st.session_state['carrinho_compra'].append(item_carrinho)
+                                qtd_adicionada += 1
+                            
+                            del st.session_state['produtos_pedido']
+                            st.success(f"✅ {qtd_adicionada} itens adicionados ao carrinho! Role para baixo para conferir, definir o fornecedor/nota e finalizar a entrada.")
+                            st.rerun()
+                        
+                        if col_conf2.button("🗑️ Descartar", use_container_width=True):
+                            del st.session_state['produtos_pedido']
+                            st.rerun()
                 
                 # --- FLUXO 2: LANÇAMENTO MANUAL (CRUD PROFISSIONAL INTEGRADO) ---
                 else:
-                    # Inicia o carrinho da compra na sessão se não existir
-                    if 'carrinho_compra' not in st.session_state:
-                        st.session_state['carrinho_compra'] = []
-                        
-                    # Busca todos os produtos e fornecedores cadastrados para os seletores
+                    # Busca todos os produtos cadastrados para o seletor
                     query_prods = "SELECT id, referencia, nome FROM produtos WHERE empresa_id = %s ORDER BY nome"
                     df_produtos = carregar_dados_cached(query_prods, (emp_id,))
                     
-                    query_forn = "SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome"
-                    df_fornecedores = carregar_dados_cached(query_forn, (emp_id,))
+                    st.markdown("### 🛒 Adicionar Item à Nota")
+                    tipo_item = st.radio("O que você está dando entrada?", ["Produto já cadastrado", "Produto novo (Primeira vez)"], horizontal=True)
                     
-                    col_form, col_resumo = st.columns([2, 1.5], gap="large")
-                    
-                    with col_form:
-                        st.markdown("### 🛒 Adicionar Item à Nota")
-                        tipo_item = st.radio("O que você está dando entrada?", ["Produto já cadastrado", "Produto novo (Primeira vez)"], horizontal=True)
-                        
-                        with st.form("form_add_compra", clear_on_submit=True):
-                            if tipo_item == "Produto já cadastrado" and not df_produtos.empty:
-                                lista_nomes = df_produtos['nome'].tolist()
-                                prod_selecionado = st.selectbox("🔍 Busque o Produto", [""] + lista_nomes)
-                                
-                                c_qtd, c_preco = st.columns(2)
-                                qtd_input = c_qtd.number_input("Quantidade Recebida", min_value=1, step=1)
-                                custo_input = c_preco.number_input("Preço de Custo Un. (R$)", min_value=0.0, step=0.10, format="%.2f")
-                                
-                                if st.form_submit_button("➕ Adicionar à Nota", type="primary", use_container_width=True):
-                                    if not prod_selecionado:
-                                        st.warning("⚠️ Selecione um produto na lista.")
-                                    else:
-                                        prod_row = df_produtos[df_produtos['nome'] == prod_selecionado].iloc[0]
-                                        
-                                        st.session_state['carrinho_compra'].append({
-                                            "id": int(prod_row['id']),           # ID direto — nunca é nulo
-                                            "Código": prod_row['referencia'],
-                                            "Produto": prod_selecionado,
-                                            "Quantidade": int(qtd_input),
-                                            "Preço Un. (R$)": float(custo_input)
-                                        })
-                                        st.success(f"✅ {prod_selecionado} adicionado ao lote!")
-                                        
-                            else:
-                                st.caption("Preencha para cadastrar este item no estoque automaticamente ao salvar.")
-                                c_cod, c_nome = st.columns([1, 2])
-                                novo_cod = c_cod.text_input("Código / Referência")
-                                novo_nome = c_nome.text_input("Nome do Produto")
-                                
-                                c_qtd, c_preco = st.columns(2)
-                                qtd_input = c_qtd.number_input("Quantidade Recebida", min_value=1, step=1)
-                                custo_input = c_preco.number_input("Preço de Custo Un. (R$)", min_value=0.0, step=0.10, format="%.2f")
-                                
-                                if st.form_submit_button("➕ Adicionar Novo Produto à Nota", type="primary", use_container_width=True):
-                                    if not novo_cod or not novo_nome:
-                                        st.warning("⚠️ Código e Nome são obrigatórios para produtos novos.")
-                                    else:
-                                        st.session_state['carrinho_compra'].append({
-                                            "Código": novo_cod,
-                                            "Produto": novo_nome,
-                                            "Quantidade": int(qtd_input),
-                                            "Preço Un. (R$)": float(custo_input)
-                                        })
-                                        st.success(f"✅ {novo_nome} adicionado ao lote!")
-
-                    with col_resumo:
-                        st.markdown("### 📦 Resumo da Nota")
-                        numero_nota = st.text_input("Nº do Pedido/NF (Obrigatório):", key="nf_manual_crud")
-                        
-                        lista_forn = [""] + df_fornecedores['nome'].tolist() if not df_fornecedores.empty else [""]
-                        sel_fornecedor = st.selectbox("🏭 Fornecedor (Obrigatório):", lista_forn)
-                        
-                        # --- DADOS FINANCEIROS DA NOTA ---
-                        st.markdown("#### 💳 Condições de Pagamento")
-                        c_forma, c_parcelas = st.columns([2, 1])
-                        forma_pagamento = c_forma.selectbox("Forma:", ["À Vista", "Boleto Parcelado", "Cartão de Crédito Parcelado", "Pix"])
-                        
-                        if "Parcelado" in forma_pagamento:
-                            qtd_parcelas = c_parcelas.number_input("Parcelas", min_value=2, max_value=24, step=1)
-                        else:
-                            qtd_parcelas = 1
-                        
-                        if st.session_state['carrinho_compra']:
-                            df_carrinho = pd.DataFrame(st.session_state['carrinho_compra'])
-                            df_carrinho['Total (R$)'] = df_carrinho['Quantidade'] * df_carrinho['Preço Un. (R$)']
+                    with st.form("form_add_compra", clear_on_submit=True):
+                        if tipo_item == "Produto já cadastrado" and not df_produtos.empty:
+                            lista_nomes = df_produtos['nome'].tolist()
+                            prod_selecionado = st.selectbox("🔍 Busque o Produto", [""] + lista_nomes)
                             
-                            st.dataframe(
-                                df_carrinho[['Produto', 'Quantidade', 'Total (R$)']], 
-                                hide_index=True, 
-                                use_container_width=True
-                            )
+                            c_qtd, c_preco = st.columns(2)
+                            qtd_input = c_qtd.number_input("Quantidade Recebida", min_value=1, step=1)
+                            custo_input = c_preco.number_input("Preço de Custo Un. (R$)", min_value=0.0, step=0.10, format="%.2f")
                             
-                            # Conversão estrita para float nativo do Python para evitar erros de tipo no banco
-                            total_nota = float(df_carrinho['Total (R$)'].sum())
-                            st.metric("Total da Entrada", f"R$ {total_nota:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
-                            
-                            if st.button("💾 Finalizar Entrada no Estoque", type="primary", use_container_width=True):
-                                if not numero_nota:
-                                    st.error("⚠️ Digite o número do Pedido ou NF para gravar no histórico.")
-                                elif not sel_fornecedor:
-                                    st.error("⚠️ Selecione o fornecedor que está emitindo esta nota.")
+                            if st.form_submit_button("➕ Adicionar à Nota", type="primary", use_container_width=True):
+                                if not prod_selecionado:
+                                    st.warning("⚠️ Selecione um produto na lista.")
                                 else:
-                                    try:
-                                        id_forn_salvar = int(df_fornecedores[df_fornecedores['nome'] == sel_fornecedor].iloc[0]['id'])
-                                        
-                                        conn = conectar_banco()
-                                        cur = conn.cursor()
-                                        
-                                        # 1. Salva a Capa da Compra com as colunas de controle financeiro
-                                        cur.execute("""
-                                            INSERT INTO compras (numero_pedido, data_entrada, valor_total, empresa_id, fornecedor_id, forma_pagamento, qtd_parcelas) 
-                                            VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s) RETURNING id
-                                        """, (numero_nota, total_nota, emp_id, id_forn_salvar, forma_pagamento, qtd_parcelas))
-                                        compra_id = cur.fetchone()[0]
-                                        
-                                        itens_salvos = 0
-                                        
-                                        # 2. Salva os Itens e Atualiza as Quantidades do Estoque
-                                        for item in st.session_state['carrinho_compra']:
-                                            v_cod = str(item['Código']).strip()
-                                            v_nome = str(item['Produto']).strip()
-                                            v_qtd = int(item['Quantidade'])
-                                            v_valor = float(item['Preço Un. (R$)'])
-                                            prod_id_direto = item.get('id')  # presente para produtos já cadastrados
-                                            
-                                            cur.execute("""
-                                                INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
-                                                VALUES (%s, %s, %s, %s, %s)
-                                            """, (compra_id, v_cod, v_nome, v_qtd, v_valor))
-                                            
-                                            if prod_id_direto:
-                                                # Produto já cadastrado: atualiza diretamente pelo ID (nunca falha)
-                                                cur.execute("""
-                                                    UPDATE produtos 
-                                                    SET quantidade = quantidade + %s, preco_custo = %s 
-                                                    WHERE id = %s
-                                                """, (v_qtd, v_valor, prod_id_direto))
-                                            else:
-                                                # Produto novo: verifica por referência antes de inserir
-                                                cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
-                                                prod_existe = cur.fetchone()
-                                                if prod_existe:
-                                                    cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s", (v_qtd, prod_existe[0]))
-                                                else:
-                                                    cur.execute("""
-                                                        INSERT INTO produtos (nome, quantidade, valor, marca, categoria, empresa_id, referencia) 
-                                                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                                    """, (v_nome, v_qtd, v_valor, "D'Grava", "Geral", emp_id, v_cod))
-                                                
-                                            itens_salvos += 1
-                                            
-                                        # 3. Integração Automática com a Tabela contas_pagar (Campos e Tipos Estritos)
-                                        valor_parcela = float(total_nota / qtd_parcelas)
-                                        hoje_texto = date.today().strftime('%Y-%m-%d')
-                                        
-                                        for i in range(1, qtd_parcelas + 1):
-                                            if qtd_parcelas == 1:
-                                                # Lançamento à Vista: Status 'Pago' e datas preenchidas como texto
-                                                cur.execute("""
-                                                    INSERT INTO contas_pagar (compra_id, fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, data_pagamento, status, empresa_id)
-                                                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'Pago', %s)
-                                                """, (compra_id, id_forn_salvar, i, qtd_parcelas, valor_parcela, hoje_texto, hoje_texto, emp_id))
-                                            else:
-                                                # Lançamento Parcelado: Projeção de vencimentos futuros (texto) e status 'Pendente'
-                                                data_venc = date.today() + timedelta(days=30 * i)
-                                                venc_texto = data_venc.strftime('%Y-%m-%d')
-                                                
-                                                cur.execute("""
-                                                    INSERT INTO contas_pagar (compra_id, fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
-                                                    VALUES (%s, %s, %s, %s, %s, %s, 'Pendente', %s)
-                                                """, (compra_id, id_forn_salvar, i, qtd_parcelas, valor_parcela, venc_texto, emp_id))
-                                        
-                                        conn.commit()
-                                        devolver_conexao(conn)
-                                        
-                                        st.success(f"🎉 Sucesso! A NF {numero_nota} foi registrada. {itens_salvos} itens entraram no estoque e o financeiro foi atualizado.")
-                                        st.session_state['carrinho_compra'] = []
-                                        limpar_cache()
-                                        st.rerun()
-                                        
-                                    except Exception as e:
-                                        st.error(f"Erro ao salvar no banco: {e}")
-                                        if 'conn' in locals(): conn.rollback(); devolver_conexao(conn)
-                            
-                            if st.button("🗑️ Limpar Carrinho", use_container_width=True):
-                                st.session_state['carrinho_compra'] = []
-                                st.rerun()
+                                    prod_row = df_produtos[df_produtos['nome'] == prod_selecionado].iloc[0]
+                                    
+                                    st.session_state['carrinho_compra'].append({
+                                        "id": int(prod_row['id']),           # ID direto — nunca é nulo
+                                        "Código": prod_row['referencia'],
+                                        "Produto": prod_selecionado,
+                                        "Quantidade": int(qtd_input),
+                                        "Preço Un. (R$)": float(custo_input)
+                                    })
+                                    st.success(f"✅ {prod_selecionado} adicionado ao lote!")
+                                    
                         else:
-                            st.info("Nenhum item adicionado à nota ainda. Use o formulário ao lado para começar.")
+                            st.caption("Preencha para cadastrar este item no estoque automaticamente ao salvar.")
+                            c_cod, c_nome = st.columns([1, 2])
+                            novo_cod = c_cod.text_input("Código / Referência")
+                            novo_nome = c_nome.text_input("Nome do Produto")
+                            
+                            c_qtd, c_preco = st.columns(2)
+                            qtd_input = c_qtd.number_input("Quantidade Recebida", min_value=1, step=1)
+                            custo_input = c_preco.number_input("Preço de Custo Un. (R$)", min_value=0.0, step=0.10, format="%.2f")
+                            
+                            if st.form_submit_button("➕ Adicionar Novo Produto à Nota", type="primary", use_container_width=True):
+                                if not novo_cod or not novo_nome:
+                                    st.warning("⚠️ Código e Nome são obrigatórios para produtos novos.")
+                                else:
+                                    st.session_state['carrinho_compra'].append({
+                                        "Código": novo_cod,
+                                        "Produto": novo_nome,
+                                        "Quantidade": int(qtd_input),
+                                        "Preço Un. (R$)": float(custo_input)
+                                    })
+                                    st.success(f"✅ {novo_nome} adicionado ao lote!")
+
+                # ==========================================================
+                # 🔧 SEÇÃO COMPARTILHADA: Carrinho + Fornecedor/Nota + Finalizar
+                # Fica fora do if/else acima de propósito — aparece sempre que
+                # houver itens no carrinho, não importa se vieram do PDF ou do
+                # lançamento manual, permitindo concluir tudo numa tela só.
+                # ==========================================================
+                st.markdown("---")
+                st.markdown("### 📦 Resumo da Nota e Finalização")
+                
+                query_forn = "SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome"
+                df_fornecedores = carregar_dados_cached(query_forn, (emp_id,))
+                
+                if st.session_state['carrinho_compra']:
+                    numero_nota = st.text_input("Nº do Pedido/NF (Obrigatório):", key="nf_manual_crud")
+                    
+                    lista_forn = [""] + df_fornecedores['nome'].tolist() if not df_fornecedores.empty else [""]
+                    sel_fornecedor = st.selectbox("🏭 Fornecedor (Obrigatório):", lista_forn)
+                    
+                    # --- DADOS FINANCEIROS DA NOTA ---
+                    st.markdown("#### 💳 Condições de Pagamento")
+                    c_forma, c_parcelas = st.columns([2, 1])
+                    forma_pagamento = c_forma.selectbox("Forma:", ["À Vista", "Boleto Parcelado", "Cartão de Crédito Parcelado", "Pix"])
+                    
+                    if "Parcelado" in forma_pagamento:
+                        qtd_parcelas = c_parcelas.number_input("Parcelas", min_value=2, max_value=24, step=1)
+                    else:
+                        qtd_parcelas = 1
+                    
+                    df_carrinho = pd.DataFrame(st.session_state['carrinho_compra'])
+                    df_carrinho['Total (R$)'] = df_carrinho['Quantidade'] * df_carrinho['Preço Un. (R$)']
+                    
+                    st.dataframe(
+                        df_carrinho[['Produto', 'Quantidade', 'Total (R$)']], 
+                        hide_index=True, 
+                        use_container_width=True
+                    )
+                    
+                    # Conversão estrita para float nativo do Python para evitar erros de tipo no banco
+                    total_nota = float(df_carrinho['Total (R$)'].sum())
+                    st.metric("Total da Entrada", f"R$ {total_nota:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
+                    
+                    if st.button("💾 Finalizar Entrada no Estoque", type="primary", use_container_width=True):
+                        if not numero_nota:
+                            st.error("⚠️ Digite o número do Pedido ou NF para gravar no histórico.")
+                        elif not sel_fornecedor:
+                            st.error("⚠️ Selecione o fornecedor que está emitindo esta nota.")
+                        else:
+                            try:
+                                id_forn_salvar = int(df_fornecedores[df_fornecedores['nome'] == sel_fornecedor].iloc[0]['id'])
+                                
+                                conn = conectar_banco()
+                                cur = conn.cursor()
+                                
+                                # 1. Salva a Capa da Compra com as colunas de controle financeiro
+                                cur.execute("""
+                                    INSERT INTO compras (numero_pedido, data_entrada, valor_total, empresa_id, fornecedor_id, forma_pagamento, qtd_parcelas) 
+                                    VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s) RETURNING id
+                                """, (numero_nota, total_nota, emp_id, id_forn_salvar, forma_pagamento, qtd_parcelas))
+                                compra_id = cur.fetchone()[0]
+                                
+                                itens_salvos = 0
+                                
+                                # 2. Salva os Itens e Atualiza as Quantidades do Estoque
+                                for item in st.session_state['carrinho_compra']:
+                                    v_cod = str(item['Código']).strip()
+                                    v_nome = str(item['Produto']).strip()
+                                    v_qtd = int(item['Quantidade'])
+                                    v_valor = float(item['Preço Un. (R$)'])
+                                    prod_id_direto = item.get('id')  # presente para produtos já cadastrados
+                                    
+                                    cur.execute("""
+                                        INSERT INTO itens_compra (compra_id, produto_referencia, nome_produto, quantidade, preco_custo) 
+                                        VALUES (%s, %s, %s, %s, %s)
+                                    """, (compra_id, v_cod, v_nome, v_qtd, v_valor))
+                                    
+                                    # 🔧 CORREÇÃO: unifica os dois caminhos (produto já casado por ID
+                                    # vs. produto buscado por referência), que antes eram
+                                    # inconsistentes — um atualizava o preco_custo, o outro não.
+                                    # Resolve o ID do produto de qualquer uma das duas formas:
+                                    prod_id_resolvido = prod_id_direto
+                                    if not prod_id_resolvido:
+                                        cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
+                                        prod_existe = cur.fetchone()
+                                        prod_id_resolvido = prod_existe[0] if prod_existe else None
+                                    
+                                    if prod_id_resolvido:
+                                        # Produto já cadastrado: calcula o Custo Médio Ponderado
+                                        # com base no estoque e custo médio atuais + a nova entrada,
+                                        # e também grava o Último Custo (preco_custo) separadamente.
+                                        cur.execute("SELECT quantidade, custo_medio FROM produtos WHERE id = %s", (prod_id_resolvido,))
+                                        row_atual = cur.fetchone()
+                                        qtd_atual = int(row_atual[0]) if row_atual and row_atual[0] is not None else 0
+                                        custo_medio_atual = float(row_atual[1]) if row_atual and row_atual[1] is not None else v_valor
+                                        
+                                        if qtd_atual > 0:
+                                            custo_medio_novo = round(((qtd_atual * custo_medio_atual) + (v_qtd * v_valor)) / (qtd_atual + v_qtd), 2)
+                                        else:
+                                            custo_medio_novo = v_valor
+                                        
+                                        cur.execute("""
+                                            UPDATE produtos 
+                                            SET quantidade = quantidade + %s, preco_custo = %s, custo_medio = %s
+                                            WHERE id = %s
+                                        """, (v_qtd, v_valor, custo_medio_novo, prod_id_resolvido))
+                                    else:
+                                        # Produto novo: primeira entrada define Último Custo e Custo
+                                        # Médio com o mesmo valor (não há histórico anterior ainda).
+                                        # 🔧 Marca padrão para produtos novos agora é o próprio
+                                        # fornecedor da nota, em vez do valor fixo "D'Grava".
+                                        cur.execute("""
+                                            INSERT INTO produtos (nome, quantidade, valor, preco_custo, custo_medio, marca, categoria, empresa_id, referencia) 
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                        """, (v_nome, v_qtd, v_valor, v_valor, v_valor, sel_fornecedor, "Geral", emp_id, v_cod))
+                                        
+                                    itens_salvos += 1
+                                    
+                                # 3. Integração Automática com a Tabela contas_pagar (Campos e Tipos Estritos)
+                                # 🔧 CORREÇÃO: arredonda cada parcela para 2 casas decimais e
+                                # joga a diferença de centavos (do arredondamento) na última
+                                # parcela — sem isso, a soma das parcelas pode ficar alguns
+                                # centavos abaixo do total_nota quando a divisão não é exata
+                                # (ex: R$100,00 ÷ 3 = R$33,33 × 3 = R$99,99, faltando R$0,01).
+                                valor_parcela = round(total_nota / qtd_parcelas, 2)
+                                valor_ultima_parcela = round(total_nota - (valor_parcela * (qtd_parcelas - 1)), 2)
+                                hoje_texto = date.today().strftime('%Y-%m-%d')
+                                
+                                for i in range(1, qtd_parcelas + 1):
+                                    valor_desta_parcela = valor_ultima_parcela if i == qtd_parcelas else valor_parcela
+                                    if qtd_parcelas == 1:
+                                        # Lançamento à Vista: Status 'Pago' e datas preenchidas como texto
+                                        cur.execute("""
+                                            INSERT INTO contas_pagar (compra_id, fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, data_pagamento, status, numero_documento, empresa_id)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'Pago', %s, %s)
+                                        """, (compra_id, id_forn_salvar, i, qtd_parcelas, valor_desta_parcela, hoje_texto, hoje_texto, numero_nota, emp_id))
+                                    else:
+                                        # Lançamento Parcelado: Projeção de vencimentos futuros (texto) e status 'Pendente'
+                                        data_venc = date.today() + timedelta(days=30 * i)
+                                        venc_texto = data_venc.strftime('%Y-%m-%d')
+                                        
+                                        cur.execute("""
+                                            INSERT INTO contas_pagar (compra_id, fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, numero_documento, empresa_id)
+                                            VALUES (%s, %s, %s, %s, %s, %s, 'Pendente', %s, %s)
+                                        """, (compra_id, id_forn_salvar, i, qtd_parcelas, valor_desta_parcela, venc_texto, numero_nota, emp_id))
+                                
+                                conn.commit()
+                                devolver_conexao(conn)
+                                
+                                st.session_state['msg_sucesso_compra'] = f"🎉 Sucesso! A NF {numero_nota} foi registrada. {itens_salvos} itens entraram no estoque e o financeiro foi atualizado."
+                                st.session_state['carrinho_compra'] = []
+                                limpar_cache()
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"Erro ao salvar no banco: {e}")
+                                if 'conn' in locals(): conn.rollback(); devolver_conexao(conn)
+                    
+                    if st.button("🗑️ Limpar Carrinho", use_container_width=True):
+                        st.session_state['carrinho_compra'] = []
+                        st.rerun()
+                else:
+                    st.info("Nenhum item no carrinho ainda. Importe um PDF ou use o formulário de Lançamento Manual acima para começar.")
                             
         if tab_historico_compras:
             with tab_historico_compras:
-                st.markdown('<div class="ads-screen-title">📋 Histórico de Entradas</div><div class="ads-screen-caption">Consulte os itens recebidos e realize estornos quando necessário.</div>', unsafe_allow_html=True)
+                st.subheader("📋 Consulta e Estorno de Notas de Entrada")
                 
                 # Filtros na parte superior
                 c_ini, c_fim = st.columns(2)
@@ -4031,511 +3696,292 @@ Feliz aniversário! 🥳✨"""
                     
         # ==========================================
         # ABA: MOVIMENTAÇÕES (TROCAS E EMPRÉSTIMOS)
-        # ADS 2.0 PREMIUM — Conciliação comercial e de estoque
         # ==========================================
         if tab_trocas:
             with tab_trocas:
-                st.markdown(
-                    '<div class="ads-screen-title">🔄 Central de Trocas e Empréstimos</div>'
-                    '<div class="ads-screen-caption">Registre o que sai para a consultora, o que retorna ao estoque e acompanhe o acerto em standby.</div>',
-                    unsafe_allow_html=True
-                )
-
+                st.subheader("🔄 Trocas e Empréstimos")
+                
                 # --- INICIALIZAÇÃO DOS CARRINHOS DE TROCA ---
                 if 'troca_saida' not in st.session_state:
                     st.session_state['troca_saida'] = []
                 if 'troca_entrada' not in st.session_state:
                     st.session_state['troca_entrada'] = []
 
-                # 1. SELEÇÃO DA CONSULTORA (Filtra apenas tipo = 'T')
-                df_consultoras = carregar_dados_cached(
-                    "SELECT id, nome FROM clientes WHERE empresa_id=%s AND tipo='T' ORDER BY nome",
-                    (emp_id,)
-                )
+                df_consultoras = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s AND tipo='T' ORDER BY nome", (emp_id,))
+                df_produtos = carregar_dados_cached("SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s ORDER BY nome", (emp_id,))
 
-                if not df_consultoras.empty:
-                    with st.container(border=True):
-                        col_consultora, col_contexto = st.columns([2.2, 1])
-                        lista_consultoras = df_consultoras['nome'].tolist()
-                        consultora_sel = col_consultora.selectbox(
-                            "👤 Consultora da negociação",
-                            options=lista_consultoras,
-                            index=None,
-                            placeholder="Selecione a consultora...",
-                            key="troca_consultora_sel"
-                        )
-                        id_consultora = None
-                        if consultora_sel:
-                            id_consultora = int(
-                                df_consultoras[df_consultoras['nome'] == consultora_sel].iloc[0]['id']
-                            )
-                        col_contexto.markdown(
-                            '<div class="ads-context-title">Status da operação</div>',
-                            unsafe_allow_html=True
-                        )
-                        col_contexto.caption("🟡 Em preparação · estoque ainda não alterado")
+                # ==========================================================
+                # 🔧 REESTRUTURAÇÃO: o lançamento (seleção de consultora +
+                # abas de saída/entrada + resumo + salvar) que antes ficava
+                # sempre visível no topo da tela agora vive dentro de uma
+                # janela (st.dialog), aberta pelo botão "➕ Nova Troca". A
+                # tela principal passa a mostrar direto o que importa no
+                # dia a dia: as trocas pendentes, com o valor em evidência.
+                # ==========================================================
+                @st.dialog("🔄 Nova Troca / Empréstimo", width="large")
+                def dialog_nova_troca():
+                    if df_consultoras.empty:
+                        st.warning("Nenhuma Consultora cadastrada no sistema. Vá em Cadastros e altere o tipo de um registro para 'Consultora'.")
+                        return
+                    if df_produtos.empty:
+                        st.warning("Nenhum produto cadastrado no sistema.")
+                        return
+                    
+                    lista_consultoras = df_consultoras['nome'].tolist()
+                    consultora_sel = st.selectbox("👤 Selecione a Consultora:", options=lista_consultoras)
+                    id_consultora = int(df_consultoras[df_consultoras['nome'] == consultora_sel].iloc[0]['id'])
+                    
+                    st.markdown("---")
+                    
+                    df_produtos['display'] = df_produtos.apply(lambda x: f"{x['nome']} | R$ {x['valor']:.2f} (Estoque: {int(x['quantidade'])})", axis=1)
+                    opcoes_prod = df_produtos['display'].tolist()
 
-                    # Carrega catálogo de produtos para os lançamentos
-                    df_produtos = carregar_dados_cached(
-                        "SELECT id, nome, valor, quantidade, tipo FROM produtos WHERE empresa_id=%s ORDER BY nome",
-                        (emp_id,)
-                    )
-
-                    if not df_produtos.empty:
-                        df_produtos['display'] = df_produtos.apply(
-                            lambda x: f"{x['nome']} | R$ {x['valor']:.2f} (Estoque: {int(x['quantidade'])})",
-                            axis=1
-                        )
-                        opcoes_prod = df_produtos['display'].tolist()
-
-                        # 2. DOIS LADOS DA NEGOCIAÇÃO — VISÍVEIS AO MESMO TEMPO
-                        col_saida, col_entrada = st.columns(2, gap="large")
-
-                        # --- PAINEL DE SAÍDA ---
-                        with col_saida:
-                            with st.container(border=True):
-                                st.markdown(
-                                    '<div class="ads-panel-title">📤 Saída para a Consultora</div>'
-                                    '<div class="ads-panel-caption">Produtos que deixam o estoque da empresa nesta negociação.</div>',
-                                    unsafe_allow_html=True
-                                )
-
-                                with st.form("form_add_saida", clear_on_submit=True):
-                                    item_sel_s = st.selectbox(
-                                        "Produto de saída",
-                                        options=opcoes_prod,
-                                        index=None,
-                                        placeholder="Digite ou selecione um produto...",
-                                        key="troca_produto_saida"
-                                    )
-                                    c_qtd_s, c_val_s = st.columns(2)
-                                    qtd_s = c_qtd_s.number_input(
-                                        "Quantidade",
-                                        min_value=1,
-                                        step=1,
-                                        value=1,
-                                        key="troca_qtd_saida"
-                                    )
-
-                                    idx_s = opcoes_prod.index(item_sel_s) if item_sel_s else None
-                                    preco_base_s = float(df_produtos.iloc[idx_s]['valor']) if idx_s is not None else 0.0
-                                    preco_s = c_val_s.number_input(
-                                        "Valor unitário (R$)",
-                                        min_value=0.0,
-                                        value=preco_base_s,
-                                        step=1.0,
-                                        format="%.2f",
-                                        key="troca_valor_saida"
-                                    )
-
-                                    if st.form_submit_button(
-                                        "➕ Adicionar à saída",
-                                        type="primary",
-                                        use_container_width=True
-                                    ):
-                                        if idx_s is None:
-                                            st.error("Selecione um produto para adicionar à saída.")
-                                        else:
-                                            item_info = df_produtos.iloc[idx_s]
-                                            if item_info['tipo'] == 'P' and qtd_s > item_info['quantidade']:
-                                                st.error("❌ Estoque insuficiente para esta saída!")
-                                            else:
-                                                st.session_state['troca_saida'].append({
-                                                    'id': int(item_info['id']),
-                                                    'nome': str(item_info['nome']),
-                                                    'qtd': int(qtd_s),
-                                                    'unit': float(preco_s),
-                                                    'total': float(qtd_s * preco_s),
-                                                    'tipo': str(item_info['tipo'])
-                                                })
-                                                st.rerun()
-
-                                if st.session_state['troca_saida']:
-                                    df_saida_ui = pd.DataFrame(st.session_state['troca_saida'])[
-                                        ['nome', 'qtd', 'unit', 'total']
-                                    ].rename(columns={
-                                        'nome': 'Produto',
-                                        'qtd': 'Qtd.',
-                                        'unit': 'Valor unit.',
-                                        'total': 'Total'
-                                    })
-                                    st.dataframe(
-                                        df_saida_ui,
-                                        use_container_width=True,
-                                        hide_index=True,
-                                        column_config={
-                                            "Valor unit.": st.column_config.NumberColumn(format="R$ %.2f"),
-                                            "Total": st.column_config.NumberColumn(format="R$ %.2f")
-                                        }
-                                    )
-                                    if st.button(
-                                        "🗑️ Limpar saída",
-                                        key="limpar_s",
-                                        use_container_width=True
-                                    ):
-                                        st.session_state['troca_saida'] = []
-                                        st.rerun()
+                    # INTERFACE DE LANÇAMENTO (ABAS INTERNAS)
+                    aba_saida, aba_entrada = st.tabs(["📤 O que está SAINDO (Para Consultora)", "📥 O que está ENTRANDO (Retorno)"])
+                    
+                    # --- ABA DE SAÍDA ---
+                    with aba_saida:
+                        st.caption("Produtos que vão para a Consultora")
+                        with st.form("form_add_saida", clear_on_submit=True):
+                            c1, c2, c3 = st.columns([2, 1, 1])
+                            item_sel_s = c1.selectbox("Produto:", options=opcoes_prod)
+                            qtd_s = c2.number_input("Qtd Saída:", min_value=1, step=1, value=1)
+                            
+                            idx_s = opcoes_prod.index(item_sel_s)
+                            preco_base_s = float(df_produtos.iloc[idx_s]['valor'])
+                            preco_s = c3.number_input("Valor Unit (R$):", min_value=0.0, value=preco_base_s, step=1.0, format="%.2f")
+                            
+                            if st.form_submit_button("➕ Adicionar à Saída"):
+                                item_info = df_produtos.iloc[idx_s]
+                                if item_info['tipo'] == 'P' and qtd_s > item_info['quantidade']:
+                                    st.error("❌ Estoque insuficiente para esta saída!")
                                 else:
-                                    st.info("Nenhum produto adicionado à saída.")
-
-                        # --- PAINEL DE ENTRADA ---
-                        with col_entrada:
-                            with st.container(border=True):
-                                st.markdown(
-                                    '<div class="ads-panel-title">📥 Retorno para a Empresa</div>'
-                                    '<div class="ads-panel-caption">Produtos recebidos da consultora e que retornarão ao estoque.</div>',
-                                    unsafe_allow_html=True
-                                )
-
-                                with st.form("form_add_entrada", clear_on_submit=True):
-                                    item_sel_e = st.selectbox(
-                                        "Produto de retorno",
-                                        options=opcoes_prod,
-                                        index=None,
-                                        placeholder="Digite ou selecione um produto...",
-                                        key="troca_produto_entrada"
-                                    )
-                                    c_qtd_e, c_val_e = st.columns(2)
-                                    qtd_e = c_qtd_e.number_input(
-                                        "Quantidade",
-                                        min_value=1,
-                                        step=1,
-                                        value=1,
-                                        key="troca_qtd_entrada"
-                                    )
-
-                                    idx_e = opcoes_prod.index(item_sel_e) if item_sel_e else None
-                                    preco_base_e = float(df_produtos.iloc[idx_e]['valor']) if idx_e is not None else 0.0
-                                    preco_e = c_val_e.number_input(
-                                        "Valor unitário (R$)",
-                                        min_value=0.0,
-                                        value=preco_base_e,
-                                        step=1.0,
-                                        format="%.2f",
-                                        key="troca_valor_entrada"
-                                    )
-
-                                    if st.form_submit_button(
-                                        "➕ Adicionar ao retorno",
-                                        type="primary",
-                                        use_container_width=True
-                                    ):
-                                        if idx_e is None:
-                                            st.error("Selecione um produto para adicionar ao retorno.")
-                                        else:
-                                            item_info = df_produtos.iloc[idx_e]
-                                            st.session_state['troca_entrada'].append({
-                                                'id': int(item_info['id']),
-                                                'nome': str(item_info['nome']),
-                                                'qtd': int(qtd_e),
-                                                'unit': float(preco_e),
-                                                'total': float(qtd_e * preco_e),
-                                                'tipo': str(item_info['tipo'])
-                                            })
-                                            st.rerun()
-
-                                if st.session_state['troca_entrada']:
-                                    df_entrada_ui = pd.DataFrame(st.session_state['troca_entrada'])[
-                                        ['nome', 'qtd', 'unit', 'total']
-                                    ].rename(columns={
-                                        'nome': 'Produto',
-                                        'qtd': 'Qtd.',
-                                        'unit': 'Valor unit.',
-                                        'total': 'Total'
+                                    st.session_state['troca_saida'].append({
+                                        'id': int(item_info['id']),
+                                        'nome': str(item_info['nome']),
+                                        'qtd': int(qtd_s),
+                                        'unit': float(preco_s),
+                                        'total': float(qtd_s * preco_s),
+                                        'tipo': str(item_info['tipo'])
                                     })
-                                    st.dataframe(
-                                        df_entrada_ui,
-                                        use_container_width=True,
-                                        hide_index=True,
-                                        column_config={
-                                            "Valor unit.": st.column_config.NumberColumn(format="R$ %.2f"),
-                                            "Total": st.column_config.NumberColumn(format="R$ %.2f")
-                                        }
-                                    )
-                                    if st.button(
-                                        "🗑️ Limpar retorno",
-                                        key="limpar_e",
-                                        use_container_width=True
-                                    ):
-                                        st.session_state['troca_entrada'] = []
-                                        st.rerun()
-                                else:
-                                    st.info("Nenhum produto adicionado ao retorno.")
+                                    st.rerun()
+                        
+                        if st.session_state['troca_saida']:
+                            st.table(pd.DataFrame(st.session_state['troca_saida'])[['nome', 'qtd', 'unit', 'total']])
+                            if st.button("🗑️ Limpar Lista de Saída", key="limpar_s"):
+                                st.session_state['troca_saida'] = []
+                                st.rerun()
 
-                        # 3. BALANÇO PROVISÓRIO DA NEGOCIAÇÃO
-                        total_s = sum(item['total'] for item in st.session_state['troca_saida']) if st.session_state['troca_saida'] else 0.0
-                        total_e = sum(item['total'] for item in st.session_state['troca_entrada']) if st.session_state['troca_entrada'] else 0.0
-                        diferenca_balanco = total_s - total_e
+                    # --- ABA DE ENTRADA ---
+                    with aba_entrada:
+                        st.caption("Produtos que retornam para o seu estoque")
+                        with st.form("form_add_entrada", clear_on_submit=True):
+                            c1, c2, c3 = st.columns([2, 1, 1])
+                            item_sel_e = c1.selectbox("Produto:", options=opcoes_prod)
+                            qtd_e = c2.number_input("Qtd Entrada:", min_value=1, step=1, value=1)
+                            
+                            idx_e = opcoes_prod.index(item_sel_e)
+                            preco_base_e = float(df_produtos.iloc[idx_e]['valor'])
+                            preco_e = c3.number_input("Valor Unit (R$):", min_value=0.0, value=preco_base_e, step=1.0, format="%.2f")
+                            
+                            if st.form_submit_button("➕ Adicionar à Entrada"):
+                                item_info = df_produtos.iloc[idx_e]
+                                st.session_state['troca_entrada'].append({
+                                    'id': int(item_info['id']),
+                                    'nome': str(item_info['nome']),
+                                    'qtd': int(qtd_e),
+                                    'unit': float(preco_e),
+                                    'total': float(qtd_e * preco_e),
+                                    'tipo': str(item_info['tipo'])
+                                })
+                                st.rerun()
+                                
+                        if st.session_state['troca_entrada']:
+                            st.table(pd.DataFrame(st.session_state['troca_entrada'])[['nome', 'qtd', 'unit', 'total']])
+                            if st.button("🗑️ Limpar Lista de Entrada", key="limpar_e"):
+                                st.session_state['troca_entrada'] = []
+                                st.rerun()
 
-                        st.markdown(
-                            '<div class="ads-screen-title">⚖️ Balanço provisório</div>'
-                            '<div class="ads-screen-caption">Compare o valor enviado à consultora com o retorno recebido antes de salvar a negociação.</div>',
-                            unsafe_allow_html=True
-                        )
+                    st.markdown("---")
+                    st.markdown("**📊 Resumo da Operação Atual**")
+                    
+                    total_s = sum(item['total'] for item in st.session_state['troca_saida']) if st.session_state['troca_saida'] else 0.0
+                    total_e = sum(item['total'] for item in st.session_state['troca_entrada']) if st.session_state['troca_entrada'] else 0.0
+                    diferenca_balanco = total_s - total_e
+                    
+                    c_m1, c_m2, c_m3 = st.columns(3)
+                    c_m1.metric("Total Saída", f"R$ {total_s:.2f}".replace('.', ','))
+                    c_m2.metric("Total Entrada", f"R$ {total_e:.2f}".replace('.', ','))
+                    
+                    if diferenca_balanco == 0:
+                        c_m3.metric("Balanço Provisório", "R$ 0,00", delta="Permuta Perfeita")
+                    elif diferenca_balanco > 0:
+                        c_m3.metric("Balanço Provisório", f"R$ {diferenca_balanco:.2f}".replace('.', ','), delta="Consultora Deve", delta_color="inverse")
+                    else:
+                        c_m3.metric("Balanço Provisório", f"R$ {abs(diferenca_balanco):.2f}".replace('.', ','), delta="Empresa Deve")
+
+                    st.info("💡 Ao salvar, as quantidades físicas serão atualizadas imediatamente no estoque e a movimentação ficará em Standby.")
+
+                    # BOTÃO DE CONFIRMAÇÃO E GRAVAÇÃO
+                    if st.button("💾 Salvar Movimentação em Standby", type="primary", use_container_width=True):
+                        if not st.session_state['troca_saida'] and not st.session_state['troca_entrada']:
+                            st.error("Adicione pelo menos um item em uma das listas para processar.")
+                        else:
+                            try:
+                                conn = conectar_banco()
+                                cur = conn.cursor()
+                                
+                                cur.execute("""
+                                    INSERT INTO trocas (empresa_id, cliente_id, total_saida, total_entrada, diferenca, status_financeiro)
+                                    VALUES (%s, %s, %s, %s, %s, 'Em Aberto') RETURNING id
+                                """, (emp_id, id_consultora, total_s, total_e, diferenca_balanco))
+                                id_troca_gerada = cur.fetchone()[0]
+                                
+                                for item in st.session_state['troca_saida']:
+                                    cur.execute("INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'S')",
+                                                (id_troca_gerada, item['id'], item['qtd'], item['unit']))
+                                    if item['tipo'] == 'P':
+                                        cur.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s", (item['qtd'], item['id']))
+                                        
+                                for item in st.session_state['troca_entrada']:
+                                    cur.execute("INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'E')",
+                                                (id_troca_gerada, item['id'], item['qtd'], item['unit']))
+                                    if item['tipo'] == 'P':
+                                        cur.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id=%s", (item['qtd'], item['id']))
+                                
+                                conn.commit()
+                                devolver_conexao(conn)
+                                
+                                st.session_state['troca_saida'] = []
+                                st.session_state['troca_entrada'] = []
+                                st.success(f"Troca Nº {id_troca_gerada} enviada para o Standby! Estoque físico atualizado.")
+                                limpar_cache()
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"Erro ao processar transação: {e}")
+                                if 'conn' in locals(): devolver_conexao(conn)
+
+                # --- BOTÃO DE ABERTURA DA JANELA DE LANÇAMENTO ---
+                col_btn_nova, col_vazia_btn = st.columns([1, 2])
+                if col_btn_nova.button("➕ Nova Troca / Empréstimo", type="primary", use_container_width=True):
+                    dialog_nova_troca()
+
+                st.markdown("---")
+
+                # ==========================================
+                # VISÃO PRINCIPAL: TROCAS PENDENTES EM EVIDÊNCIA
+                # ==========================================
+                df_trocas_abertas = carregar_dados_cached("""
+                    SELECT t.id, t.data_movimentacao, c.nome AS consultora, t.total_saida, t.total_entrada, t.cliente_id
+                    FROM trocas t 
+                    JOIN clientes c ON t.cliente_id = c.id 
+                    WHERE t.empresa_id = %s AND t.status_financeiro = 'Em Aberto'
+                    ORDER BY t.data_movimentacao DESC
+                """, (emp_id,))
+                
+                if not df_trocas_abertas.empty:
+                    # 🔧 Resumo geral: soma de tudo que está pendente, para os
+                    # dois lados, para dar uma visão imediata do quadro geral
+                    # antes mesmo de abrir cada troca individualmente.
+                    df_trocas_abertas['dif_calc'] = df_trocas_abertas['total_saida'] - df_trocas_abertas['total_entrada']
+                    total_a_receber = df_trocas_abertas[df_trocas_abertas['dif_calc'] > 0]['dif_calc'].sum()
+                    total_a_pagar = df_trocas_abertas[df_trocas_abertas['dif_calc'] < 0]['dif_calc'].sum()
+                    
+                    c_res1, c_res2 = st.columns(2)
+                    with c_res1.container(border=True):
+                        st.metric("💰 A Receber das Consultoras", f"R$ {total_a_receber:.2f}".replace('.', ','))
+                    with c_res2.container(border=True):
+                        st.metric("💸 A Pagar às Consultoras", f"R$ {abs(total_a_pagar):.2f}".replace('.', ','))
+                    
+                    st.markdown("#### 📋 Trocas Pendentes")
+                    
+                    for idx, troca_aberta in df_trocas_abertas.iterrows():
+                        id_t = troca_aberta['id']
+                        nome_con = troca_aberta['consultora']
+                        data_t = troca_aberta['data_movimentacao']
+                        t_saida = float(troca_aberta['total_saida'])
+                        t_entrada = float(troca_aberta['total_entrada'])
+                        dif = t_saida - t_entrada
+                        
                         with st.container(border=True):
-                            c_m1, c_m2, c_m3 = st.columns(3)
-                            c_m1.metric("📤 Total de saída", f"R$ {total_s:.2f}".replace('.', ','))
-                            c_m2.metric("📥 Total de retorno", f"R$ {total_e:.2f}".replace('.', ','))
-
-                            if diferenca_balanco == 0:
-                                c_m3.metric("⚖️ Saldo", "R$ 0,00", delta="Valores equivalentes")
-                                st.success("Permuta equilibrada: não há diferença financeira provisória.")
-                            elif diferenca_balanco > 0:
-                                c_m3.metric(
-                                    "⚠️ Saldo",
-                                    f"R$ {diferenca_balanco:.2f}".replace('.', ','),
-                                    delta="Consultora deve",
-                                    delta_color="inverse"
-                                )
-                                st.warning("A consultora ficará com saldo pendente para a empresa ao finalizar o acerto.")
-                            else:
-                                c_m3.metric(
-                                    "ℹ️ Saldo",
-                                    f"R$ {abs(diferenca_balanco):.2f}".replace('.', ','),
-                                    delta="Empresa deve"
-                                )
-                                st.info("A empresa ficará com saldo pendente para a consultora ao finalizar o acerto.")
-
-                            st.markdown(
-                                '<div class="ads-panel-caption" style="margin-top:.35rem; margin-bottom:.45rem;">'
-                                'Ao salvar, o estoque físico será atualizado imediatamente e a negociação permanecerá em standby até o fechamento financeiro.'
-                                '</div>',
-                                unsafe_allow_html=True
-                            )
-
-                            # 4. BOTÃO DE CONFIRMAÇÃO E GRAVAÇÃO
-                            if st.button(
-                                "💾 Salvar negociação em standby",
-                                type="primary",
-                                use_container_width=True,
-                                key="salvar_troca_standby"
-                            ):
-                                if not consultora_sel or id_consultora is None:
-                                    st.error("Selecione a consultora da negociação.")
-                                elif not st.session_state['troca_saida'] and not st.session_state['troca_entrada']:
-                                    st.error("Adicione pelo menos um item em uma das listas para processar.")
+                            col_info, col_valor = st.columns([2, 1])
+                            with col_info:
+                                st.markdown(f"🔄 **Troca Nº {id_t} - {nome_con}**")
+                                st.caption(f"📅 Aberta em: {data_t}")
+                            with col_valor:
+                                # 🔧 Valor pendente em evidência, já indicando pra
+                                # qual lado é (Consultora deve x Empresa deve).
+                                if dif == 0:
+                                    st.success("⚖️ Permuta Perfeita")
+                                elif dif > 0:
+                                    st.metric("Consultora Deve", f"R$ {dif:.2f}".replace('.', ','))
                                 else:
+                                    st.metric("Empresa Deve", f"R$ {abs(dif):.2f}".replace('.', ','))
+                            
+                            with st.expander("🔍 Ver Detalhes e Finalizar Acerto", expanded=False):
+                                df_itens_t = carregar_dados_cached("""
+                                    SELECT ti.quantidade, ti.valor_unitario, ti.sentido, p.nome 
+                                    FROM trocas_itens ti 
+                                    JOIN produtos p ON ti.produto_id = p.id 
+                                    WHERE ti.troca_id = %s
+                                """, (id_t,))
+                                
+                                if not df_itens_t.empty:
+                                    df_s = df_itens_t[df_itens_t['sentido'] == 'S']
+                                    if not df_s.empty:
+                                        st.markdown("**📤 Saíram para a Consultora:**")
+                                        for _, it in df_s.iterrows():
+                                            st.caption(f"▪️ {it['quantidade']}x {it['nome']} (R$ {it['valor_unitario']:.2f})")
+                                            
+                                    df_e = df_itens_t[df_itens_t['sentido'] == 'E']
+                                    if not df_e.empty:
+                                        st.markdown("**📥 Retornaram dela:**")
+                                        for _, it in df_e.iterrows():
+                                            st.caption(f"▪️ {it['quantidade']}x {it['nome']} (R$ {it['valor_unitario']:.2f})")
+                                
+                                st.markdown("---")
+                                st.markdown(f"**Balanço:** Saída R$ {t_saida:.2f} | Entrada R$ {t_entrada:.2f}".replace('.', ','))
+                                
+                                if dif == 0:
+                                    st.success("⚖️ Valores equivalentes (Permuta Perfeita)")
+                                elif dif > 0:
+                                    st.warning(f"⚠️ Consultora pendente em: **R$ {dif:.2f}**".replace('.', ','))
+                                else:
+                                    st.info(f"ℹ️ Empresa pendente em: **R$ {abs(dif):.2f}**".replace('.', ','))
+                                    
+                                if st.button("🏁 Finalizar e Fechar Troca", key=f"btn_fechar_{id_t}", use_container_width=True, type="primary"):
                                     try:
                                         conn = conectar_banco()
                                         cur = conn.cursor()
-
-                                        cur.execute("""
-                                            INSERT INTO trocas (empresa_id, cliente_id, total_saida, total_entrada, diferenca, status_financeiro)
-                                            VALUES (%s, %s, %s, %s, %s, 'Em Aberto') RETURNING id
-                                        """, (emp_id, id_consultora, total_s, total_e, diferenca_balanco))
-                                        id_troca_gerada = cur.fetchone()[0]
-
-                                        for item in st.session_state['troca_saida']:
-                                            cur.execute(
-                                                "INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'S')",
-                                                (id_troca_gerada, item['id'], item['qtd'], item['unit'])
-                                            )
-                                            if item['tipo'] == 'P':
-                                                cur.execute(
-                                                    "UPDATE produtos SET quantidade = quantidade - %s WHERE id=%s",
-                                                    (item['qtd'], item['id'])
-                                                )
-
-                                        for item in st.session_state['troca_entrada']:
-                                            cur.execute(
-                                                "INSERT INTO trocas_itens (troca_id, produto_id, quantidade, valor_unitario, sentido) VALUES (%s, %s, %s, %s, 'E')",
-                                                (id_troca_gerada, item['id'], item['qtd'], item['unit'])
-                                            )
-                                            if item['tipo'] == 'P':
-                                                cur.execute(
-                                                    "UPDATE produtos SET quantidade = quantidade + %s WHERE id=%s",
-                                                    (item['qtd'], item['id'])
-                                                )
-
+                                        
+                                        if dif > 0:
+                                            status_fin = 'Pendente Consultora'
+                                            cur.execute("""
+                                                INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
+                                                VALUES (%s, %s, 1, 1, %s, %s, 'Pendente', %s)
+                                            """, (int(id_t + 90000), int(troca_aberta['cliente_id']), float(dif), date.today().strftime("%d/%m/%Y"), emp_id))
+                                        else:
+                                            status_fin = 'Compensado'
+                                            
+                                        cur.execute("UPDATE trocas SET status_financeiro = %s, diferenca = %s WHERE id = %s", (status_fin, dif, id_t))
                                         conn.commit()
                                         devolver_conexao(conn)
-
-                                        st.session_state['troca_saida'] = []
-                                        st.session_state['troca_entrada'] = []
-                                        st.success(
-                                            f"Negociação Nº {id_troca_gerada} enviada para o standby! Estoque físico atualizado."
-                                        )
+                                        st.success(f"Troca Nº {id_t} finalizada e resolvida financeiramente!")
                                         limpar_cache()
                                         st.rerun()
-
                                     except Exception as e:
-                                        st.error(f"Erro ao processar transação: {e}")
-                                        if 'conn' in locals():
-                                            devolver_conexao(conn)
-
-                    # ==========================================
-                    # ACOMPANHAMENTO DE NEGOCIAÇÕES EM STANDBY
-                    # ==========================================
-                    st.markdown("---")
-                    st.markdown(
-                        '<div class="ads-screen-title">🕒 Negociações em Standby</div>'
-                        '<div class="ads-screen-caption">Consulte produtos em circulação, confira o saldo e finalize o acerto financeiro.</div>',
-                        unsafe_allow_html=True
-                    )
-
-                    df_trocas_abertas = carregar_dados_cached("""
-                        SELECT t.id, t.data_movimentacao, c.nome AS consultora, t.total_saida, t.total_entrada, t.cliente_id
-                        FROM trocas t
-                        JOIN clientes c ON t.cliente_id = c.id
-                        WHERE t.empresa_id = %s AND t.status_financeiro = 'Em Aberto'
-                        ORDER BY t.data_movimentacao DESC
-                    """, (emp_id,))
-
-                    if not df_trocas_abertas.empty:
-                        qtd_abertas = len(df_trocas_abertas)
-                        saldo_consultoras = (
-                            df_trocas_abertas['total_saida'].astype(float)
-                            - df_trocas_abertas['total_entrada'].astype(float)
-                        )
-                        c_ab1, c_ab2, c_ab3 = st.columns(3)
-                        c_ab1.metric("Operações abertas", qtd_abertas)
-                        c_ab2.metric(
-                            "A receber de consultoras",
-                            f"R$ {saldo_consultoras[saldo_consultoras > 0].sum():.2f}".replace('.', ',')
-                        )
-                        c_ab3.metric(
-                            "Saldo a favor das consultoras",
-                            f"R$ {abs(saldo_consultoras[saldo_consultoras < 0].sum()):.2f}".replace('.', ',')
-                        )
-
-                        for _, troca_aberta in df_trocas_abertas.iterrows():
-                            id_t = troca_aberta['id']
-                            nome_con = troca_aberta['consultora']
-                            data_t = troca_aberta['data_movimentacao']
-                            t_saida = float(troca_aberta['total_saida'])
-                            t_entrada = float(troca_aberta['total_entrada'])
-                            dif = t_saida - t_entrada
-
-                            with st.container(border=True):
-                                col_ident, col_saldo = st.columns([2.2, 1])
-                                col_ident.markdown(f"**🔄 Negociação Nº {id_t} · {nome_con}**")
-                                col_ident.caption(f"📅 Aberta em: {data_t}")
-
-                                if dif == 0:
-                                    col_saldo.success("⚖️ Equilibrada")
-                                elif dif > 0:
-                                    col_saldo.warning(f"Consultora deve R$ {dif:.2f}".replace('.', ','))
-                                else:
-                                    col_saldo.info(f"Empresa deve R$ {abs(dif):.2f}".replace('.', ','))
-
-                                with st.expander("🔍 Ver itens e finalizar acerto", expanded=False):
-                                    df_itens_t = carregar_dados_cached("""
-                                        SELECT ti.quantidade, ti.valor_unitario, ti.sentido, p.nome
-                                        FROM trocas_itens ti
-                                        JOIN produtos p ON ti.produto_id = p.id
-                                        WHERE ti.troca_id = %s
-                                    """, (id_t,))
-
-                                    if not df_itens_t.empty:
-                                        det_saida, det_entrada = st.columns(2)
-
-                                        with det_saida:
-                                            st.markdown("**📤 Saída para a consultora**")
-                                            df_s = df_itens_t[df_itens_t['sentido'] == 'S'].copy()
-                                            if not df_s.empty:
-                                                df_s['Total'] = df_s['quantidade'] * df_s['valor_unitario']
-                                                st.dataframe(
-                                                    df_s[['nome', 'quantidade', 'valor_unitario', 'Total']].rename(columns={
-                                                        'nome': 'Produto',
-                                                        'quantidade': 'Qtd.',
-                                                        'valor_unitario': 'Valor unit.'
-                                                    }),
-                                                    use_container_width=True,
-                                                    hide_index=True,
-                                                    column_config={
-                                                        "Valor unit.": st.column_config.NumberColumn(format="R$ %.2f"),
-                                                        "Total": st.column_config.NumberColumn(format="R$ %.2f")
-                                                    }
-                                                )
-                                            else:
-                                                st.caption("Nenhum item de saída.")
-
-                                        with det_entrada:
-                                            st.markdown("**📥 Retorno para a empresa**")
-                                            df_e = df_itens_t[df_itens_t['sentido'] == 'E'].copy()
-                                            if not df_e.empty:
-                                                df_e['Total'] = df_e['quantidade'] * df_e['valor_unitario']
-                                                st.dataframe(
-                                                    df_e[['nome', 'quantidade', 'valor_unitario', 'Total']].rename(columns={
-                                                        'nome': 'Produto',
-                                                        'quantidade': 'Qtd.',
-                                                        'valor_unitario': 'Valor unit.'
-                                                    }),
-                                                    use_container_width=True,
-                                                    hide_index=True,
-                                                    column_config={
-                                                        "Valor unit.": st.column_config.NumberColumn(format="R$ %.2f"),
-                                                        "Total": st.column_config.NumberColumn(format="R$ %.2f")
-                                                    }
-                                                )
-                                            else:
-                                                st.caption("Nenhum item de retorno.")
-
-                                    st.markdown("**Resumo financeiro**")
-                                    r1, r2, r3 = st.columns(3)
-                                    r1.metric("Saída", f"R$ {t_saida:.2f}".replace('.', ','))
-                                    r2.metric("Retorno", f"R$ {t_entrada:.2f}".replace('.', ','))
-                                    r3.metric("Diferença", f"R$ {abs(dif):.2f}".replace('.', ','))
-
-                                    if dif == 0:
-                                        st.success("⚖️ Valores equivalentes (permuta equilibrada).")
-                                    elif dif > 0:
-                                        st.warning(f"⚠️ Consultora pendente em: R$ {dif:.2f}".replace('.', ','))
-                                    else:
-                                        st.info(f"ℹ️ Empresa pendente em: R$ {abs(dif):.2f}".replace('.', ','))
-
-                                    if st.button(
-                                        "🏁 Finalizar e fechar negociação",
-                                        key=f"btn_fechar_{id_t}",
-                                        use_container_width=True,
-                                        type="primary"
-                                    ):
-                                        try:
-                                            conn = conectar_banco()
-                                            cur = conn.cursor()
-
-                                            if dif > 0:
-                                                status_fin = 'Pendente Consultora'
-                                                cur.execute("""
-                                                    INSERT INTO contas_receber (venda_codigo, cliente_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
-                                                    VALUES (%s, %s, 1, 1, %s, %s, 'Pendente', %s)
-                                                """, (
-                                                    int(id_t + 90000),
-                                                    int(troca_aberta['cliente_id']),
-                                                    float(dif),
-                                                    date.today().strftime("%d/%m/%Y"),
-                                                    emp_id
-                                                ))
-                                            else:
-                                                status_fin = 'Compensado'
-
-                                            cur.execute(
-                                                "UPDATE trocas SET status_financeiro = %s, diferenca = %s WHERE id = %s",
-                                                (status_fin, dif, id_t)
-                                            )
-                                            conn.commit()
-                                            devolver_conexao(conn)
-                                            st.success(f"Negociação Nº {id_t} finalizada e resolvida financeiramente!")
-                                            limpar_cache()
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"Erro ao finalizar: {e}")
-                                            if 'conn' in locals():
-                                                devolver_conexao(conn)
-                    else:
-                        st.info("Não há nenhuma negociação em standby no momento.")
-
+                                        st.error(f"Erro ao finalizar: {e}")
+                                        if 'conn' in locals(): devolver_conexao(conn)
                 else:
-                    st.warning(
-                        "Nenhuma Consultora cadastrada no sistema. Vá em Cadastros e altere o tipo de um registro para 'Consultora'."
-                    )
+                    st.success("🎉 Nenhuma troca ou empréstimo pendente no momento! Tudo acertado.")
 
         # ==========================================
         # ABA: AGENDA DE ATENDIMENTOS
         # ==========================================
         if tab_agenda:
             with tab_agenda:
-                st.markdown('<div class="ads-screen-title">📅 Agenda de Atendimentos</div><div class="ads-screen-caption">Visualize compromissos e marque novos horários em poucos passos.</div>', unsafe_allow_html=True)
+                st.subheader("📅 Agenda de Atendimentos")
                 
                 # Criamos duas sub-abas internas para organizar o espaço no celular
                 aba_ver_agenda, aba_novo_agendamento = st.tabs(["📱 Visualizar Agenda", "➕ Marcar Horário"])
@@ -4685,7 +4131,7 @@ Feliz aniversário! 🥳✨"""
                 # SUB-ABA 2: MARCAR NOVO HORÁRIO (AGENDA DINÂMICA)
                 # ---------------------------------------------------------
                 with aba_novo_agendamento:
-                    st.markdown('<div class="ads-screen-title">📝 Novo Agendamento</div><div class="ads-screen-caption">Selecione serviço, cliente, profissional, data e horário.</div>', unsafe_allow_html=True)
+                    st.markdown("### 📝 Agendar Novo Serviço")
                     
                     # Carrega as listas necessárias. 
                     df_cli_ag = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
@@ -4831,7 +4277,7 @@ Feliz aniversário! 🥳✨"""
                 
                 #st.markdown("---")
                 
-                df_p = df_financeiro[df_financeiro['Status'] == 'Pendente']
+                df_p = df_financeiro[df_financeiro['Status'] == 'Pendente'].copy()
                 
                 # --- LÓGICA DE REGISTRAR PAGAMENTO REFORMULADA (CARD LAYOUT MOBILE) ---
                 
@@ -4971,7 +4417,7 @@ Feliz aniversário! 🥳✨"""
                     if 'venda_editando' in st.session_state:
                         v_id = st.session_state['venda_editando']
         
-                        df_parc = carregar_dados_cached("SELECT id, venda_codigo, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
+                        df_parc = carregar_dados_cached("SELECT * FROM contas_receber WHERE venda_codigo=%s AND empresa_id=%s ORDER BY num_parcela", (v_id, emp_id))
         
                         if not df_parc.empty:
                             total_original = float(df_parc['valor_parcela'].sum())
@@ -5022,14 +4468,15 @@ Feliz aniversário! 🥳✨"""
                                     if round(soma_novas_parcelas, 2) != round(total_original, 2):
                                         st.error(f"❌ **Operação Bloqueada:** A soma das novas parcelas (R$ {soma_novas_parcelas:.2f}) é diferente do total da venda (R$ {total_original:.2f}). A diferença é de R$ {abs(total_original - soma_novas_parcelas):.2f}.")
                                     else:
-                                        def _reajustar_parcelas(cur):
-                                            for parcela_id, dados in novos_dados.items():
-                                                # Atualiza agora o valor_parcela E a data_vencimento no banco
-                                                cur.execute(
-                                                    "UPDATE contas_receber SET valor_parcela=%s, data_vencimento=%s WHERE id=%s AND empresa_id=%s", 
-                                                    (dados['valor'], dados['data'], parcela_id, emp_id)
-                                                )
-                                        executar_escrita(_reajustar_parcelas)
+                                        conn = conectar_banco()
+                                        for parcela_id, dados in novos_dados.items():
+                                            # Atualiza agora o valor_parcela E a data_vencimento no banco
+                                            conn.cursor().execute(
+                                                "UPDATE contas_receber SET valor_parcela=%s, data_vencimento=%s WHERE id=%s AND empresa_id=%s", 
+                                                (dados['valor'], dados['data'], parcela_id, emp_id)
+                                            )
+                                        conn.commit()
+                                        devolver_conexao(conn)
                         
                                         st.success("✅ Valores e datas reajustados com sucesso!")
                                         del st.session_state['venda_editando']
@@ -5113,8 +4560,11 @@ Feliz aniversário! 🥳✨"""
             st.markdown("### 🔴 Controle de Compromissos e Despesas")
             
             # 1. Carrega todas as contas a pagar ordenando nativamente pelo texto YYYY-MM-DD
+            # 🔧 Agora traz também o número do documento/NF de cada lançamento.
             df_pagar_geral = carregar_dados_cached("""
-                SELECT cp.id AS "ID", f.nome AS "Fornecedor", cp.num_parcela AS "Parcela", 
+                SELECT cp.id AS "ID", f.nome AS "Fornecedor", 
+                       COALESCE(cp.numero_documento, '-') AS "Documento",
+                       cp.num_parcela AS "Parcela", 
                        cp.total_parcelas AS "De", cp.valor_parcela AS "Valor (R$)", 
                        cp.data_vencimento AS "Vencimento", cp.status AS "Status", cp.data_pagamento AS "Data Pagto"
                 FROM contas_pagar cp 
@@ -5150,8 +4600,39 @@ Feliz aniversário! 🥳✨"""
 
             st.markdown("---")
             
-            # --- OPERAÇÃO 1: 💰 REGISTRAR PAGAMENTO (DAR BAIXA) ---
-            with st.expander("💰 Dar Baixa em Despesa (Marcar como Paga)", expanded=False):
+            # 🔧 REORGANIZAÇÃO: as 3 operações do CRUD que ficavam em expanders
+            # empilhados (obrigando a rolar a tela) agora são abas separadas, com a
+            # consulta/filtro (a mais usada no dia a dia) em primeiro lugar.
+            sub_consulta, sub_baixa, sub_nova, sub_editar = st.tabs([
+                "📋 Consultar", "💰 Dar Baixa", "➕ Nova Despesa Manual", "✏️ Editar / Excluir"
+            ])
+            
+            # --- ABA 1: 📋 CONSULTA COM FILTROS (R DO CRUD) ---
+            with sub_consulta:
+                if not df_pagar_geral.empty:
+                    filtro_status_pagar = st.radio("Filtrar por Status do Compromisso:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True, key="rad_status_pagar")
+                    
+                    df_view_pagar = df_pagar_geral.copy()
+                    if filtro_status_pagar == "Pendentes":
+                        df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pendente']
+                    elif filtro_status_pagar == "Pagos":
+                        df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pago']
+                    elif filtro_status_pagar == "Atrasados":
+                        df_view_pagar = df_view_pagar[(df_view_pagar['Status'] == 'Pendente') & (df_view_pagar['Data_Venc_Obj'] < hoje)]
+                    
+                    # Oculta a coluna de objeto e formata as datas para DD/MM/YYYY para o usuário final
+                    df_exibicao_pagar = df_view_pagar.drop(columns=['Data_Venc_Obj'], errors='ignore')
+                    df_exibicao_pagar['Vencimento'] = pd.to_datetime(df_exibicao_pagar['Vencimento']).dt.strftime('%d/%m/%Y')
+                    
+                    # Mascara o Data Pagto se for nulo
+                    df_exibicao_pagar['Data Pagto'] = pd.to_datetime(df_exibicao_pagar['Data Pagto']).dt.strftime('%d/%m/%Y').fillna('-')
+
+                    st.dataframe(df_exibicao_pagar, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Nenhuma conta a pagar registrada.")
+            
+            # --- ABA 2: 💰 REGISTRAR PAGAMENTO (DAR BAIXA) ---
+            with sub_baixa:
                 if not df_pagar_geral.empty:
                     df_p_pendentes = df_pagar_geral[df_pagar_geral['Status'] == 'Pendente']
                     if not df_p_pendentes.empty:
@@ -5160,7 +4641,7 @@ Feliz aniversário! 🥳✨"""
                             df_p_pendentes_view = df_p_pendentes.copy()
                             df_p_pendentes_view['Venc_BR'] = pd.to_datetime(df_p_pendentes_view['Vencimento']).dt.strftime('%d/%m/%Y')
                             
-                            op_baixa_p = df_p_pendentes_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Venc_BR']}", axis=1).tolist()
+                            op_baixa_p = df_p_pendentes_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Doc: {x['Documento']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} | Venc: {x['Venc_BR']}", axis=1).tolist()
                             despesa_sel = st.selectbox("Selecione a despesa que foi paga:", options=op_baixa_p)
                             
                             c_b1, c_b2 = st.columns([1, 2])
@@ -5168,8 +4649,11 @@ Feliz aniversário! 🥳✨"""
                             
                             if st.form_submit_button("🔴 Confirmar Pagamento", type="primary"):
                                 id_desp_baixa = int(despesa_sel.split("ID ")[1].split(" |")[0])
+                                conn = conectar_banco()
                                 # Salva como YYYY-MM-DD
-                                executar_comando("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%Y-%m-%d"), id_desp_baixa, emp_id))
+                                conn.cursor().execute("UPDATE contas_pagar SET status = 'Pago', data_pagamento = %s WHERE id = %s AND empresa_id = %s", (data_pagto_real.strftime("%Y-%m-%d"), id_desp_baixa, emp_id))
+                                conn.commit()
+                                devolver_conexao(conn)
                                 st.success("Despesa baixada com sucesso no fluxo financeiro!")
                                 limpar_cache()
                                 st.rerun()
@@ -5178,11 +4662,12 @@ Feliz aniversário! 🥳✨"""
                 else:
                     st.info("Nenhum lançamento encontrado para dar baixa.")
             
-            # --- OPERAÇÃO 2: ➕ LANÇAR NOVA DESPESA MANUAL (C DO CRUD) ---
-            with st.expander("➕ Lançar Nova Despesa Manual", expanded=False):
+            # --- ABA 3: ➕ LANÇAR NOVA DESPESA MANUAL (C DO CRUD) ---
+            with sub_nova:
                 if not df_forn_select.empty:
                     with st.form("form_novo_contas_pagar", clear_on_submit=True):
                         forn_nome_sel = st.selectbox("Fornecedor / Origem da Despesa:", options=df_forn_select['nome'].tolist())
+                        numero_doc_manual = st.text_input("Número do Documento/NF (opcional):", placeholder="Ex: NF 12345, Boleto 001...")
                         
                         col_l1, col_l2, col_l3 = st.columns(3)
                         valor_total_manual = col_l1.number_input("Valor por Parcela (R$):", min_value=0.01, format="%.2f")
@@ -5191,27 +4676,31 @@ Feliz aniversário! 🥳✨"""
                         
                         if st.form_submit_button("💾 Salvar Lançamento"):
                             id_forn_manual = int(df_forn_select[df_forn_select['nome'] == forn_nome_sel].iloc[0]['id'])
-                            def _lancar_despesas(cur):
-                                for i in range(1, int(tot_parc_manual) + 1):
-                                    venc_parc_manual = data_1_venc_manual + timedelta(days=30 * (i - 1))
-                                    cur.execute("""
-                                        INSERT INTO contas_pagar (fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, empresa_id)
-                                        VALUES (%s, %s, %s, %s, %s, 'Pendente', %s)
-                                    """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%Y-%m-%d"), emp_id))
-                            executar_escrita(_lancar_despesas)
+                            conn = conectar_banco()
+                            cur = conn.cursor()
+                            
+                            for i in range(1, int(tot_parc_manual) + 1):
+                                venc_parc_manual = data_1_venc_manual + timedelta(days=30 * (i - 1))
+                                cur.execute("""
+                                    INSERT INTO contas_pagar (fornecedor_id, num_parcela, total_parcelas, valor_parcela, data_vencimento, status, numero_documento, empresa_id)
+                                    VALUES (%s, %s, %s, %s, %s, 'Pendente', %s, %s)
+                                """, (id_forn_manual, i, int(tot_parc_manual), float(valor_total_manual), venc_parc_manual.strftime("%Y-%m-%d"), numero_doc_manual.strip() or None, emp_id))
+                            
+                            conn.commit()
+                            devolver_conexao(conn)
                             st.success(f"Despesa com {tot_parc_manual} parcela(s) lançada com sucesso!")
                             limpar_cache()
                             st.rerun()
                 else:
                     st.warning("⚠️ Cadastre pelo menos um Fornecedor na aba anterior antes de lançar despesas manuais.")
 
-            # --- OPERAÇÃO 3: ✏️ EDITAR OU 🗑️ EXCLUIR LANÇAMENTO (U & D DO CRUD) ---
-            with st.expander("✏️ Editar ou 🗑️ Cancelar Lançamento", expanded=False):
+            # --- ABA 4: ✏️ EDITAR OU 🗑️ EXCLUIR LANÇAMENTO (U & D DO CRUD) ---
+            with sub_editar:
                 if not df_pagar_geral.empty:
                     # Ajuste visual para edição
                     df_edicao_view = df_pagar_geral.copy()
                     df_edicao_view['Venc_BR'] = pd.to_datetime(df_edicao_view['Vencimento']).dt.strftime('%d/%m/%Y')
-                    op_edicao_p = df_edicao_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} [{x['Status']}]", axis=1).tolist()
+                    op_edicao_p = df_edicao_view.apply(lambda x: f"ID {x['ID']} | {x['Fornecedor']} | Doc: {x['Documento']} | Parc {x['Parcela']}/{x['De']} | R$ {x['Valor (R$)']:.2f} [{x['Status']}]", axis=1).tolist()
                     
                     desp_edicao_sel = st.selectbox("Selecione a despesa para alterar ou remover:", options=op_edicao_p, key="sel_crud_desp")
                     id_desp_crud = int(desp_edicao_sel.split("ID ")[1].split(" |")[0])
@@ -5227,6 +4716,8 @@ Feliz aniversário! 🥳✨"""
                         except: date_v_form = hoje
                         
                         with st.form("form_update_despesa_individual"):
+                            doc_atual = linha_atual_desp['Documento']
+                            novo_doc_desp = st.text_input("Número do Documento/NF", value="" if doc_atual == '-' else str(doc_atual))
                             novo_v_desp = st.number_input("Valor da Parcela (R$)", min_value=0.01, value=float(linha_atual_desp['Valor (R$)']), format="%.2f")
                             novo_venc_desp = st.date_input("Data de Vencimento", value=date_v_form, format="DD/MM/YYYY")
                             
@@ -5238,11 +4729,14 @@ Feliz aniversário! 🥳✨"""
                                 novo_pagto_desp_val = dt_p_input.strftime("%Y-%m-%d")
                             
                             if st.form_submit_button("💾 Atualizar Dados"):
-                                executar_comando("""
+                                conn = conectar_banco()
+                                conn.cursor().execute("""
                                     UPDATE contas_pagar 
-                                    SET valor_parcela = %s, data_vencimento = %s, data_pagamento = %s 
+                                    SET valor_parcela = %s, data_vencimento = %s, data_pagamento = %s, numero_documento = %s
                                     WHERE id = %s AND empresa_id = %s
-                                """, (float(novo_v_desp), novo_venc_desp.strftime("%Y-%m-%d"), novo_pagto_desp_val, id_desp_crud, emp_id))
+                                """, (float(novo_v_desp), novo_venc_desp.strftime("%Y-%m-%d"), novo_pagto_desp_val, novo_doc_desp.strip() or None, id_desp_crud, emp_id))
+                                conn.commit()
+                                devolver_conexao(conn)
                                 st.success("Lançamento atualizado com sucesso!")
                                 limpar_cache()
                                 st.rerun()
@@ -5254,38 +4748,15 @@ Feliz aniversário! 🥳✨"""
                         with st.form("form_delete_despesa_individual"):
                             st.write(f"Confirma a exclusão da despesa ID {id_desp_crud}?")
                             if st.form_submit_button("🚨 Excluir Permanentemente", type="primary"):
-                                executar_comando("DELETE FROM contas_pagar WHERE id = %s AND empresa_id = %s", (id_desp_crud, emp_id))
+                                conn = conectar_banco()
+                                conn.cursor().execute("DELETE FROM contas_pagar WHERE id = %s AND empresa_id = %s", (id_desp_crud, emp_id))
+                                conn.commit()
+                                devolver_conexao(conn)
                                 st.success("Despesa removida com sucesso!")
                                 limpar_cache()
                                 st.rerun()
                 else:
                     st.info("Nenhuma despesa disponível para alteração.")
-
-            st.markdown("---")
-            
-            # --- TABELA DE LEITURA COMPLETA (R DO CRUD) ---
-            st.subheader("📋 Relatório Estatístico de Despesas")
-            if not df_pagar_geral.empty:
-                filtro_status_pagar = st.radio("Filtrar por Status do Compromisso:", ["Todos", "Pendentes", "Pagos", "Atrasados"], horizontal=True, key="rad_status_pagar")
-                
-                df_view_pagar = df_pagar_geral.copy()
-                if filtro_status_pagar == "Pendentes":
-                    df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pendente']
-                elif filtro_status_pagar == "Pagos":
-                    df_view_pagar = df_view_pagar[df_view_pagar['Status'] == 'Pago']
-                elif filtro_status_pagar == "Atrasados":
-                    df_view_pagar = df_view_pagar[(df_view_pagar['Status'] == 'Pendente') & (df_view_pagar['Data_Venc_Obj'] < hoje)]
-                
-                # Oculta a coluna de objeto e formata as datas para DD/MM/YYYY para o usuário final
-                df_exibicao_pagar = df_view_pagar.drop(columns=['Data_Venc_Obj'], errors='ignore')
-                df_exibicao_pagar['Vencimento'] = pd.to_datetime(df_exibicao_pagar['Vencimento']).dt.strftime('%d/%m/%Y')
-                
-                # Mascara o Data Pagto se for nulo
-                df_exibicao_pagar['Data Pagto'] = pd.to_datetime(df_exibicao_pagar['Data Pagto']).dt.strftime('%d/%m/%Y').fillna('-')
-
-                st.dataframe(df_exibicao_pagar, use_container_width=True, hide_index=True)
-            else:
-                st.info("Nenhuma conta a pagar registrada.")
                 
         # --- FLUXO DE CAIXA (NOVO BLOCO) ---
         with aba_fluxo_caixa:
@@ -5891,10 +5362,34 @@ Feliz aniversário! 🥳✨"""
             
         # 3. --- CARDS DE MÉTRICAS DINÂMICAS ---
         st.markdown("---")
+        # 🔧 CSS escopado (só afeta os cards com essas "keys" — não mexe em nenhum
+        # outro st.metric do resto do sistema): reduz o preenchimento interno do
+        # card e o tamanho da fonte do número/rótulo, para caber melhor no celular.
+        st.markdown("""
+            <style>
+                .st-key-crm_card_2d, .st-key-crm_card_2s, .st-key-crm_card_2m {
+                    padding: 0.35rem 0.6rem !important;
+                }
+                .st-key-crm_card_2d [data-testid="stMetricValue"],
+                .st-key-crm_card_2s [data-testid="stMetricValue"],
+                .st-key-crm_card_2m [data-testid="stMetricValue"] {
+                    font-size: 1.05rem !important;
+                }
+                .st-key-crm_card_2d [data-testid="stMetricLabel"] p,
+                .st-key-crm_card_2s [data-testid="stMetricLabel"] p,
+                .st-key-crm_card_2m [data-testid="stMetricLabel"] p {
+                    font-size: 0.75rem !important;
+                }
+            </style>
+        """, unsafe_allow_html=True)
+        
         c1, c2, c3 = st.columns(3)
-        c1.metric("🟢 2 Dias (Satisfação)", f"{len(df_2_dias)} clientes")
-        c2.metric("🟡 2 Semanas (Acompanhamento)", f"{len(df_2_semanas)} clientes")
-        c3.metric("🔴 2 Meses (Reposição)", f"{len(df_2_meses)} clientes")
+        with c1.container(border=True, key="crm_card_2d"):
+            st.metric("🟢 2 Dias (Satisfação)", f"{len(df_2_dias)} clientes")
+        with c2.container(border=True, key="crm_card_2s"):
+            st.metric("🟡 2 Semanas (Acompanhamento)", f"{len(df_2_semanas)} clientes")
+        with c3.container(border=True, key="crm_card_2m"):
+            st.metric("🔴 2 Meses (Reposição)", f"{len(df_2_meses)} clientes")
         #st.markdown("---")
         
         # 4. --- ABAS DE INTERAÇÃO ---
@@ -5930,10 +5425,13 @@ Feliz aniversário! 🥳✨"""
                     
                     with col_done:
                         if st.button(f"✅ Marcar como Enviado", key=f"check_{tipo_contato}_{row['codigo_venda']}", use_container_width=True):
-                            executar_comando("""
+                            conn = conectar_banco()
+                            conn.cursor().execute("""
                                 INSERT INTO crm_contatos (venda_codigo, tipo_contato, empresa_id) 
                                 VALUES (%s, %s, %s)
                             """, (int(row['codigo_venda']), tipo_contato, emp_id))
+                            conn.commit()
+                            devolver_conexao(conn)
                             st.success("Registrado!")
                             time_module.sleep(0.4)
                             limpar_cache()
@@ -5970,9 +5468,3 @@ Feliz aniversário! 🥳✨"""
                     gerar_linha_contato(row, msg_2m, "2m")
             else:
                 st.info("Nenhum cliente na janela de 2 meses pendente de envio.")
-
-# ==========================================
-# PAINEL FINAL DE TELEMETRIA DE PERFORMANCE
-# Mantido no final do script para capturar o tempo do rerun completo.
-# ==========================================
-exibir_telemetria_performance()
