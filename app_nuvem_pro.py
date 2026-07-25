@@ -57,6 +57,16 @@ st.markdown(
 if 'carrinho' not in st.session_state:
     st.session_state['carrinho'] = []
 
+# 🔧 MELHORIA: contadores usados para forçar os campos de "Dados da Venda" /
+# "Dados do Atendimento" (cliente, forma de pagamento, parcelas, datas) a
+# resetarem depois que a venda/atendimento é finalizado — sem isso, esses
+# campos guardavam os valores anteriores mesmo após a venda ser concluída
+# (o widget do Streamlit não perde o valor sozinho ao dar rerun).
+if 'reset_dados_venda' not in st.session_state:
+    st.session_state['reset_dados_venda'] = 0
+if 'reset_dados_servico' not in st.session_state:
+    st.session_state['reset_dados_servico'] = 0
+
 # 🔧 MELHORIA: trava contra duplo clique/duplo envio na finalização da venda.
 # Sem isso, um segundo toque no botão "Finalizar Venda" (comum quando o
 # usuário acha que não respondeu, numa conexão mais lenta) podia gravar a
@@ -735,12 +745,12 @@ else:
     # MÓDULO 1: ANÁLISES (Dashboard e Histórico)
     # ==========================================
     if modulo == "📊 Análises":
-        st.markdown("### 📊 Gestão e Performance")
+        st.markdown("#### 📊 Gestão e Performance")
         
         # ==========================================
         # 1. FILTRO GLOBAL (Controla todas as abas)
         # ==========================================
-        st.subheader("🔍 Período de Análise")
+        st.markdown("##### 🔍 Período de Análise")
         op_per = ["Mês Atual", "Hoje", "Últimos 7 Dias", "Últimos 15 Dias", "Últimos 30 Dias", "Mês Anterior", "Todo o Período", "Personalizado"]
         # 🔧 MELHORIA UX: pills em vez de selectbox — no celular, evita abrir
         # dropdown + rolar 8 opções + fechar para trocar o período (ação mais
@@ -774,33 +784,6 @@ else:
             c1, c2 = st.columns(2)
             d_ini = c1.date_input("Início", value=hoje - timedelta(days=30), format="DD/MM/YYYY")
             d_fim = c2.date_input("Fim", value=hoje, format="DD/MM/YYYY")
-
-        # ==========================================
-        # 1.5 FAIXA DE ALERTA DE ESTOQUE (sempre visível)
-        # ==========================================
-        # 🔧 MELHORIA UX: antes, só descobria estoque zerado/crítico clicando na
-        # aba "Alertas". Agora aparece resumido aqui em cima, antes de qualquer
-        # clique. A query já é cacheada (carregar_dados_cached), então repetir
-        # a chamada aqui e na aba Alertas não gera custo extra de banco.
-        df_estoque_resumo = carregar_dados_cached("""
-            SELECT quantidade AS "Qtd Atual"
-            FROM produtos
-            WHERE empresa_id = %s AND tipo='P'
-        """, (emp_id,))
-
-        if not df_estoque_resumo.empty:
-            limite_critico_resumo = 5
-            qtd_zerados_resumo = len(df_estoque_resumo[df_estoque_resumo['Qtd Atual'] == 0])
-            qtd_criticos_resumo = len(df_estoque_resumo[(df_estoque_resumo['Qtd Atual'] > 0) & (df_estoque_resumo['Qtd Atual'] <= limite_critico_resumo)])
-            total_atencao_resumo = qtd_zerados_resumo + qtd_criticos_resumo
-
-            if total_atencao_resumo > 0:
-                partes_alerta = []
-                if qtd_zerados_resumo > 0:
-                    partes_alerta.append(f"{qtd_zerados_resumo} produto(s) com estoque ZERADO")
-                if qtd_criticos_resumo > 0:
-                    partes_alerta.append(f"{qtd_criticos_resumo} produto(s) com estoque crítico")
-                st.error(f"🚨 {' e '.join(partes_alerta)} — veja detalhes na aba **🚨 Alertas**", icon="🚨")
 
         # ==========================================
         # 2. ABAS DE ANÁLISE
@@ -2305,20 +2288,21 @@ Feliz aniversário! 🥳✨"""
                     # 1. Configurações da Venda
                     st.markdown("#### 1️⃣ Dados da Venda")
                     with st.container(border=True):
+                        _rv = st.session_state['reset_dados_venda']
                         c_cli, c_data = st.columns(2)
-                        cliente_pdv = c_cli.selectbox("Cliente:", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione o cliente...")
-                        data_venda_input = c_data.date_input("Data da Venda", format="DD/MM/YYYY", value=date.today())
+                        cliente_pdv = c_cli.selectbox("Cliente:", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione o cliente...", key=f"cli_pdv_{_rv}")
+                        data_venda_input = c_data.date_input("Data da Venda", format="DD/MM/YYYY", value=date.today(), key=f"data_pdv_{_rv}")
                     
                         c_pag, c_parc = st.columns(2)
-                        f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...")
+                        f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...", key=f"fpag_pdv_{_rv}")
                         
                         qtd_parcelas = 1
                         data_1_venc = date.today()
                         
                         if f_pag:
-                            qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1)
+                            qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1, key=f"parc_pdv_{_rv}")
                             sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
-                            data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY")
+                            data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY", key=f"venc1_pdv_{_rv}")
                 
                     # 2. Seleção de Produto
                     st.markdown("#### 2️⃣ Adicionar Produto")
@@ -2384,7 +2368,31 @@ Feliz aniversário! 🥳✨"""
                                     else:
                                         st.error("Estoque insuficiente!")
                         else:
-                            st.info("👆 preencha o cliente, a forma de pagamento e selecione um item para configurar a venda.")
+                            # 🔧 CORREÇÃO: mensagem agora diferencia dois cenários —
+                            # (1) ainda falta configurar cliente/pagamento (setup inicial)
+                            # (2) cliente e pagamento já ok, só falta escolher o próximo
+                            # produto — o que é o caso normal depois de cada item
+                            # adicionado ao carrinho (o campo de busca é limpo de
+                            # propósito). Nesse segundo caso, a mensagem já orienta a
+                            # continuar ou finalizar, em vez de repetir os 3 campos.
+                            faltando = []
+                            if not cliente_pdv:
+                                faltando.append("o cliente")
+                            if not f_pag:
+                                faltando.append("a forma de pagamento")
+
+                            if faltando:
+                                if not prod_display:
+                                    faltando.append("um produto")
+                                if len(faltando) == 1:
+                                    msg_falta = faltando[0]
+                                else:
+                                    msg_falta = ", ".join(faltando[:-1]) + f" e {faltando[-1]}"
+                                st.info(f"👆 Falta selecionar {msg_falta} para continuar.")
+                            elif st.session_state['carrinho']:
+                                st.info("🔎 Selecione o próximo produto, ou finalize a venda abaixo.")
+                            else:
+                                st.info("👆 Selecione um produto para adicionar à venda.")
 
                     # 3. Carrinho e Configurações Financeiras
                     st.markdown("#### 3️⃣ Carrinho e Finalização")
@@ -2557,6 +2565,7 @@ Feliz aniversário! 🥳✨"""
                                 devolver_conexao(conn)
                                 st.session_state['carrinho'] = []
                                 st.session_state['processando_venda'] = False
+                                st.session_state['reset_dados_venda'] += 1
                                 st.success(f"Venda {novo_cod} salva com sucesso como PEDIDO!")
                                 limpar_cache()
                                 st.rerun()
@@ -2795,21 +2804,22 @@ Feliz aniversário! 🥳✨"""
                     # 1. Configurações do Atendimento
                     st.markdown("#### 1️⃣ Dados do Atendimento")
                     with st.container(border=True):
+                        _rs = st.session_state['reset_dados_servico']
                         c_cli, c_data = st.columns(2)
-                        cliente_pdv = c_cli.selectbox("Cliente (Ficha Técnica):", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione a cliente...", key="cli_serv")
-                        data_venda_input = c_data.date_input("Data do Serviço", format="DD/MM/YYYY", value=date.today(), key="dt_serv")
+                        cliente_pdv = c_cli.selectbox("Cliente (Ficha Técnica):", options=df_cli['nome'].tolist(), index=None, placeholder="Selecione a cliente...", key=f"cli_serv_{_rs}")
+                        data_venda_input = c_data.date_input("Data do Serviço", format="DD/MM/YYYY", value=date.today(), key=f"dt_serv_{_rs}")
                     
                         c_pag, c_parc = st.columns(2)
-                        f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...", key="fpag_serv")
+                        f_pag = c_pag.selectbox("Forma de Pagamento:", ["Pix", "Crédito", "Débito", "Dinheiro", "Crediário"], index=None, placeholder="Selecione a forma de pagamento...", key=f"fpag_serv_{_rs}")
                         
                         # Inicialização padrão para evitar falhas se f_pag não estiver selecionado
                         qtd_parcelas = 1
                         data_1_venc = date.today()
                         
                         if f_pag:
-                            qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1, key="parc_serv")
+                            qtd_parcelas = c_parc.number_input("Número de Parcelas:", min_value=1, max_value=12, value=1, step=1, key=f"parc_serv_{_rs}")
                             sugestao_venc = date.today() if qtd_parcelas == 1 else date.today() + timedelta(days=30)
-                            data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY", key="venc1_serv")
+                            data_1_venc = st.date_input("Data do 1º Vencimento:", value=sugestao_venc, format="DD/MM/YYYY", key=f"venc1_serv_{_rs}")
                 
                     # 2. Seleção do Serviço, Profissional e Insumos
                     st.markdown("#### 2️⃣ Procedimento")
@@ -3026,6 +3036,7 @@ Feliz aniversário! 🥳✨"""
                                 devolver_conexao(conn)
                                 st.session_state['carrinho_servicos'] = []
                                 st.session_state['processando_atendimento'] = False
+                                st.session_state['reset_dados_servico'] += 1
                                 st.success(f"Ficha técnica e Atendimento {novo_cod} salvos com sucesso!")
                                 limpar_cache()
                                 st.rerun()
