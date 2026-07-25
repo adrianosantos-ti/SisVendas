@@ -57,6 +57,20 @@ st.markdown(
 if 'carrinho' not in st.session_state:
     st.session_state['carrinho'] = []
 
+# 🔧 MELHORIA: trava contra duplo clique/duplo envio na finalização da venda.
+# Sem isso, um segundo toque no botão "Finalizar Venda" (comum quando o
+# usuário acha que não respondeu, numa conexão mais lenta) podia gravar a
+# mesma venda duas vezes e dar baixa duplicada no estoque.
+if 'processando_venda' not in st.session_state:
+    st.session_state['processando_venda'] = False
+
+# Mesma proteção aplicada às outras ações que gravam no banco em Movimentações
+# (a de "Fechar Troca" usa chave dinâmica por troca, então não precisa de
+# inicialização fixa aqui — usa st.session_state.get(..., False)).
+for _flag in ['processando_entrada_estoque', 'processando_estorno_entrada', 'processando_standby', 'processando_atendimento']:
+    if _flag not in st.session_state:
+        st.session_state[_flag] = False
+
 DATABASE_URL = st.secrets["DATABASE_URL"]
 
 # ==========================================
@@ -2444,7 +2458,15 @@ Feliz aniversário! 🥳✨"""
                         c1_finalizar, c2_orcamento, c3_limpar = st.columns(3)
                     
                         # --- AÇÃO: FINALIZAR VENDA (PERSISTE NO BANCO) ---
-                        if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True):
+                        # 🔧 MELHORIA: botão desabilita assim que clicado (via session_state)
+                        # e só reabilita depois que a gravação terminar — evita duplicar a
+                        # venda/baixa de estoque com um segundo toque acidental.
+                        if c1_finalizar.button("✅ Finalizar Venda", type="primary", use_container_width=True, disabled=st.session_state['processando_venda']):
+                            st.session_state['processando_venda'] = True
+                            st.rerun()
+
+                        if st.session_state['processando_venda']:
+                          with st.spinner("Processando venda..."):
                             try:
                                 conn = conectar_banco()
                                 cur = conn.cursor()
@@ -2534,11 +2556,13 @@ Feliz aniversário! 🥳✨"""
                                 conn.commit()
                                 devolver_conexao(conn)
                                 st.session_state['carrinho'] = []
+                                st.session_state['processando_venda'] = False
                                 st.success(f"Venda {novo_cod} salva com sucesso como PEDIDO!")
                                 limpar_cache()
                                 st.rerun()
                             
                             except Exception as e:
+                                st.session_state['processando_venda'] = False
                                 st.error(f"Erro no banco: {e}")
                                 if 'conn' in locals(): devolver_conexao(conn)
 
@@ -2910,7 +2934,12 @@ Feliz aniversário! 🥳✨"""
                         c1_finalizar, c3_limpar = st.columns([2, 1])
                     
                         # --- AÇÃO: FINALIZAR SERVIÇO (PERSISTE NO BANCO) ---
-                        if c1_finalizar.button("✅ Lançar Atendimento e Gerar Financeiro", type="primary", use_container_width=True):
+                        if c1_finalizar.button("✅ Lançar Atendimento e Gerar Financeiro", type="primary", use_container_width=True, disabled=st.session_state['processando_atendimento']):
+                            st.session_state['processando_atendimento'] = True
+                            st.rerun()
+
+                        if st.session_state['processando_atendimento']:
+                          with st.spinner("Processando atendimento..."):
                             try:
                                 conn = conectar_banco()
                                 cur = conn.cursor()
@@ -2996,11 +3025,13 @@ Feliz aniversário! 🥳✨"""
                                 conn.commit()
                                 devolver_conexao(conn)
                                 st.session_state['carrinho_servicos'] = []
+                                st.session_state['processando_atendimento'] = False
                                 st.success(f"Ficha técnica e Atendimento {novo_cod} salvos com sucesso!")
                                 limpar_cache()
                                 st.rerun()
                             
                             except Exception as e:
+                                st.session_state['processando_atendimento'] = False
                                 st.error(f"Erro no banco: {e}")
                                 if 'conn' in locals(): devolver_conexao(conn)
 
@@ -3488,12 +3519,17 @@ Feliz aniversário! 🥳✨"""
                     total_nota = float(df_carrinho['Total (R$)'].sum())
                     st.metric("Total da Entrada", f"R$ {total_nota:,.2f}".replace('.', 'v').replace(',', '.').replace('v', ','))
                     
-                    if st.button("💾 Finalizar Entrada no Estoque", type="primary", use_container_width=True):
+                    if st.button("💾 Finalizar Entrada no Estoque", type="primary", use_container_width=True, disabled=st.session_state['processando_entrada_estoque']):
                         if not numero_nota:
                             st.error("⚠️ Digite o número do Pedido ou NF para gravar no histórico.")
                         elif not sel_fornecedor:
                             st.error("⚠️ Selecione o fornecedor que está emitindo esta nota.")
                         else:
+                            st.session_state['processando_entrada_estoque'] = True
+                            st.rerun()
+
+                    if st.session_state['processando_entrada_estoque']:
+                      with st.spinner("Gravando entrada no estoque..."):
                             try:
                                 id_forn_salvar = int(df_fornecedores[df_fornecedores['nome'] == sel_fornecedor].iloc[0]['id'])
                                 
@@ -3596,10 +3632,12 @@ Feliz aniversário! 🥳✨"""
                                 
                                 st.session_state['msg_sucesso_compra'] = f"🎉 Sucesso! A NF {numero_nota} foi registrada. {itens_salvos} itens entraram no estoque e o financeiro foi atualizado."
                                 st.session_state['carrinho_compra'] = []
+                                st.session_state['processando_entrada_estoque'] = False
                                 limpar_cache()
                                 st.rerun()
                                 
                             except Exception as e:
+                                st.session_state['processando_entrada_estoque'] = False
                                 st.error(f"Erro ao salvar no banco: {e}")
                                 if 'conn' in locals(): conn.rollback(); devolver_conexao(conn)
                     
@@ -3663,7 +3701,12 @@ Feliz aniversário! 🥳✨"""
                         st.markdown("---")
                         st.warning("⚠️ **Zona de Perigo:** Ao estornar esta entrada, o sistema irá recalcular o estoque físico (subtraindo os itens) e removerá todas as parcelas em aberto ou pagas do Contas a Pagar.")
                         
-                        if st.button("🚨 Estornar e Excluir esta Entrada", type="primary", use_container_width=True):
+                        if st.button("🚨 Estornar e Excluir esta Entrada", type="primary", use_container_width=True, disabled=st.session_state['processando_estorno_entrada']):
+                            st.session_state['processando_estorno_entrada'] = True
+                            st.rerun()
+
+                        if st.session_state['processando_estorno_entrada']:
+                          with st.spinner("Estornando entrada..."):
                             try:
                                 conn = conectar_banco()
                                 cur = conn.cursor()
@@ -3693,10 +3736,12 @@ Feliz aniversário! 🥳✨"""
                                 devolver_conexao(conn)
                                 
                                 st.success(f"✅ Sucesso! A Entrada {dados_compra['numero_pedido']} e suas respectivas parcelas financeiras foram completamente removidas do sistema.")
+                                st.session_state['processando_estorno_entrada'] = False
                                 limpar_cache()
                                 st.rerun()
                                 
                             except Exception as e:
+                                st.session_state['processando_estorno_entrada'] = False
                                 st.error(f"Erro ao processar estorno no banco de dados: {e}")
                                 if 'conn' in locals(): conn.rollback(); devolver_conexao(conn)
                 else:
@@ -3831,10 +3876,15 @@ Feliz aniversário! 🥳✨"""
                     st.info("💡 Ao salvar, as quantidades físicas serão atualizadas imediatamente no estoque e a movimentação ficará em Standby.")
 
                     # BOTÃO DE CONFIRMAÇÃO E GRAVAÇÃO
-                    if st.button("💾 Salvar Movimentação em Standby", type="primary", use_container_width=True):
+                    if st.button("💾 Salvar Movimentação em Standby", type="primary", use_container_width=True, disabled=st.session_state['processando_standby']):
                         if not st.session_state['troca_saida'] and not st.session_state['troca_entrada']:
                             st.error("Adicione pelo menos um item em uma das listas para processar.")
                         else:
+                            st.session_state['processando_standby'] = True
+                            st.rerun()
+
+                    if st.session_state['processando_standby']:
+                      with st.spinner("Salvando movimentação..."):
                             try:
                                 conn = conectar_banco()
                                 cur = conn.cursor()
@@ -3862,11 +3912,13 @@ Feliz aniversário! 🥳✨"""
                                 
                                 st.session_state['troca_saida'] = []
                                 st.session_state['troca_entrada'] = []
+                                st.session_state['processando_standby'] = False
                                 st.success(f"Troca Nº {id_troca_gerada} enviada para o Standby! Estoque físico atualizado.")
                                 limpar_cache()
                                 st.rerun()
                                 
                             except Exception as e:
+                                st.session_state['processando_standby'] = False
                                 st.error(f"Erro ao processar transação: {e}")
                                 if 'conn' in locals(): devolver_conexao(conn)
 
@@ -3958,7 +4010,13 @@ Feliz aniversário! 🥳✨"""
                                 else:
                                     st.info(f"ℹ️ Empresa pendente em: **R$ {abs(dif):.2f}**".replace('.', ','))
                                     
-                                if st.button("🏁 Finalizar e Fechar Troca", key=f"btn_fechar_{id_t}", use_container_width=True, type="primary"):
+                                flag_fechar_troca = f'processando_fechar_troca_{id_t}'
+                                if st.button("🏁 Finalizar e Fechar Troca", key=f"btn_fechar_{id_t}", use_container_width=True, type="primary", disabled=st.session_state.get(flag_fechar_troca, False)):
+                                    st.session_state[flag_fechar_troca] = True
+                                    st.rerun()
+
+                                if st.session_state.get(flag_fechar_troca, False):
+                                  with st.spinner("Fechando troca..."):
                                     try:
                                         conn = conectar_banco()
                                         cur = conn.cursor()
@@ -3975,10 +4033,12 @@ Feliz aniversário! 🥳✨"""
                                         cur.execute("UPDATE trocas SET status_financeiro = %s, diferenca = %s WHERE id = %s", (status_fin, dif, id_t))
                                         conn.commit()
                                         devolver_conexao(conn)
+                                        st.session_state[flag_fechar_troca] = False
                                         st.success(f"Troca Nº {id_t} finalizada e resolvida financeiramente!")
                                         limpar_cache()
                                         st.rerun()
                                     except Exception as e:
+                                        st.session_state[flag_fechar_troca] = False
                                         st.error(f"Erro ao finalizar: {e}")
                                         if 'conn' in locals(): devolver_conexao(conn)
                 else:
@@ -4194,7 +4254,8 @@ Feliz aniversário! 🥳✨"""
                                     id_col_ag = int(df_col_ag[df_col_ag['nome'] == sel_colaboradora].iloc[0]['id'])
                                     id_ser_ag = int(df_ser_ag.iloc[idx_ser]['id'])
                                     
-                                    try:
+                                    with st.spinner("Verificando horário e confirmando agendamento..."):
+                                      try:
                                         conn = conectar_banco()
                                         cur = conn.cursor()
                                         
@@ -4226,7 +4287,7 @@ Feliz aniversário! 🥳✨"""
                                             limpar_cache()
                                             st.rerun()
                                             
-                                    except Exception as e:
+                                      except Exception as e:
                                         st.error(f"Erro ao salvar agendamento: {e}")
                                         if 'conn' in locals(): devolver_conexao(conn)
                             else:
