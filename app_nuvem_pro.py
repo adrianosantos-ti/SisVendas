@@ -1559,7 +1559,7 @@ Feliz aniversário! 🥳✨"""
     # MÓDULO 2: CADASTROS (Produtos, Categorias, Clientes, Fornecedores)
     # ==========================================
     elif modulo == "🗂️ Cadastros":
-        st.markdown("### 🗂️ Central de Cadastros")
+        st.markdown("#### 🗂️ Central de Cadastros")
         tab_prod, tab_serv, tab_cat, tab_cli, tab_for, tab_colab = st.tabs(["📦 Produtos", "💇‍♀️ Serviços", "🏷️ Categorias", "👥 Clientes", "🤝 Fornecedores", "👤 Equipe"])
         # ==========================================
         # ABA: GERENCIAR PRODUTOS (APENAS FÍSICOS)
@@ -1843,7 +1843,7 @@ Feliz aniversário! 🥳✨"""
                         st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
                         
                         # --- NOVAS MÉTRICAS DE CAPITAL DE ESTOQUE ---
-                        st.markdown("### 💰 Resumo Financeiro do Estoque")
+                        st.markdown("#### 💰 Resumo Financeiro do Estoque")
                         m1, m2 = st.columns(2)
                         
                         # 1. Capital de Venda (Potencial de Faturamento usando Preço de Venda)
@@ -2106,7 +2106,7 @@ Feliz aniversário! 🥳✨"""
 
             if not df_clientes.empty:
                 st.markdown("---")
-                st.subheader("Lista de Clientes Cadastrados")
+                st.markdown("#### Lista de Clientes Cadastrados")
                 st.dataframe(df_clientes.drop(columns=['empresa_id']), use_container_width=True, hide_index=True)
 
         with tab_for:
@@ -2124,7 +2124,7 @@ Feliz aniversário! 🥳✨"""
         # ABA: GERENCIAR COLABORADORES
         # ==========================================
         with tab_colab:
-            st.markdown("### 👤 Equipe e Profissionais")
+            st.markdown("#### 👤 Equipe e Profissionais")
             
             # Carrega a lista atual de colaboradores
             df_colab = carregar_dados_cached("SELECT id, nome, cargo, telefone, ativo FROM colaboradores WHERE empresa_id=%s ORDER BY nome", (emp_id,))
@@ -2231,7 +2231,7 @@ Feliz aniversário! 🥳✨"""
     # MÓDULO 3: MOVIMENTAÇÕES (Vendas e Compras)
     # ==========================================
     elif modulo == "🔄 Movimentações":
-        st.markdown("### 🔄 Operações Diárias")
+        st.markdown("#### 🔄 Operações Diárias")
         
         # 1. Puxa as permissões do usuário logado (A Mochila de Chaves)
         meus_acessos = st.session_state.get('modulos_permitidos', [])
@@ -2276,7 +2276,7 @@ Feliz aniversário! 🥳✨"""
                 
         if tab_venda:
             with tab_venda:
-                st.subheader("🛒 Vendas")
+                st.markdown("#### 🛒 Vendas")
             
                 # Carrega dados atualizados para o PDV
                 df_cli = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
@@ -2647,7 +2647,7 @@ Feliz aniversário! 🥳✨"""
                     st.markdown("---")
                     with st.container(border=True):
                         st.success(f"🎉 {st.session_state['zap_codigo']} pronto! Total: R$ {st.session_state['zap_total']:.2f}".replace('.', ','))
-                        st.subheader("📲 Enviar Documento via WhatsApp")
+                        st.markdown("#### 📲 Enviar Documento via WhatsApp")
                         st.text_area("Visualização da mensagem:", value=st.session_state['zap_msg'], height=180, disabled=True)
                         st.link_button("🟢 Abrir WhatsApp e Enviar", st.session_state['zap_link'], type="primary", use_container_width=True)
                         if st.button("❌ Fechar Painel", use_container_width=True):
@@ -2792,7 +2792,7 @@ Feliz aniversário! 🥳✨"""
 
         if tab_lanca_serv:
             with tab_lanca_serv:
-                st.subheader("✨ Lançamento de Serviços e Ficha Técnica")
+                st.markdown("#### ✨ Lançamento de Serviços e Ficha Técnica")
                 
                 # Carrega dados
                 df_cli = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
@@ -3057,7 +3057,7 @@ Feliz aniversário! 🥳✨"""
                     st.markdown("---")
                     with st.container(border=True):
                         st.success(f"🎉 {st.session_state['zap_codigo_serv']} finalizado! Total: R$ {st.session_state['zap_total_serv']:.2f}".replace('.', ','))
-                        st.subheader("📲 Enviar Recibo via WhatsApp")
+                        st.markdown("#### 📲 Enviar Recibo via WhatsApp")
                         
                         # Mensagem editável antes do envio
                         msg_editada = st.text_area(
@@ -3083,7 +3083,7 @@ Feliz aniversário! 🥳✨"""
                             
         if tab_orcamentos:
             with tab_orcamentos:
-                st.subheader("📋 Orçamentos Salvos")
+                st.markdown("#### 📋 Orçamentos Salvos")
                 
                 # Carrega todos os orçamentos ativos da empresa
                 df_orcs = carregar_dados_cached("SELECT id, cliente_nome, data_orcamento, valor_total, carrinho_json FROM orcamentos WHERE empresa_id=%s ORDER BY id DESC", (emp_id,))
@@ -3235,7 +3235,7 @@ Feliz aniversário! 🥳✨"""
 
         if tab_compra:
             with tab_compra:
-                st.subheader("📥 Entrada de Mercadorias e Estoque")
+                st.markdown("#### 📥 Entrada de Mercadorias e Estoque")
                 
                 # 🔧 Exibe a mensagem de sucesso guardada antes do st.rerun() da finalização.
                 # Sem isso, a mensagem aparecia e sumia quase na hora, porque o rerun
@@ -3373,7 +3373,7 @@ Feliz aniversário! 🥳✨"""
                     # já sabe gravar tudo no banco (estoque, financeiro, etc.).
                     if 'produtos_pedido' in st.session_state and st.session_state['produtos_pedido']:
                         st.markdown("---")
-                        st.markdown("### 📝 Revise os itens antes de importar")
+                        st.markdown("#### 📝 Revise os itens antes de importar")
                         st.caption("Ajuste quantidades ou preços se necessário, e remova linhas indesejadas (ex: itens bonificados) antes de confirmar.")
                         
                         desconto_detectado = st.session_state.get('desconto_pdf_detectado', 0.0)
@@ -3440,7 +3440,7 @@ Feliz aniversário! 🥳✨"""
                     query_prods = "SELECT id, referencia, nome FROM produtos WHERE empresa_id = %s ORDER BY nome"
                     df_produtos = carregar_dados_cached(query_prods, (emp_id,))
                     
-                    st.markdown("### 🛒 Adicionar Item à Nota")
+                    st.markdown("#### 🛒 Adicionar Item à Nota")
                     tipo_item = st.radio("O que você está dando entrada?", ["Produto já cadastrado", "Produto novo (Primeira vez)"], horizontal=True)
                     
                     with st.form("form_add_compra", clear_on_submit=True):
@@ -3496,7 +3496,7 @@ Feliz aniversário! 🥳✨"""
                 # lançamento manual, permitindo concluir tudo numa tela só.
                 # ==========================================================
                 st.markdown("---")
-                st.markdown("### 📦 Resumo da Nota e Finalização")
+                st.markdown("#### 📦 Resumo da Nota e Finalização")
                 
                 query_forn = "SELECT id, nome FROM fornecedores WHERE empresa_id = %s ORDER BY nome"
                 df_fornecedores = carregar_dados_cached(query_forn, (emp_id,))
@@ -3660,7 +3660,7 @@ Feliz aniversário! 🥳✨"""
                             
         if tab_historico_compras:
             with tab_historico_compras:
-                st.subheader("📋 Consulta e Estorno de Notas de Entrada")
+                st.markdown("#### 📋 Consulta e Estorno de Notas de Entrada")
                 
                 # Filtros na parte superior
                 c_ini, c_fim = st.columns(2)
@@ -3678,7 +3678,7 @@ Feliz aniversário! 🥳✨"""
                 df_historico = carregar_dados_cached(query_compras, (emp_id, data_ini, data_fim))
                 
                 if not df_historico.empty:
-                    st.markdown("### 🔍 Selecione uma Entrada para Ver os Itens")
+                    st.markdown("##### 🔍 Selecione uma Entrada para Ver os Itens")
                     
                     # Monta o dicionário incluindo o nome do fornecedor na visualização
                     opcoes_compra = {
@@ -3763,7 +3763,7 @@ Feliz aniversário! 🥳✨"""
         # ==========================================
         if tab_trocas:
             with tab_trocas:
-                st.subheader("🔄 Trocas e Empréstimos")
+                st.markdown("#### 🔄 Trocas e Empréstimos")
                 
                 # --- INICIALIZAÇÃO DOS CARRINHOS DE TROCA ---
                 if 'troca_saida' not in st.session_state:
@@ -4060,7 +4060,7 @@ Feliz aniversário! 🥳✨"""
         # ==========================================
         if tab_agenda:
             with tab_agenda:
-                st.subheader("📅 Agenda de Atendimentos")
+                st.markdown("#### 📅 Agenda de Atendimentos")
                 
                 # Criamos duas sub-abas internas para organizar o espaço no celular
                 aba_ver_agenda, aba_novo_agendamento = st.tabs(["📱 Visualizar Agenda", "➕ Marcar Horário"])
@@ -4210,7 +4210,7 @@ Feliz aniversário! 🥳✨"""
                 # SUB-ABA 2: MARCAR NOVO HORÁRIO (AGENDA DINÂMICA)
                 # ---------------------------------------------------------
                 with aba_novo_agendamento:
-                    st.markdown("### 📝 Agendar Novo Serviço")
+                    st.markdown("#### 📝 Agendar Novo Serviço")
                     
                     # Carrega as listas necessárias. 
                     df_cli_ag = carregar_dados_cached("SELECT id, nome FROM clientes WHERE empresa_id=%s ORDER BY nome", (emp_id,))
@@ -4322,14 +4322,14 @@ Feliz aniversário! 🥳✨"""
             """,
             unsafe_allow_html=True
         )
-        st.markdown("### 💰 Gestão Financeira")
+        st.markdown("#### 💰 Gestão Financeira")
         
         # --- MUDANÇA: Adicionamos a aba_fluxo_caixa aqui na lista de abas ---
         tab_rec, tab_pag, aba_fluxo_caixa, aba_comissoes = st.tabs(["🟢 Contas a Receber (Vendas)", "🔴 Contas a Pagar (Despesas)", "💸 Fluxo de Caixa", "🏆 Comissões"])
         
         # --- CONTAS A RECEBER 100% RESTAURADO ---
         with tab_rec:
-            st.markdown("### 💰 Controle de Parcelas")
+            st.markdown("#### 💰 Controle de Parcelas")
             # Adicionado c.telefone na consulta para puxarmos o número do WhatsApp
             df_financeiro = carregar_dados_cached("""
                 SELECT cr.id AS "ID Parcela", cr.venda_codigo AS "Nº Venda", c.nome AS "Cliente", c.telefone AS "Telefone",
@@ -4566,7 +4566,7 @@ Feliz aniversário! 🥳✨"""
                             st.warning("Nenhuma parcela encontrada para esta venda.")
 
             # --- TABELA DE LEITURA COMPLETA (COM FILTRO DE CLIENTE E STATUS) ---
-            st.subheader("📋 Relatório de Parcelas e Boletos")
+            st.markdown("#### 📋 Relatório de Parcelas e Boletos")
             
             # 1. Busca os dados no banco e cria a variável df_receber_geral
             df_receber_geral = carregar_dados_cached("""
@@ -4637,7 +4637,7 @@ Feliz aniversário! 🥳✨"""
                 
         # --- CONTAS A PAGAR COMPLETÃO (CRUD + BAIXA) ---
         with tab_pag:
-            st.markdown("### 🔴 Controle de Compromissos e Despesas")
+            st.markdown("#### 🔴 Controle de Compromissos e Despesas")
             
             # 1. Carrega todas as contas a pagar ordenando nativamente pelo texto YYYY-MM-DD
             # 🔧 Agora traz também o número do documento/NF de cada lançamento.
@@ -4840,7 +4840,7 @@ Feliz aniversário! 🥳✨"""
                 
         # --- FLUXO DE CAIXA (NOVO BLOCO) ---
         with aba_fluxo_caixa:
-            st.subheader("💸 Fluxo de Caixa")
+            st.markdown("#### 💸 Fluxo de Caixa")
             
             query_fluxo = """
                 SELECT 
@@ -4935,7 +4935,7 @@ Feliz aniversário! 🥳✨"""
             # FECHAMENTO DE CAIXA DO DIA
             # ==========================================
             st.markdown("---")
-            st.subheader("🔒 Fechamento de Caixa")
+            st.markdown("#### 🔒 Fechamento de Caixa")
 
             data_fechamento = st.date_input(
                 "Selecione o dia para fechar o caixa:",
@@ -5192,7 +5192,7 @@ Feliz aniversário! 🥳✨"""
         # ABA: COMISSÕES
         # ==========================================
         with aba_comissoes:
-            st.subheader("🏆 Relatório de Comissões")
+            st.markdown("#### 🏆 Relatório de Comissões")
 
             col_ini, col_fim = st.columns(2)
             hoje = date.today()
@@ -5398,7 +5398,7 @@ Feliz aniversário! 🥳✨"""
             """,
             unsafe_allow_html=True
         )
-        st.markdown("### 📣 Gestão de Relacionamento: Método 2+2+2")
+        st.markdown("#### 📣 Gestão de Relacionamento: Método 2+2+2")
         st.markdown("Acompanhe o ciclo de vida dos seus clientes e gere recompras automáticas.")
         
         # 1. A SUPER QUERY DO CRM: Filtra e esconde quem já recebeu a mensagem daquela etapa
