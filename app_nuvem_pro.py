@@ -980,7 +980,7 @@ else:
 
         # --- ABA 2: CRM E ANIVERSARIANTES ---
         with aba_crm:
-            st.markdown("### 🎂 Aniversariantes do Período")
+            st.markdown("#### 🎂 Aniversariantes do Período")
             if per_sel == "Todo o Período":
                 st.caption("Exibindo **todos** os clientes cadastrados no Apprimory.")
             else:
@@ -1094,7 +1094,7 @@ Feliz aniversário! 🥳✨"""
             st.markdown("---")
             
             # --- RANKING DE ENGAJAMENTO (Mesmo filtro de data) ---
-            st.markdown("### 🏆 Top Clientes (Maior LTV no Período)")
+            st.markdown("#### 🏆 Top Clientes (Maior LTV no Período)")
             query_crm_vendas = """
                 SELECT 
                     c.nome AS "Cliente", 
@@ -1124,7 +1124,7 @@ Feliz aniversário! 🥳✨"""
             exibir_painel_avaliacoes(emp_id)
                 
         with aba_hist:
-            st.subheader("📜 Histórico Geral e Faturamento")
+            st.markdown("#### 📜 Histórico Geral e Faturamento")
             
             query_todas_vendas = """
                 SELECT v.id AS "ID Item", v.codigo_venda AS "Nº Venda", COALESCE(c.nome, 'Cliente Excluído') AS "Cliente", 
@@ -1153,7 +1153,7 @@ Feliz aniversário! 🥳✨"""
                 data_min = df_todas_vendas['Data_Filtro'].min() if not pd.isna(df_todas_vendas['Data_Filtro'].min()) else date.today()
                 data_max = df_todas_vendas['Data_Filtro'].max() if not pd.isna(df_todas_vendas['Data_Filtro'].max()) else date.today()
                 
-                st.subheader("🔍 Filtros de Busca")
+                st.markdown("##### 🔍 Filtros de Busca")
                 col_data1, col_data2, col_cli = st.columns([1, 1, 2])
                 
                 data_inicio = col_data1.date_input("Data Inicial", value=data_min, format="DD/MM/YYYY")
@@ -1367,7 +1367,7 @@ Feliz aniversário! 🥳✨"""
                     colunas_exibicao = ['Nº Venda', 'Cliente', 'Produto', 'Qtd', 'Preço Tabela', 'Desconto Unit', 'Total (R$)', 'Entrada (R$)', 'Restante (R$)', 'Data', 'Pagamento', 'Prazo']
                     st.dataframe(df_filtrado[colunas_exibicao], use_container_width=True, hide_index=True)
                     
-                    st.markdown("### 📊 Resumo Geral do Filtro")
+                    st.markdown("#### 📊 Resumo Geral do Filtro")
                     
                     # Trocamos para 3 colunas e removemos a métrica de "A Receber"
                     col_res1, col_res2, col_res3 = st.columns(3)
@@ -1382,7 +1382,7 @@ Feliz aniversário! 🥳✨"""
 
         # --- NOVA ABA: ALERTAS DE ESTOQUE ---
         with aba_alertas:
-            st.markdown("### 📦 Alertas de Reposição de Estoque")
+            st.markdown("#### 📦 Alertas de Reposição de Estoque")
             
             df_estoque = carregar_dados_cached("""
                 SELECT 
@@ -1411,7 +1411,7 @@ Feliz aniversário! 🥳✨"""
                 st.markdown("---")
                 
                 if not df_zerados.empty or not df_alerta.empty:
-                    st.subheader("⚠️ Produtos que precisam de reposição")
+                    st.markdown("##### ⚠️ Produtos que precisam de reposição")
                     
                     df_criticos_total = pd.concat([df_zerados, df_alerta])
                     
@@ -1438,7 +1438,7 @@ Feliz aniversário! 🥳✨"""
         # NOVA TELA: VISÃO APP (Acompanhamento Rápido)
         # ==========================================
         with aba_app:
-            st.markdown("### 📱 Acompanhamento Diário")
+            st.markdown("#### 📱 Acompanhamento Diário")
             
             hoje = date.today()
             
