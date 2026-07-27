@@ -1958,47 +1958,57 @@ Feliz aniversário! 🥳✨"""
                         # Remove colunas de controle interno para a visualização ficar limpa
                         df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa', 'tipo'], errors='ignore')
                         
-                        # 🔧 MELHORIA: seleção de linha na tabela — clicar num produto
-                        # abre um painel de consulta abaixo, sem precisar ir até o
-                        # expander "Editar Produto" e buscar de novo no selectbox.
+                        # 🔧 MELHORIA: clicar num produto abre um pop-up de consulta (não
+                        # empurra a lista pra baixo). O contador no key força a tabela a
+                        # "esquecer" a seleção quando o pop-up é fechado.
+                        if 'reset_tabela_produtos' not in st.session_state:
+                            st.session_state['reset_tabela_produtos'] = 0
+                        
+                        @st.dialog("🔎 Consulta de Produto")
+                        def dialog_consulta_produto(p_consulta):
+                            st.markdown(f"##### {p_consulta['nome']}")
+                            st.caption("Modo consulta (somente leitura) — para alterar, use o expander **✏️ Editar Produto**.")
+                            
+                            classe_consulta = p_consulta.get('classe', 'Venda')
+                            st.selectbox("Finalidade do Produto:", ["Venda / Comercialização", "Insumo / Consumo Interno"],
+                                         index=(1 if classe_consulta == 'Insumo' else 0), disabled=True, key="cons_prod_classe")
+                            
+                            cc1, cc2 = st.columns(2)
+                            cc1.text_input("Nome", value=str(p_consulta['nome']), disabled=True, key="cons_prod_nome")
+                            cc2.text_input("Referência", value=str(p_consulta['referencia']) if pd.notnull(p_consulta['referencia']) else "", disabled=True, key="cons_prod_ref")
+                            
+                            cc3, cc4 = st.columns(2)
+                            cc3.number_input("Quantidade em Estoque", value=int(p_consulta['quantidade']) if pd.notnull(p_consulta['quantidade']) else 0, disabled=True, key="cons_prod_qtd")
+                            cc4.text_input("Marca / Linha", value=str(p_consulta['marca']) if pd.notnull(p_consulta['marca']) else "", disabled=True, key="cons_prod_marca")
+                            
+                            st.markdown("**Finanças e Precificação**")
+                            cc5, cc6, cc7 = st.columns(3)
+                            cc5.number_input("Preço de Custo (R$)", value=float(p_consulta['preco_custo']) if pd.notnull(p_consulta.get('preco_custo')) else 0.0, format="%.2f", disabled=True, key="cons_prod_custo")
+                            cc6.number_input("Markup (%)", value=float(p_consulta['markup']) if pd.notnull(p_consulta.get('markup')) else 0.0, format="%.2f", disabled=True, key="cons_prod_markup")
+                            cc7.number_input("Preço de Venda (R$)", value=float(p_consulta['valor']) if pd.notnull(p_consulta['valor']) else 0.0, format="%.2f", disabled=True, key="cons_prod_valor")
+                            
+                            # 🔧 Custo Médio: campo calculado automaticamente (média ponderada) a
+                            # cada entrada de mercadoria — por isso só aparece aqui na consulta,
+                            # nunca no formulário de edição.
+                            cc8, _ = st.columns(2)
+                            cc8.number_input("Custo Médio (R$) — calculado automaticamente", value=float(p_consulta['custo_medio']) if pd.notnull(p_consulta.get('custo_medio')) else 0.0, format="%.2f", disabled=True, key="cons_prod_custo_medio")
+                            
+                            st.text_input("Categoria", value=str(p_consulta['categoria']) if pd.notnull(p_consulta.get('categoria')) else "", disabled=True, key="cons_prod_cat")
+                            
+                            st.markdown("---")
+                            if st.button("Fechar", use_container_width=True, key="fechar_cons_prod"):
+                                st.session_state['reset_tabela_produtos'] += 1
+                                st.rerun()
+                        
                         evento_tabela = st.dataframe(
                             df_exibicao, use_container_width=True, hide_index=True,
-                            on_select="rerun", selection_mode="single-row", key="tabela_consulta_produtos"
+                            on_select="rerun", selection_mode="single-row",
+                            key=f"tabela_consulta_produtos_{st.session_state['reset_tabela_produtos']}"
                         )
                         
                         linhas_selecionadas = evento_tabela.selection.rows if evento_tabela and evento_tabela.selection else []
                         if linhas_selecionadas:
-                            p_consulta = df_final.iloc[linhas_selecionadas[0]]
-                            
-                            with st.container(border=True):
-                                st.markdown(f"##### 🔎 Consulta: {p_consulta['nome']}")
-                                st.caption("Modo consulta (somente leitura) — para alterar, use o expander **✏️ Editar Produto** acima.")
-                                
-                                classe_consulta = p_consulta.get('classe', 'Venda')
-                                st.selectbox("Finalidade do Produto:", ["Venda / Comercialização", "Insumo / Consumo Interno"],
-                                             index=(1 if classe_consulta == 'Insumo' else 0), disabled=True, key="cons_prod_classe")
-                                
-                                cc1, cc2 = st.columns(2)
-                                cc1.text_input("Nome", value=str(p_consulta['nome']), disabled=True, key="cons_prod_nome")
-                                cc2.text_input("Referência", value=str(p_consulta['referencia']) if pd.notnull(p_consulta['referencia']) else "", disabled=True, key="cons_prod_ref")
-                                
-                                cc3, cc4 = st.columns(2)
-                                cc3.number_input("Quantidade em Estoque", value=int(p_consulta['quantidade']) if pd.notnull(p_consulta['quantidade']) else 0, disabled=True, key="cons_prod_qtd")
-                                cc4.text_input("Marca / Linha", value=str(p_consulta['marca']) if pd.notnull(p_consulta['marca']) else "", disabled=True, key="cons_prod_marca")
-                                
-                                st.markdown("**Finanças e Precificação**")
-                                cc5, cc6, cc7 = st.columns(3)
-                                cc5.number_input("Preço de Custo (R$)", value=float(p_consulta['preco_custo']) if pd.notnull(p_consulta.get('preco_custo')) else 0.0, format="%.2f", disabled=True, key="cons_prod_custo")
-                                cc6.number_input("Markup (%)", value=float(p_consulta['markup']) if pd.notnull(p_consulta.get('markup')) else 0.0, format="%.2f", disabled=True, key="cons_prod_markup")
-                                cc7.number_input("Preço de Venda (R$)", value=float(p_consulta['valor']) if pd.notnull(p_consulta['valor']) else 0.0, format="%.2f", disabled=True, key="cons_prod_valor")
-                                
-                                # 🔧 Custo Médio: campo calculado automaticamente (média ponderada) a
-                                # cada entrada de mercadoria — por isso só aparece aqui na consulta,
-                                # nunca no formulário de edição.
-                                cc8, _ = st.columns(2)
-                                cc8.number_input("Custo Médio (R$) — calculado automaticamente", value=float(p_consulta['custo_medio']) if pd.notnull(p_consulta.get('custo_medio')) else 0.0, format="%.2f", disabled=True, key="cons_prod_custo_medio")
-                                
-                                st.text_input("Categoria", value=str(p_consulta['categoria']) if pd.notnull(p_consulta.get('categoria')) else "", disabled=True, key="cons_prod_cat")
+                            dialog_consulta_produto(df_final.iloc[linhas_selecionadas[0]])
                         
                         # --- NOVAS MÉTRICAS DE CAPITAL DE ESTOQUE ---
                         st.markdown("#### 💰 Resumo Financeiro do Estoque")
@@ -2142,35 +2152,45 @@ Feliz aniversário! 🥳✨"""
                 if 'comissao_percentual' in df_exibicao_s.columns:
                     df_exibicao_s['comissao_percentual'] = df_exibicao_s['comissao_percentual'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "0.00%")
                     
-                # 🔧 MELHORIA: mesmo padrão de consulta por clique na linha usado em Produtos.
+                # 🔧 MELHORIA: clicar num serviço abre um pop-up de consulta.
+                if 'reset_tabela_servicos' not in st.session_state:
+                    st.session_state['reset_tabela_servicos'] = 0
+                
+                @st.dialog("🔎 Consulta de Serviço")
+                def dialog_consulta_servico(s_consulta):
+                    st.markdown(f"##### {s_consulta['nome']}")
+                    st.caption("Modo consulta (somente leitura) — para alterar, use o expander **✏️ Editar Serviço**.")
+                    
+                    st.markdown("**Informações Básicas**")
+                    sc1, sc2 = st.columns(2)
+                    sc1.text_input("Nome do Serviço", value=str(s_consulta['nome']), disabled=True, key="cons_serv_nome")
+                    sc2.text_input("Referência", value=str(s_consulta['referencia']) if pd.notnull(s_consulta['referencia']) else "", disabled=True, key="cons_serv_ref")
+                    
+                    sc3, sc4 = st.columns(2)
+                    sc3.number_input("Valor do Serviço (R$)", value=float(s_consulta['valor']) if pd.notnull(s_consulta['valor']) else 0.0, format="%.2f", disabled=True, key="cons_serv_valor")
+                    sc4.text_input("Categoria", value=str(s_consulta['categoria']) if pd.notnull(s_consulta.get('categoria')) else "", disabled=True, key="cons_serv_cat")
+                    
+                    st.markdown("**Regras de Atendimento e Repasse**")
+                    sc5, sc6 = st.columns(2)
+                    val_tempo_c = int(s_consulta['tempo_minutos']) if pd.notnull(s_consulta.get('tempo_minutos')) else 0
+                    val_com_c = float(s_consulta['comissao_percentual']) if pd.notnull(s_consulta.get('comissao_percentual')) else 0.0
+                    sc5.number_input("Tempo de Execução (Minutos)", value=val_tempo_c, disabled=True, key="cons_serv_tempo")
+                    sc6.number_input("Comissão do Colaborador (%)", value=val_com_c, format="%.2f", disabled=True, key="cons_serv_comissao")
+                    
+                    st.markdown("---")
+                    if st.button("Fechar", use_container_width=True, key="fechar_cons_serv"):
+                        st.session_state['reset_tabela_servicos'] += 1
+                        st.rerun()
+                
                 evento_tabela_s = st.dataframe(
                     df_exibicao_s, use_container_width=True, hide_index=True,
-                    on_select="rerun", selection_mode="single-row", key="tabela_consulta_servicos"
+                    on_select="rerun", selection_mode="single-row",
+                    key=f"tabela_consulta_servicos_{st.session_state['reset_tabela_servicos']}"
                 )
                 
                 linhas_sel_s = evento_tabela_s.selection.rows if evento_tabela_s and evento_tabela_s.selection else []
                 if linhas_sel_s:
-                    s_consulta = df_s.iloc[linhas_sel_s[0]]
-                    
-                    with st.container(border=True):
-                        st.markdown(f"##### 🔎 Consulta: {s_consulta['nome']}")
-                        st.caption("Modo consulta (somente leitura) — para alterar, use o expander **✏️ Editar Serviço** acima.")
-                        
-                        st.markdown("**Informações Básicas**")
-                        sc1, sc2 = st.columns(2)
-                        sc1.text_input("Nome do Serviço", value=str(s_consulta['nome']), disabled=True, key="cons_serv_nome")
-                        sc2.text_input("Referência", value=str(s_consulta['referencia']) if pd.notnull(s_consulta['referencia']) else "", disabled=True, key="cons_serv_ref")
-                        
-                        sc3, sc4 = st.columns(2)
-                        sc3.number_input("Valor do Serviço (R$)", value=float(s_consulta['valor']) if pd.notnull(s_consulta['valor']) else 0.0, format="%.2f", disabled=True, key="cons_serv_valor")
-                        sc4.text_input("Categoria", value=str(s_consulta['categoria']) if pd.notnull(s_consulta.get('categoria')) else "", disabled=True, key="cons_serv_cat")
-                        
-                        st.markdown("**Regras de Atendimento e Repasse**")
-                        sc5, sc6 = st.columns(2)
-                        val_tempo_c = int(s_consulta['tempo_minutos']) if pd.notnull(s_consulta.get('tempo_minutos')) else 0
-                        val_com_c = float(s_consulta['comissao_percentual']) if pd.notnull(s_consulta.get('comissao_percentual')) else 0.0
-                        sc5.number_input("Tempo de Execução (Minutos)", value=val_tempo_c, disabled=True, key="cons_serv_tempo")
-                        sc6.number_input("Comissão do Colaborador (%)", value=val_com_c, format="%.2f", disabled=True, key="cons_serv_comissao")
+                    dialog_consulta_servico(df_s.iloc[linhas_sel_s[0]])
             else:
                 st.info("Nenhum serviço cadastrado ainda.")
                 
@@ -2293,28 +2313,39 @@ Feliz aniversário! 🥳✨"""
             if not df_clientes.empty:
                 st.markdown("---")
                 st.markdown("#### Lista de Clientes Cadastrados")
-                # 🔧 MELHORIA: mesmo padrão de consulta por clique na linha usado em Produtos e Serviços.
+                # 🔧 MELHORIA: clicar num cliente abre um pop-up de consulta.
                 df_clientes_exib = df_clientes.drop(columns=['empresa_id'])
+                
+                if 'reset_tabela_clientes' not in st.session_state:
+                    st.session_state['reset_tabela_clientes'] = 0
+                
+                @st.dialog("🔎 Consulta de Cliente")
+                def dialog_consulta_cliente(c_consulta):
+                    st.markdown(f"##### {c_consulta['nome']}")
+                    st.caption("Modo consulta (somente leitura) — para alterar, use a aba **✏️ Editar**.")
+                    
+                    ccl1, ccl2, ccl3 = st.columns(3)
+                    ccl1.text_input("Nome", value=str(c_consulta['nome']), disabled=True, key="cons_cli_nome")
+                    ccl2.text_input("Aniversário", value=str(c_consulta['data_nascimento']) if pd.notnull(c_consulta['data_nascimento']) else "", disabled=True, key="cons_cli_nasc")
+                    ccl3.text_input("Telefone", value=str(c_consulta['telefone']) if pd.notnull(c_consulta['telefone']) else "", disabled=True, key="cons_cli_tel")
+                    
+                    tipo_cons = c_consulta.get('tipo', 'C')
+                    st.selectbox("Tipo de Cadastro:", ["Cliente", "Consultora"], index=(0 if tipo_cons == 'C' else 1), disabled=True, key="cons_cli_tipo")
+                    
+                    st.markdown("---")
+                    if st.button("Fechar", use_container_width=True, key="fechar_cons_cli"):
+                        st.session_state['reset_tabela_clientes'] += 1
+                        st.rerun()
+                
                 evento_tabela_cli = st.dataframe(
                     df_clientes_exib, use_container_width=True, hide_index=True,
-                    on_select="rerun", selection_mode="single-row", key="tabela_consulta_clientes"
+                    on_select="rerun", selection_mode="single-row",
+                    key=f"tabela_consulta_clientes_{st.session_state['reset_tabela_clientes']}"
                 )
                 
                 linhas_sel_cli = evento_tabela_cli.selection.rows if evento_tabela_cli and evento_tabela_cli.selection else []
                 if linhas_sel_cli:
-                    c_consulta = df_clientes.iloc[linhas_sel_cli[0]]
-                    
-                    with st.container(border=True):
-                        st.markdown(f"##### 🔎 Consulta: {c_consulta['nome']}")
-                        st.caption("Modo consulta (somente leitura) — para alterar, use a aba **✏️ Editar** acima.")
-                        
-                        ccl1, ccl2, ccl3 = st.columns(3)
-                        ccl1.text_input("Nome", value=str(c_consulta['nome']), disabled=True, key="cons_cli_nome")
-                        ccl2.text_input("Aniversário", value=str(c_consulta['data_nascimento']) if pd.notnull(c_consulta['data_nascimento']) else "", disabled=True, key="cons_cli_nasc")
-                        ccl3.text_input("Telefone", value=str(c_consulta['telefone']) if pd.notnull(c_consulta['telefone']) else "", disabled=True, key="cons_cli_tel")
-                        
-                        tipo_cons = c_consulta.get('tipo', 'C')
-                        st.selectbox("Tipo de Cadastro:", ["Cliente", "Consultora"], index=(0 if tipo_cons == 'C' else 1), disabled=True, key="cons_cli_tipo")
+                    dialog_consulta_cliente(df_clientes.iloc[linhas_sel_cli[0]])
 
         with tab_for:
             #st.subheader("Gestão de Fornecedores")
