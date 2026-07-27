@@ -1177,7 +1177,7 @@ Feliz aniversário! 🥳✨"""
                     col_opcoes1, col_opcoes2 = st.columns(2)
                     
                     with col_opcoes1:
-                        with st.expander("✏️ Editar Item de Venda", expanded=False):
+                        with st.expander("✏️ Editar / Trocar Item de Venda", expanded=False):
                             opcoes_venda_edit = df_filtrado.apply(lambda x: f"Venda {x['Nº Venda']} (Item {x['ID Item']}) | {x['Cliente']} - {x['Produto']}", axis=1).tolist()
                             venda_edit_selecionada = st.selectbox("Selecione a venda para editar", options=opcoes_venda_edit, key="sel_edit_venda")
                             
@@ -1185,15 +1185,40 @@ Feliz aniversário! 🥳✨"""
                                 venda_id_edit = int(venda_edit_selecionada.split("Item ")[1].split(")")[0])
                                 conn = conectar_banco()
                                 cursor = conn.cursor()
-                                cursor.execute("SELECT data_venda, forma_pagamento, prazo, valor_unitario, desconto, valor_entrada, quantidade FROM vendas WHERE id = %s AND empresa_id = %s", (venda_id_edit, emp_id))
+                                cursor.execute("""
+                                    SELECT v.data_venda, v.forma_pagamento, v.prazo, v.valor_unitario, v.desconto,
+                                           v.valor_entrada, v.quantidade, v.produto_id, v.codigo_venda, p.tipo, p.nome
+                                    FROM vendas v
+                                    JOIN produtos p ON v.produto_id = p.id AND p.empresa_id = v.empresa_id
+                                    WHERE v.id = %s AND v.empresa_id = %s
+                                """, (venda_id_edit, emp_id))
                                 dados_v_edit = cursor.fetchone()
                                 
                                 if dados_v_edit:
-                                    v_data_str, v_pag, v_prazo, v_tabela, v_desc, v_ent, v_qtd = dados_v_edit
+                                    (v_data_str, v_pag, v_prazo, v_valor_unit, v_desc, v_ent, v_qtd,
+                                     v_produto_id, v_cod_venda, v_tipo_atual, v_nome_atual) = dados_v_edit
                                     try: v_data_obj = datetime.strptime(v_data_str, "%d/%m/%Y").date()
                                     except: v_data_obj = date.today()
+
+                                    # 🔧 Lista de produtos E serviços disponíveis para troca (mesma tabela,
+                                    # diferenciados pelo campo 'tipo': 'P' = produto físico, 'S' = serviço)
+                                    df_itens_troca = carregar_dados_cached(
+                                        "SELECT id, nome, tipo, valor, quantidade FROM produtos WHERE empresa_id=%s ORDER BY tipo, nome",
+                                        (emp_id,)
+                                    )
+                                    opcoes_itens_troca = df_itens_troca.apply(
+                                        lambda x: f"{'📦' if x['tipo']=='P' else '💇'} {x['nome']}", axis=1
+                                    ).tolist()
+                                    label_atual = f"{'📦' if v_tipo_atual=='P' else '💇'} {v_nome_atual}"
+                                    idx_item_atual = opcoes_itens_troca.index(label_atual) if label_atual in opcoes_itens_troca else 0
                                         
                                     with st.form("form_update_venda"):
+                                        st.caption(f"Item atualmente lançado: **{v_nome_atual}** ({'Produto' if v_tipo_atual=='P' else 'Serviço'})")
+                                        novo_item_sel = st.selectbox(
+                                            "Produto/Serviço (deixe como está se só quer corrigir valores/data)",
+                                            options=opcoes_itens_troca, index=idx_item_atual
+                                        )
+                                        
                                         c1, c2, c3 = st.columns(3)
                                         nova_data = c1.date_input("Data da Venda", value=v_data_obj, format="DD/MM/YYYY")
                                         
@@ -1206,17 +1231,110 @@ Feliz aniversário! 🥳✨"""
                                         novo_prazo = c3.selectbox("Prazo", lista_prazo, index=idx_prazo)
                                         
                                         c4, c5, c6 = st.columns(3)
-                                        novo_tabela = c4.number_input("Preço Tabela (R$)", min_value=0.0, value=float(v_tabela), step=1.0, format="%.2f")
-                                        novo_desc = c5.number_input("Desconto Unit. (R$)", min_value=0.0, value=float(v_desc), step=1.0, format="%.2f")
-                                        nova_entrada = c6.number_input("Entrada Total (R$)", min_value=0.0, value=float(v_ent), step=10.0, format="%.2f")
+                                        nova_qtd = c4.number_input("Quantidade", min_value=1, value=int(v_qtd), step=1)
+                                        novo_tabela = c5.number_input("Preço Unit. (R$)", min_value=0.0, value=float(v_valor_unit), step=1.0, format="%.2f")
+                                        novo_desc = c6.number_input("Desconto Unit. (R$)", min_value=0.0, value=float(v_desc), step=1.0, format="%.2f")
+                                        nova_entrada = st.number_input("Entrada Total (R$)", min_value=0.0, value=float(v_ent), step=10.0, format="%.2f")
                                         
-                                        if st.form_submit_button("💾 Salvar Alterações"):
-                                            novo_total = (novo_tabela - novo_desc) * v_qtd
-                                            novo_restante = novo_total - nova_entrada
-                                            cursor.execute("UPDATE vendas SET data_venda=%s, forma_pagamento=%s, prazo=%s, valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s, valor_restante=%s WHERE id=%s AND empresa_id=%s", 
-                                                         (nova_data.strftime("%d/%m/%Y"), novo_pag, novo_prazo, novo_tabela, novo_desc, novo_total, nova_entrada, novo_restante, venda_id_edit, emp_id))
-                                            conn.commit(); devolver_conexao(conn); st.success("Atualizado!"); limpar_cache(); st.rerun()
+                                        revisar_troca = st.form_submit_button("🔍 Revisar Alterações")
+                                    
+                                    if revisar_troca:
+                                        idx_novo_item = opcoes_itens_troca.index(novo_item_sel)
+                                        linha_novo_item = df_itens_troca.iloc[idx_novo_item]
+                                        novo_produto_id = int(linha_novo_item['id'])
+                                        novo_tipo_item = linha_novo_item['tipo']
+                                        novo_nome_item = linha_novo_item['nome']
+                                        
+                                        valor_total_antigo = (float(v_valor_unit) - float(v_desc)) * int(v_qtd)
+                                        valor_total_novo = (float(novo_tabela) - float(novo_desc)) * int(nova_qtd)
+                                        
+                                        # 🔧 Guarda a proposta de alteração em session_state — nada é gravado
+                                        # ainda. O usuário precisa confirmar no passo seguinte, porque isso
+                                        # mexe em estoque e no financeiro já lançado.
+                                        st.session_state['revisao_troca_item'] = {
+                                            'venda_id_edit': venda_id_edit, 'cod_venda': v_cod_venda,
+                                            'produto_id_antigo': v_produto_id, 'tipo_antigo': v_tipo_atual, 'nome_antigo': v_nome_atual, 'qtd_antiga': int(v_qtd),
+                                            'produto_id_novo': novo_produto_id, 'tipo_novo': novo_tipo_item, 'nome_novo': novo_nome_item, 'qtd_nova': int(nova_qtd),
+                                            'valor_unit_novo': float(novo_tabela), 'desc_novo': float(novo_desc),
+                                            'valor_total_antigo': valor_total_antigo, 'valor_total_novo': valor_total_novo,
+                                            'data_nova': nova_data, 'pag_novo': novo_pag, 'prazo_novo': novo_prazo, 'entrada_nova': float(nova_entrada),
+                                        }
+                                        st.rerun()
                                 else: devolver_conexao(conn)
+
+                            # ==========================================================
+                            # PASSO 2: CONFIRMAÇÃO — nada foi gravado ainda até aqui
+                            # ==========================================================
+                            rev = st.session_state.get('revisao_troca_item')
+                            if rev:
+                                st.markdown("---")
+                                st.warning("⚠️ Confirme antes de gravar — essa ação mexe em estoque e no financeiro já lançado.")
+                                
+                                item_mudou = rev['produto_id_antigo'] != rev['produto_id_novo']
+                                if item_mudou:
+                                    st.write(f"**Item:** {rev['nome_antigo']} → **{rev['nome_novo']}**")
+                                    if rev['tipo_antigo'] == 'P':
+                                        st.write(f"📦 Estoque de **{rev['nome_antigo']}** será reposto em **{rev['qtd_antiga']}** un.")
+                                    if rev['tipo_novo'] == 'P':
+                                        st.write(f"📦 Estoque de **{rev['nome_novo']}** será baixado em **{rev['qtd_nova']}** un.")
+                                
+                                delta = rev['valor_total_novo'] - rev['valor_total_antigo']
+                                st.write(f"**Valor do item:** R$ {rev['valor_total_antigo']:.2f} → R$ {rev['valor_total_novo']:.2f}  (diferença: R$ {delta:+.2f})")
+                                if delta != 0:
+                                    st.info("Essa diferença será ajustada automaticamente numa parcela do financeiro dessa venda (de preferência numa pendente; se todas já estiverem pagas, ajusta a última parcela paga).")
+                                
+                                col_conf1, col_conf2 = st.columns(2)
+                                if col_conf1.button("✅ Confirmar e Gravar", type="primary", key="confirma_troca_item"):
+                                    conn = conectar_banco()
+                                    cursor = conn.cursor()
+                                    try:
+                                        # 1) Estoque: repõe o item antigo (se era produto)
+                                        if rev['tipo_antigo'] == 'P':
+                                            cursor.execute("UPDATE produtos SET quantidade = quantidade + %s WHERE id = %s AND empresa_id = %s",
+                                                           (rev['qtd_antiga'], rev['produto_id_antigo'], emp_id))
+                                        # 2) Estoque: baixa o item novo (se é produto)
+                                        if rev['tipo_novo'] == 'P':
+                                            cursor.execute("UPDATE produtos SET quantidade = quantidade - %s WHERE id = %s AND empresa_id = %s",
+                                                           (rev['qtd_nova'], rev['produto_id_novo'], emp_id))
+                                        
+                                        # 3) Atualiza a linha da venda com o novo item/valores
+                                        cursor.execute("""
+                                            UPDATE vendas SET produto_id=%s, quantidade=%s, data_venda=%s, forma_pagamento=%s, prazo=%s,
+                                                   valor_unitario=%s, desconto=%s, valor_total=%s, valor_entrada=%s
+                                            WHERE id=%s AND empresa_id=%s
+                                        """, (rev['produto_id_novo'], rev['qtd_nova'], rev['data_nova'].strftime("%d/%m/%Y"), rev['pag_novo'], rev['prazo_novo'],
+                                              rev['valor_unit_novo'], rev['desc_novo'], rev['valor_total_novo'], rev['entrada_nova'],
+                                              rev['venda_id_edit'], emp_id))
+                                        
+                                        # 4) Ajusta o financeiro pela diferença de valor, se houver
+                                        delta_fin = rev['valor_total_novo'] - rev['valor_total_antigo']
+                                        if delta_fin != 0:
+                                            cursor.execute("""
+                                                SELECT id, valor_parcela, status FROM contas_receber
+                                                WHERE venda_codigo = %s AND empresa_id = %s ORDER BY num_parcela
+                                            """, (rev['cod_venda'], emp_id))
+                                            parcelas = cursor.fetchall()
+                                            if parcelas:
+                                                pendentes = [p for p in parcelas if p[2] == 'Pendente']
+                                                parcela_alvo = pendentes[-1] if pendentes else parcelas[-1]
+                                                novo_valor_parcela = float(parcela_alvo[1]) + delta_fin
+                                                cursor.execute("UPDATE contas_receber SET valor_parcela=%s WHERE id=%s AND empresa_id=%s",
+                                                               (novo_valor_parcela, parcela_alvo[0], emp_id))
+                                        
+                                        conn.commit()
+                                        devolver_conexao(conn)
+                                        del st.session_state['revisao_troca_item']
+                                        st.success("Item atualizado com sucesso — estoque e financeiro ajustados!")
+                                        limpar_cache()
+                                        st.rerun()
+                                    except Exception as e:
+                                        conn.rollback()
+                                        devolver_conexao(conn)
+                                        st.error(f"Erro ao gravar a troca: {e}")
+                                
+                                if col_conf2.button("❌ Cancelar", key="cancela_troca_item"):
+                                    del st.session_state['revisao_troca_item']
+                                    st.rerun()
 
                     with col_opcoes2:
                         with st.expander("❌ Cancelar / Estornar Item", expanded=False):
