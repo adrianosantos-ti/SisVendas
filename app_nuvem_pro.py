@@ -51,6 +51,25 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+import html as _html
+
+def campo_consulta(container, rotulo, valor):
+    """Renderiza um par rótulo/valor nos pop-ups de consulta.
+
+    🔧 Usa UM único bloco HTML em vez de st.caption() + st.markdown(): cada
+    elemento do Streamlit traz sua própria margem vertical, então dois
+    elementos por campo deixavam a ficha muito espaçada. Aqui as margens
+    são controladas manualmente e ficam bem mais justas.
+    """
+    texto = _html.escape(str(valor)) if valor is not None and str(valor).strip() != "" else "—"
+    container.markdown(
+        "<div style='margin-bottom:12px'>"
+        f"<div style='font-size:13px;color:#7d8189;line-height:1.1'>{_html.escape(str(rotulo))}</div>"
+        f"<div style='font-size:16px;font-weight:700;line-height:1.35'>{texto}</div>"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
 # ==========================================
 # CONFIGURAÇÃO DE BANCO DE DADOS (NUVEM)
 # ==========================================
@@ -1967,47 +1986,30 @@ Feliz aniversário! 🥳✨"""
                         @st.dialog("🔎 Consulta de Produto")
                         def dialog_consulta_produto(p_consulta):
                             st.markdown(f"##### {p_consulta['nome']}")
-                            st.caption("Modo consulta (somente leitura) — para alterar, use o expander **✏️ Editar Produto**.")
+                            st.caption("Somente leitura — para alterar, use **✏️ Editar Produto**.")
                             
                             classe_consulta = p_consulta.get('classe', 'Venda')
-                            st.caption("Finalidade do Produto")
-                            st.markdown(f"**{'Insumo / Consumo Interno' if classe_consulta == 'Insumo' else 'Venda / Comercialização'}**")
-                            
                             cc1, cc2 = st.columns(2)
-                            cc1.caption("Nome")
-                            cc1.markdown(f"**{p_consulta['nome']}**")
-                            cc2.caption("Referência")
-                            cc2.markdown(f"**{p_consulta['referencia'] if pd.notnull(p_consulta['referencia']) and str(p_consulta['referencia']).strip() else '—'}**")
+                            campo_consulta(cc1, "Finalidade", 'Insumo / Consumo Interno' if classe_consulta == 'Insumo' else 'Venda / Comercialização')
+                            campo_consulta(cc2, "Referência", p_consulta['referencia'] if pd.notnull(p_consulta['referencia']) else None)
                             
                             cc3, cc4 = st.columns(2)
-                            cc3.caption("Quantidade em Estoque")
-                            cc3.markdown(f"<span style='font-size:16px;font-weight:700'>{int(p_consulta['quantidade']) if pd.notnull(p_consulta['quantidade']) else 0}</span>", unsafe_allow_html=True)
-                            cc4.caption("Marca / Linha")
-                            cc4.markdown(f"**{p_consulta['marca'] if pd.notnull(p_consulta['marca']) and str(p_consulta['marca']).strip() else '—'}**")
+                            campo_consulta(cc3, "Quantidade em Estoque", int(p_consulta['quantidade']) if pd.notnull(p_consulta['quantidade']) else 0)
+                            campo_consulta(cc4, "Marca / Linha", p_consulta['marca'] if pd.notnull(p_consulta['marca']) else None)
+                            
+                            campo_consulta(st, "Categoria", p_consulta['categoria'] if pd.notnull(p_consulta.get('categoria')) else None)
                             
                             st.markdown("**Finanças e Precificação**")
                             cc5, cc6, cc7 = st.columns(3)
-                            valor_custo_p = f"R$ {float(p_consulta['preco_custo']):.2f}" if pd.notnull(p_consulta.get('preco_custo')) else "R$ 0,00"
-                            valor_markup_p = f"{float(p_consulta['markup']):.2f}%" if pd.notnull(p_consulta.get('markup')) else "0,00%"
-                            valor_venda_p = f"R$ {float(p_consulta['valor']):.2f}" if pd.notnull(p_consulta['valor']) else "R$ 0,00"
-                            cc5.caption("Preço de Custo")
-                            cc5.markdown(f"<span style='font-size:16px;font-weight:700'>{valor_custo_p}</span>", unsafe_allow_html=True)
-                            cc6.caption("Markup")
-                            cc6.markdown(f"<span style='font-size:16px;font-weight:700'>{valor_markup_p}</span>", unsafe_allow_html=True)
-                            cc7.caption("Preço de Venda")
-                            cc7.markdown(f"<span style='font-size:16px;font-weight:700'>{valor_venda_p}</span>", unsafe_allow_html=True)
+                            campo_consulta(cc5, "Preço de Custo", f"R$ {float(p_consulta['preco_custo']):.2f}" if pd.notnull(p_consulta.get('preco_custo')) else "R$ 0,00")
+                            campo_consulta(cc6, "Markup", f"{float(p_consulta['markup']):.2f}%" if pd.notnull(p_consulta.get('markup')) else "0,00%")
+                            campo_consulta(cc7, "Preço de Venda", f"R$ {float(p_consulta['valor']):.2f}" if pd.notnull(p_consulta['valor']) else "R$ 0,00")
                             
                             # 🔧 Custo Médio: campo calculado automaticamente (média ponderada) a
                             # cada entrada de mercadoria — por isso só aparece aqui na consulta,
                             # nunca no formulário de edição.
-                            valor_custo_medio_p = f"R$ {float(p_consulta['custo_medio']):.2f}" if pd.notnull(p_consulta.get('custo_medio')) else "R$ 0,00"
-                            st.caption("Custo Médio (calculado automaticamente)")
-                            st.markdown(f"<span style='font-size:16px;font-weight:700'>{valor_custo_medio_p}</span>", unsafe_allow_html=True)
+                            campo_consulta(st, "Custo Médio (calculado automaticamente)", f"R$ {float(p_consulta['custo_medio']):.2f}" if pd.notnull(p_consulta.get('custo_medio')) else "R$ 0,00")
                             
-                            st.caption("Categoria")
-                            st.markdown(f"**{p_consulta['categoria'] if pd.notnull(p_consulta.get('categoria')) and str(p_consulta['categoria']).strip() else '—'}**")
-                            
-                            st.markdown("---")
                             if st.button("Fechar", use_container_width=True, key="fechar_cons_prod"):
                                 st.session_state['reset_tabela_produtos'] += 1
                                 st.rerun()
@@ -2019,8 +2021,18 @@ Feliz aniversário! 🥳✨"""
                         )
                         
                         linhas_selecionadas = evento_tabela.selection.rows if evento_tabela and evento_tabela.selection else []
-                        if linhas_selecionadas:
-                            dialog_consulta_produto(df_final.iloc[linhas_selecionadas[0]])
+                        # 🔧 O Streamlit só aceita UM st.dialog aberto por execução, e as três
+                        # tabelas desta tela (Produtos/Serviços/Clientes) são renderizadas
+                        # todas a cada execução — abas são só troca visual no navegador.
+                        # Se o usuário fecha o pop-up pelo "X", a linha continua selecionada;
+                        # sem esta checagem, selecionar uma linha em outra aba abriria dois
+                        # pop-ups ao mesmo tempo e derrubaria o app. Por isso só abrimos
+                        # quando a seleção daquela tabela realmente MUDOU.
+                        sel_atual_prod = linhas_selecionadas[0] if linhas_selecionadas else None
+                        if sel_atual_prod != st.session_state.get('ultima_sel_produtos'):
+                            st.session_state['ultima_sel_produtos'] = sel_atual_prod
+                            if sel_atual_prod is not None:
+                                dialog_consulta_produto(df_final.iloc[sel_atual_prod])
                         
                         # --- NOVAS MÉTRICAS DE CAPITAL DE ESTOQUE ---
                         st.markdown("#### 💰 Resumo Financeiro do Estoque")
@@ -2171,32 +2183,19 @@ Feliz aniversário! 🥳✨"""
                 @st.dialog("🔎 Consulta de Serviço")
                 def dialog_consulta_servico(s_consulta):
                     st.markdown(f"##### {s_consulta['nome']}")
-                    st.caption("Modo consulta (somente leitura) — para alterar, use o expander **✏️ Editar Serviço**.")
+                    st.caption("Somente leitura — para alterar, use **✏️ Editar Serviço**.")
                     
-                    st.markdown("**Informações Básicas**")
                     sc1, sc2 = st.columns(2)
-                    sc1.caption("Nome do Serviço")
-                    sc1.markdown(f"**{s_consulta['nome']}**")
-                    sc2.caption("Referência")
-                    sc2.markdown(f"**{s_consulta['referencia'] if pd.notnull(s_consulta['referencia']) and str(s_consulta['referencia']).strip() else '—'}**")
+                    campo_consulta(sc1, "Referência", s_consulta['referencia'] if pd.notnull(s_consulta['referencia']) else None)
+                    campo_consulta(sc2, "Categoria", s_consulta['categoria'] if pd.notnull(s_consulta.get('categoria')) else None)
                     
-                    sc3, sc4 = st.columns(2)
-                    valor_serv_c = f"R$ {float(s_consulta['valor']):.2f}" if pd.notnull(s_consulta['valor']) else "R$ 0,00"
-                    sc3.caption("Valor do Serviço")
-                    sc3.markdown(f"<span style='font-size:16px;font-weight:700'>{valor_serv_c}</span>", unsafe_allow_html=True)
-                    sc4.caption("Categoria")
-                    sc4.markdown(f"**{s_consulta['categoria'] if pd.notnull(s_consulta.get('categoria')) and str(s_consulta['categoria']).strip() else '—'}**")
-                    
-                    st.markdown("**Regras de Atendimento e Repasse**")
-                    sc5, sc6 = st.columns(2)
                     val_tempo_c = int(s_consulta['tempo_minutos']) if pd.notnull(s_consulta.get('tempo_minutos')) else 0
                     val_com_c = float(s_consulta['comissao_percentual']) if pd.notnull(s_consulta.get('comissao_percentual')) else 0.0
-                    sc5.caption("Tempo de Execução")
-                    sc5.markdown(f"<span style='font-size:16px;font-weight:700'>{val_tempo_c} min</span>", unsafe_allow_html=True)
-                    sc6.caption("Comissão do Colaborador")
-                    sc6.markdown(f"<span style='font-size:16px;font-weight:700'>{val_com_c:.2f}%</span>", unsafe_allow_html=True)
+                    sc3, sc4, sc5 = st.columns(3)
+                    campo_consulta(sc3, "Valor do Serviço", f"R$ {float(s_consulta['valor']):.2f}" if pd.notnull(s_consulta['valor']) else "R$ 0,00")
+                    campo_consulta(sc4, "Tempo de Execução", f"{val_tempo_c} min")
+                    campo_consulta(sc5, "Comissão", f"{val_com_c:.2f}%")
                     
-                    st.markdown("---")
                     if st.button("Fechar", use_container_width=True, key="fechar_cons_serv"):
                         st.session_state['reset_tabela_servicos'] += 1
                         st.rerun()
@@ -2208,8 +2207,12 @@ Feliz aniversário! 🥳✨"""
                 )
                 
                 linhas_sel_s = evento_tabela_s.selection.rows if evento_tabela_s and evento_tabela_s.selection else []
-                if linhas_sel_s:
-                    dialog_consulta_servico(df_s.iloc[linhas_sel_s[0]])
+                # 🔧 Mesma proteção usada em Produtos: só abre se a seleção mudou.
+                sel_atual_serv = linhas_sel_s[0] if linhas_sel_s else None
+                if sel_atual_serv != st.session_state.get('ultima_sel_servicos'):
+                    st.session_state['ultima_sel_servicos'] = sel_atual_serv
+                    if sel_atual_serv is not None:
+                        dialog_consulta_servico(df_s.iloc[sel_atual_serv])
             else:
                 st.info("Nenhum serviço cadastrado ainda.")
                 
@@ -2341,21 +2344,14 @@ Feliz aniversário! 🥳✨"""
                 @st.dialog("🔎 Consulta de Cliente")
                 def dialog_consulta_cliente(c_consulta):
                     st.markdown(f"##### {c_consulta['nome']}")
-                    st.caption("Modo consulta (somente leitura) — para alterar, use a aba **✏️ Editar**.")
-                    
-                    ccl1, ccl2, ccl3 = st.columns(3)
-                    ccl1.caption("Nome")
-                    ccl1.markdown(f"**{c_consulta['nome']}**")
-                    ccl2.caption("Aniversário")
-                    ccl2.markdown(f"**{c_consulta['data_nascimento'] if pd.notnull(c_consulta['data_nascimento']) and str(c_consulta['data_nascimento']).strip() else '—'}**")
-                    ccl3.caption("Telefone")
-                    ccl3.markdown(f"**{c_consulta['telefone'] if pd.notnull(c_consulta['telefone']) and str(c_consulta['telefone']).strip() else '—'}**")
+                    st.caption("Somente leitura — para alterar, use a aba **✏️ Editar**.")
                     
                     tipo_cons = c_consulta.get('tipo', 'C')
-                    st.caption("Tipo de Cadastro")
-                    st.markdown(f"**{'Consultora' if tipo_cons != 'C' else 'Cliente'}**")
+                    ccl1, ccl2, ccl3 = st.columns(3)
+                    campo_consulta(ccl1, "Aniversário", c_consulta['data_nascimento'] if pd.notnull(c_consulta['data_nascimento']) else None)
+                    campo_consulta(ccl2, "Telefone", c_consulta['telefone'] if pd.notnull(c_consulta['telefone']) else None)
+                    campo_consulta(ccl3, "Tipo de Cadastro", 'Consultora' if tipo_cons != 'C' else 'Cliente')
                     
-                    st.markdown("---")
                     if st.button("Fechar", use_container_width=True, key="fechar_cons_cli"):
                         st.session_state['reset_tabela_clientes'] += 1
                         st.rerun()
@@ -2367,8 +2363,12 @@ Feliz aniversário! 🥳✨"""
                 )
                 
                 linhas_sel_cli = evento_tabela_cli.selection.rows if evento_tabela_cli and evento_tabela_cli.selection else []
-                if linhas_sel_cli:
-                    dialog_consulta_cliente(df_clientes.iloc[linhas_sel_cli[0]])
+                # 🔧 Mesma proteção usada em Produtos e Serviços: só abre se a seleção mudou.
+                sel_atual_cli = linhas_sel_cli[0] if linhas_sel_cli else None
+                if sel_atual_cli != st.session_state.get('ultima_sel_clientes'):
+                    st.session_state['ultima_sel_clientes'] = sel_atual_cli
+                    if sel_atual_cli is not None:
+                        dialog_consulta_cliente(df_clientes.iloc[sel_atual_cli])
 
         with tab_for:
             #st.subheader("Gestão de Fornecedores")
