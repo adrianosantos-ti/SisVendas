@@ -1980,20 +1980,29 @@ Feliz aniversário! 🥳✨"""
                             cc2.markdown(f"**{p_consulta['referencia'] if pd.notnull(p_consulta['referencia']) and str(p_consulta['referencia']).strip() else '—'}**")
                             
                             cc3, cc4 = st.columns(2)
-                            cc3.metric("Quantidade em Estoque", int(p_consulta['quantidade']) if pd.notnull(p_consulta['quantidade']) else 0)
+                            cc3.caption("Quantidade em Estoque")
+                            cc3.markdown(f"<span style='font-size:22px;font-weight:700'>{int(p_consulta['quantidade']) if pd.notnull(p_consulta['quantidade']) else 0}</span>", unsafe_allow_html=True)
                             cc4.caption("Marca / Linha")
                             cc4.markdown(f"**{p_consulta['marca'] if pd.notnull(p_consulta['marca']) and str(p_consulta['marca']).strip() else '—'}**")
                             
                             st.markdown("**Finanças e Precificação**")
                             cc5, cc6, cc7 = st.columns(3)
-                            cc5.metric("Preço de Custo", f"R$ {float(p_consulta['preco_custo']):.2f}" if pd.notnull(p_consulta.get('preco_custo')) else "R$ 0,00")
-                            cc6.metric("Markup", f"{float(p_consulta['markup']):.2f}%" if pd.notnull(p_consulta.get('markup')) else "0,00%")
-                            cc7.metric("Preço de Venda", f"R$ {float(p_consulta['valor']):.2f}" if pd.notnull(p_consulta['valor']) else "R$ 0,00")
+                            valor_custo_p = f"R$ {float(p_consulta['preco_custo']):.2f}" if pd.notnull(p_consulta.get('preco_custo')) else "R$ 0,00"
+                            valor_markup_p = f"{float(p_consulta['markup']):.2f}%" if pd.notnull(p_consulta.get('markup')) else "0,00%"
+                            valor_venda_p = f"R$ {float(p_consulta['valor']):.2f}" if pd.notnull(p_consulta['valor']) else "R$ 0,00"
+                            cc5.caption("Preço de Custo")
+                            cc5.markdown(f"<span style='font-size:20px;font-weight:700'>{valor_custo_p}</span>", unsafe_allow_html=True)
+                            cc6.caption("Markup")
+                            cc6.markdown(f"<span style='font-size:20px;font-weight:700'>{valor_markup_p}</span>", unsafe_allow_html=True)
+                            cc7.caption("Preço de Venda")
+                            cc7.markdown(f"<span style='font-size:20px;font-weight:700'>{valor_venda_p}</span>", unsafe_allow_html=True)
                             
                             # 🔧 Custo Médio: campo calculado automaticamente (média ponderada) a
                             # cada entrada de mercadoria — por isso só aparece aqui na consulta,
                             # nunca no formulário de edição.
-                            st.metric("Custo Médio (calculado automaticamente)", f"R$ {float(p_consulta['custo_medio']):.2f}" if pd.notnull(p_consulta.get('custo_medio')) else "R$ 0,00")
+                            valor_custo_medio_p = f"R$ {float(p_consulta['custo_medio']):.2f}" if pd.notnull(p_consulta.get('custo_medio')) else "R$ 0,00"
+                            st.caption("Custo Médio (calculado automaticamente)")
+                            st.markdown(f"<span style='font-size:20px;font-weight:700'>{valor_custo_medio_p}</span>", unsafe_allow_html=True)
                             
                             st.caption("Categoria")
                             st.markdown(f"**{p_consulta['categoria'] if pd.notnull(p_consulta.get('categoria')) and str(p_consulta['categoria']).strip() else '—'}**")
@@ -2172,7 +2181,9 @@ Feliz aniversário! 🥳✨"""
                     sc2.markdown(f"**{s_consulta['referencia'] if pd.notnull(s_consulta['referencia']) and str(s_consulta['referencia']).strip() else '—'}**")
                     
                     sc3, sc4 = st.columns(2)
-                    sc3.metric("Valor do Serviço", f"R$ {float(s_consulta['valor']):.2f}" if pd.notnull(s_consulta['valor']) else "R$ 0,00")
+                    valor_serv_c = f"R$ {float(s_consulta['valor']):.2f}" if pd.notnull(s_consulta['valor']) else "R$ 0,00"
+                    sc3.caption("Valor do Serviço")
+                    sc3.markdown(f"<span style='font-size:20px;font-weight:700'>{valor_serv_c}</span>", unsafe_allow_html=True)
                     sc4.caption("Categoria")
                     sc4.markdown(f"**{s_consulta['categoria'] if pd.notnull(s_consulta.get('categoria')) and str(s_consulta['categoria']).strip() else '—'}**")
                     
@@ -2180,8 +2191,10 @@ Feliz aniversário! 🥳✨"""
                     sc5, sc6 = st.columns(2)
                     val_tempo_c = int(s_consulta['tempo_minutos']) if pd.notnull(s_consulta.get('tempo_minutos')) else 0
                     val_com_c = float(s_consulta['comissao_percentual']) if pd.notnull(s_consulta.get('comissao_percentual')) else 0.0
-                    sc5.metric("Tempo de Execução", f"{val_tempo_c} min")
-                    sc6.metric("Comissão do Colaborador", f"{val_com_c:.2f}%")
+                    sc5.caption("Tempo de Execução")
+                    sc5.markdown(f"<span style='font-size:20px;font-weight:700'>{val_tempo_c} min</span>", unsafe_allow_html=True)
+                    sc6.caption("Comissão do Colaborador")
+                    sc6.markdown(f"<span style='font-size:20px;font-weight:700'>{val_com_c:.2f}%</span>", unsafe_allow_html=True)
                     
                     st.markdown("---")
                     if st.button("Fechar", use_container_width=True, key="fechar_cons_serv"):
