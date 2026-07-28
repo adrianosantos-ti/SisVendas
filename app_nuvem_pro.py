@@ -53,8 +53,8 @@ st.markdown(
 
 import html as _html
 
-def campo_consulta(container, rotulo, valor):
-    """Renderiza um par rótulo/valor nos pop-ups de consulta.
+def campo_consulta(container, rotulo, valor, tamanho=16):
+    """Renderiza um par rótulo/valor nos pop-ups de consulta e resumos.
 
     🔧 Usa UM único bloco HTML em vez de st.caption() + st.markdown(): cada
     elemento do Streamlit traz sua própria margem vertical, então dois
@@ -65,7 +65,7 @@ def campo_consulta(container, rotulo, valor):
     container.markdown(
         "<div style='margin-bottom:12px'>"
         f"<div style='font-size:13px;color:#7d8189;line-height:1.1'>{_html.escape(str(rotulo))}</div>"
-        f"<div style='font-size:16px;font-weight:700;line-height:1.35'>{texto}</div>"
+        f"<div style='font-size:{tamanho}px;font-weight:700;line-height:1.35'>{texto}</div>"
         "</div>",
         unsafe_allow_html=True
     )
@@ -2075,16 +2075,16 @@ Feliz aniversário! 🥳✨"""
                         val_total_medio = (qtd_segura * medio_unit_seguro).sum()
                         
                         m1, m2 = st.columns(2)
-                        m1.metric("📋 Itens Listados", f"{qtd_itens}")
-                        m2.metric("📦 Unidades em Estoque", f"{qtd_unidades:,}".replace(",", "."))
+                        campo_consulta(m1, "📋 Itens Listados", f"{qtd_itens}", tamanho=18)
+                        campo_consulta(m2, "📦 Unidades em Estoque", f"{qtd_unidades:,}".replace(",", "."), tamanho=18)
                         
                         m3, m4 = st.columns(2)
-                        m3.metric("🛒 Potencial de Faturamento (Revenda)", f"R$ {val_est_venda:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        m4.metric("🧴 Capital Imobilizado (Insumos)", f"R$ {val_est_insumo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        campo_consulta(m3, "🛒 Potencial de Faturamento (Revenda)", f"R$ {val_est_venda:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
+                        campo_consulta(m4, "🧴 Capital Imobilizado (Insumos)", f"R$ {val_est_insumo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
                         
                         m5, m6 = st.columns(2)
-                        m5.metric("🏷️ Estoque pelo Preço de Custo", f"R$ {val_total_custo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        m6.metric("⚖️ Estoque pelo Custo Médio", f"R$ {val_total_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        campo_consulta(m5, "🏷️ Estoque pelo Preço de Custo", f"R$ {val_total_custo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
+                        campo_consulta(m6, "⚖️ Estoque pelo Custo Médio", f"R$ {val_total_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
                 else:
                     st.info("Nenhum produto encontrado com os filtros atuais.")
                     
