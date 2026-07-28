@@ -2036,7 +2036,7 @@ Feliz aniversário! 🥳✨"""
                         
                         # --- NOVAS MÉTRICAS DE CAPITAL DE ESTOQUE ---
                         st.markdown("#### 💰 Resumo Financeiro do Estoque")
-                        m1, m2 = st.columns(2)
+                        st.caption("Os números abaixo consideram apenas os itens que passaram pelos filtros acima.")
                         
                         # 1. Capital de Venda (Potencial de Faturamento usando Preço de Venda)
                         df_venda_soma = df_final[df_final.get('classe', 'Venda') == 'Venda']
@@ -2051,9 +2051,40 @@ Feliz aniversário! 🥳✨"""
                             val_est_insumo = (df_insumo_soma['quantidade'] * df_insumo_soma['custo_seguro']).sum()
                         else:
                             val_est_insumo = 0.0
-                            
-                        m1.metric("🛒 Potencial de Faturamento (Revenda)", f"R$ {val_est_venda:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        m2.metric("🧴 Capital Imobilizado (Insumos)", f"R$ {val_est_insumo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        
+                        # 3. Contagens — "itens" = produtos distintos listados; "unidades" = soma
+                        # das quantidades em estoque. São coisas diferentes: 10 produtos podem
+                        # somar 250 unidades, ou 3 unidades se o estoque estiver baixo.
+                        qtd_itens = len(df_final)
+                        qtd_unidades = int(df_final['quantidade'].fillna(0).sum())
+                        
+                        # 4. Estoque valorizado por custo — sobre TODOS os itens filtrados
+                        # (venda + insumo), diferente das duas métricas acima que separam por
+                        # finalidade. fillna(0) evita que produto sem custo preenchido quebre a conta.
+                        qtd_segura = df_final['quantidade'].fillna(0).astype(float)
+                        if 'preco_custo' in df_final.columns:
+                            custo_unit_seguro = df_final['preco_custo'].fillna(0).astype(float)
+                        else:
+                            custo_unit_seguro = pd.Series(0.0, index=df_final.index)
+                        if 'custo_medio' in df_final.columns:
+                            medio_unit_seguro = df_final['custo_medio'].fillna(0).astype(float)
+                        else:
+                            medio_unit_seguro = pd.Series(0.0, index=df_final.index)
+                        
+                        val_total_custo = (qtd_segura * custo_unit_seguro).sum()
+                        val_total_medio = (qtd_segura * medio_unit_seguro).sum()
+                        
+                        m1, m2 = st.columns(2)
+                        m1.metric("📋 Itens Listados", f"{qtd_itens}")
+                        m2.metric("📦 Unidades em Estoque", f"{qtd_unidades:,}".replace(",", "."))
+                        
+                        m3, m4 = st.columns(2)
+                        m3.metric("🛒 Potencial de Faturamento (Revenda)", f"R$ {val_est_venda:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        m4.metric("🧴 Capital Imobilizado (Insumos)", f"R$ {val_est_insumo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        
+                        m5, m6 = st.columns(2)
+                        m5.metric("🏷️ Estoque pelo Preço de Custo", f"R$ {val_total_custo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        m6.metric("⚖️ Estoque pelo Custo Médio", f"R$ {val_total_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                 else:
                     st.info("Nenhum produto encontrado com os filtros atuais.")
                     
