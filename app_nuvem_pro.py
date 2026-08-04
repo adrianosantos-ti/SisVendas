@@ -1750,7 +1750,7 @@ Feliz aniversário! 🥳✨"""
                                 """INSERT INTO produtos 
                                 (nome, quantidade, valor, preco_custo, markup, marca, categoria, empresa_id, referencia, tipo, classe) 
                                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'P',%s)""", 
-                                (n_p, q_p, v_p, custo_p, markup_p, m_p, cat_p, emp_id, ref_p, classe_letra)
+                                (n_p, q_p, v_p, custo_p, markup_p, m_p, cat_p, emp_id, (ref_p.strip() or None), classe_letra)
                             )
                             conn.commit()
                             devolver_conexao(conn)
@@ -1826,7 +1826,7 @@ Feliz aniversário! 🥳✨"""
                                         UPDATE produtos 
                                         SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s, classe=%s 
                                         WHERE id=%s AND empresa_id=%s
-                                    """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, e_ref, e_classe_letra, int(prod_id_selecionado), emp_id))
+                                    """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, (e_ref.strip() or None), e_classe_letra, int(prod_id_selecionado), emp_id))
                                     cur.close()
                                     conn.commit()
                                     devolver_conexao(conn)
@@ -2128,7 +2128,7 @@ Feliz aniversário! 🥳✨"""
                                 """INSERT INTO produtos 
                                 (nome, valor, categoria, empresa_id, referencia, tipo, quantidade, preco_custo, markup, marca, tempo_minutos, comissao_percentual) 
                                 VALUES (%s,%s,%s,%s,%s,'S', 0, 0.0, 0.0, 'Serviço Próprio', %s, %s)""", 
-                                (n_s, v_s, cat_s, emp_id, ref_s, t_s, com_s)
+                                (n_s, v_s, cat_s, emp_id, (ref_s.strip() or None), t_s, com_s)
                             )
                             conn.commit()
                             devolver_conexao(conn)
@@ -2181,7 +2181,7 @@ Feliz aniversário! 🥳✨"""
                                     UPDATE produtos 
                                     SET nome=%s, valor=%s, categoria=%s, referencia=%s, tempo_minutos=%s, comissao_percentual=%s
                                     WHERE id=%s AND empresa_id=%s
-                                """, (e_nome_s, e_valor_s, e_cat_s, e_ref_s, e_tempo_s, e_com_s, int(serv_id_selecionado), emp_id))
+                                """, (e_nome_s, e_valor_s, e_cat_s, (e_ref_s.strip() or None), e_tempo_s, e_com_s, int(serv_id_selecionado), emp_id))
                                 conn.commit()
                                 devolver_conexao(conn)
                                 
@@ -3576,11 +3576,28 @@ Feliz aniversário! 🥳✨"""
                 
                 # --- FLUXO 1: IMPORTAÇÃO VIA PDF ---
                 if metodo_entrada == "📥 Importar via PDF":
-                    st.info("Faça o upload do PDF do seu pedido. O sistema vai extrair os produtos e gerar uma planilha para você revisar as quantidades.")
-                    arquivo_pdf = st.file_uploader("Selecione o arquivo PDF do Pedido", type=["pdf"], key="uploader_pdf_compras")
+                    # 🔧 Dois formatos distintos: o Pedido de Compra (layout do portal da
+                    # consultora) e a Nota Fiscal / DANFE (layout fiscal padrão). As linhas
+                    # são completamente diferentes, por isso cada um tem seu próprio parser.
+                    tipo_doc_pdf = st.radio(
+                        "Que documento você vai importar?",
+                        ["🧾 Nota Fiscal (DANFE)", "📋 Pedido de Compra"],
+                        horizontal=True, key="tipo_doc_pdf"
+                    )
+                    
+                    if tipo_doc_pdf == "🧾 Nota Fiscal (DANFE)":
+                        st.info("Faça o upload do PDF da NF-e (DANFE). O sistema vai extrair os produtos e gerar uma planilha para você revisar.")
+                        st.caption("O custo importado é o **valor unitário do produto**. Se a nota tiver ICMS-ST, marque a opção abaixo para embutir o imposto no custo.")
+                        ratear_st = st.checkbox("Ratear ICMS-ST no custo dos produtos", value=False, key="ratear_st_danfe",
+                                                help="A nota de revenda costuma cobrar ICMS-ST por fora. Marcando esta opção, o imposto é distribuído proporcionalmente entre os itens, deixando o custo médio mais próximo do que você realmente pagou.")
+                    else:
+                        st.info("Faça o upload do PDF do seu pedido. O sistema vai extrair os produtos e gerar uma planilha para você revisar as quantidades.")
+                        ratear_st = False
+                    
+                    arquivo_pdf = st.file_uploader("Selecione o arquivo PDF", type=["pdf"], key="uploader_pdf_compras")
 
                     if arquivo_pdf:
-                        if st.button("🔍 Processar PDF do Pedido", type="primary"):
+                        if st.button("🔍 Processar PDF", type="primary"):
                             
                             try:
                                 # 🔧 CORREÇÃO: acumula preservando as quebras de linha (\n) de cada
@@ -3593,7 +3610,135 @@ Feliz aniversário! 🥳✨"""
                                     for pagina in pdf.pages:
                                         texto_extraido += (pagina.extract_text() or "") + "\n"
                                 
-                                if texto_extraido.strip():
+                                if texto_extraido.strip() and tipo_doc_pdf == "🧾 Nota Fiscal (DANFE)":
+                                    # ==========================================================
+                                    # PARSER DA NOTA FISCAL (DANFE)
+                                    # Layout da linha de produto no quadro "DADOS DO PRODUTO":
+                                    # COD  DESCRIÇÃO  NCM(8)  CST(3)  CFOP(4)  UN  QTDE  VL.UNIT
+                                    # VL.TOTAL  VL.DESC  BC.ICMS  VL.ICMS  V.IPI  ALIQ.ICMS  ALIQ.IPI
+                                    # O \s* depois da descrição é proposital: em várias notas o
+                                    # texto do produto cola no NCM sem espaço ("...MATTE33041000").
+                                    # ==========================================================
+                                    padrao_danfe = re.compile(
+                                        r'^(\d{6,14})\s+'
+                                        r'(.+?)\s*'
+                                        r'(\d{8})\s+'
+                                        r'(\d{3})\s+'
+                                        r'(\d{4})\s+'
+                                        r'(\S+)\s+'
+                                        r'([\d.]+,\d+)\s+'
+                                        r'([\d.]+,\d+)\s+'
+                                        r'([\d.]+,\d+)\s+'
+                                        r'([\d.]+,\d+)\s+'
+                                        r'([\d.]+,\d+)\s+'
+                                        r'([\d.]+,\d+)\s+'
+                                        r'([\d.]+,\d+)\s+'
+                                        r'([\d.]+,\d+)\s+'
+                                        r'([\d.]+,\d+)\s*$'
+                                    )
+                                    
+                                    def _num_br(s):
+                                        return float(s.replace('.', '').replace(',', '.'))
+                                    
+                                    linhas_pdf = [l.rstrip() for l in texto_extraido.split('\n')]
+                                    padrao_cabecalho = re.compile(
+                                        r'^(DADOS|COD\.PROD|CÁLCULO|CALCULO|INSCRIÇÃO|INFORMAÇÕES|RESERVADO|'
+                                        r'MARY KAY|ROD |Cond |Cabo |Fone|N°|SÉRIE|FOLHA|CHAVE|PROTOCOLO|'
+                                        r'NATUREZA|Consulta|fazenda|REM |\d{4} \d{4})', re.I
+                                    )
+                                    
+                                    itens_danfe = []
+                                    for idx_l, linha_pdf in enumerate(linhas_pdf):
+                                        m_d = padrao_danfe.match(linha_pdf.strip())
+                                        if not m_d:
+                                            continue
+                                        
+                                        desc_item = m_d.group(2).strip()
+                                        # A descrição quase sempre continua na linha seguinte
+                                        if idx_l + 1 < len(linhas_pdf):
+                                            prox_linha = linhas_pdf[idx_l + 1].strip()
+                                            if (prox_linha and len(prox_linha) < 60
+                                                    and not padrao_danfe.match(prox_linha)
+                                                    and not padrao_cabecalho.match(prox_linha)):
+                                                desc_item = f"{desc_item} {prox_linha}"
+                                        
+                                        # Remove o prefixo de kit "(K: 10256368)" do começo do nome
+                                        desc_item = re.sub(r'^\(K:\s*\d+\)\s*', '', desc_item).strip()
+                                        
+                                        itens_danfe.append({
+                                            "Código": m_d.group(1),
+                                            "Produto": desc_item,
+                                            "Preço Un. (R$)": _num_br(m_d.group(8)),
+                                            "Quantidade": int(float(_num_br(m_d.group(7)))),
+                                            "_vl_total": _num_br(m_d.group(9)),
+                                        })
+                                    
+                                    # 🔧 Consolida linhas repetidas do MESMO código (acontece quando o
+                                    # fornecedor fatura o item em lotes com preços diferentes). Sem
+                                    # isso, o mesmo produto entraria duas vezes na mesma nota.
+                                    consolidado = {}
+                                    houve_consolidacao = False
+                                    for item_d in itens_danfe:
+                                        cod_d = item_d["Código"]
+                                        if cod_d in consolidado:
+                                            houve_consolidacao = True
+                                            alvo = consolidado[cod_d]
+                                            alvo["Quantidade"] += item_d["Quantidade"]
+                                            alvo["_vl_total"] += item_d["_vl_total"]
+                                            alvo["Preço Un. (R$)"] = round(alvo["_vl_total"] / alvo["Quantidade"], 2) if alvo["Quantidade"] else alvo["Preço Un. (R$)"]
+                                        else:
+                                            consolidado[cod_d] = dict(item_d)
+                                    itens_danfe = list(consolidado.values())
+                                    
+                                    # 🔧 Rateio opcional do ICMS-ST proporcional ao valor de cada item.
+                                    # O valor é lido na linha logo abaixo do cabeçalho de totais:
+                                    # "BASE ICMS | VL ICMS | BASE ICMS ST | VL ICMS ST | TOTAL PRODUTOS"
+                                    # (o ST é o 4º número dessa linha).
+                                    valor_st = 0.0
+                                    for idx_t, linha_t in enumerate(linhas_pdf):
+                                        if re.search(r'VALOR DO ICMS ST', linha_t, re.I) and idx_t + 1 < len(linhas_pdf):
+                                            valores_tot = re.findall(r'[\d.]+,\d{2}', linhas_pdf[idx_t + 1].strip())
+                                            if len(valores_tot) >= 4:
+                                                try:
+                                                    valor_st = _num_br(valores_tot[3])
+                                                except Exception:
+                                                    valor_st = 0.0
+                                            break
+                                    
+                                    if ratear_st and valor_st > 0 and itens_danfe:
+                                        base_rateio = sum(i["_vl_total"] for i in itens_danfe)
+                                        if base_rateio > 0:
+                                            for item_d in itens_danfe:
+                                                proporcao = item_d["_vl_total"] / base_rateio
+                                                st_item = valor_st * proporcao
+                                                if item_d["Quantidade"]:
+                                                    item_d["Preço Un. (R$)"] = round((item_d["_vl_total"] + st_item) / item_d["Quantidade"], 2)
+                                            st.session_state['st_rateado_pdf'] = valor_st
+                                    else:
+                                        st.session_state['st_rateado_pdf'] = 0.0
+                                    
+                                    for item_d in itens_danfe:
+                                        item_d.pop("_vl_total", None)
+                                    
+                                    st.session_state['desconto_pdf_detectado'] = 0.0
+                                    
+                                    if itens_danfe:
+                                        st.session_state['produtos_pedido'] = itens_danfe
+                                        total_un = sum(i["Quantidade"] for i in itens_danfe)
+                                        msg_ok = f"📊 {len(itens_danfe)} produtos identificados ({total_un} unidades)! Ajuste-os abaixo."
+                                        if houve_consolidacao:
+                                            msg_ok += " Itens com o mesmo código foram somados numa linha só."
+                                        st.success(msg_ok)
+                                        if ratear_st and valor_st > 0:
+                                            st.info(f"ICMS-ST de R$ {valor_st:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " rateado entre os itens.")
+                                        elif valor_st > 0:
+                                            st.warning(f"⚠️ Esta nota tem R$ {valor_st:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " de ICMS-ST que **não** foi somado ao custo. Marque a opção de rateio se quiser incluí-lo.")
+                                    else:
+                                        st.error("❌ Não encontramos produtos no padrão da DANFE. Confira se o PDF é a nota fiscal (e não o pedido).")
+                                        with st.expander("Ver texto extraído (Debug)"):
+                                            st.write(texto_extraido[:2000])
+                                
+                                elif texto_extraido.strip():
                                     # 🔧 CORREÇÃO: regex aplicado linha a linha (não mais na string
                                     # inteira achatada). Cada linha de produto tem o formato:
                                     # "<código 8 dígitos> <nome> R$<preço> <qtd> R$<subtotal>"
@@ -3674,19 +3819,73 @@ Feliz aniversário! 🥳✨"""
                         
                         df_edicao_pdf = pd.DataFrame(st.session_state['produtos_pedido'])
                         
-                        df_editado = st.data_editor(
-                            df_edicao_pdf,
-                            column_config={
-                                "Código": st.column_config.TextColumn("Código", disabled=True),
-                                "Produto": st.column_config.TextColumn("Produto", width="large"),
-                                "Preço Un. (R$)": st.column_config.NumberColumn("Preço Un. (R$)", format="%.2f", min_value=0.0),
-                                "Quantidade": st.column_config.NumberColumn("Quantidade", min_value=1, step=1),
-                            },
-                            hide_index=True,
-                            use_container_width=True,
-                            num_rows="dynamic",
-                            key="editor_produtos_pdf"
+                        # 🔧 CLASSIFICAÇÃO: separa o que já existe no cadastro do que é novo.
+                        # Importante porque o comportamento na finalização é bem diferente:
+                        # item já cadastrado SOMA no estoque do produto existente (e recalcula
+                        # o custo médio); item novo CRIA um produto do zero. Antes isso
+                        # acontecia silenciosamente, sem o usuário saber o que ia ser criado.
+                        codigos_pdf = [str(c).strip() for c in df_edicao_pdf['Código'].tolist()]
+                        df_existentes = carregar_dados_cached(
+                            "SELECT id, referencia, nome FROM produtos WHERE empresa_id = %s AND referencia = ANY(%s)",
+                            (emp_id, codigos_pdf)
                         )
+                        if not df_existentes.empty:
+                            refs_norm = df_existentes['referencia'].astype(str).str.strip()
+                            mapa_ids = dict(zip(refs_norm, df_existentes['id']))
+                            mapa_nomes_cad = dict(zip(refs_norm, df_existentes['nome']))
+                        else:
+                            mapa_ids, mapa_nomes_cad = {}, {}
+                        
+                        df_edicao_pdf['_cod_limpo'] = df_edicao_pdf['Código'].astype(str).str.strip()
+                        mask_cadastrados = df_edicao_pdf['_cod_limpo'].isin(mapa_ids.keys())
+                        
+                        df_ja_cad = df_edicao_pdf[mask_cadastrados].copy().reset_index(drop=True)
+                        df_novos = df_edicao_pdf[~mask_cadastrados].copy().reset_index(drop=True)
+                        
+                        colunas_editor = {
+                            "Código": st.column_config.TextColumn("Código", disabled=True),
+                            "Produto": st.column_config.TextColumn("Produto", width="large"),
+                            "Preço Un. (R$)": st.column_config.NumberColumn("Preço Un. (R$)", format="%.2f", min_value=0.0),
+                            "Quantidade": st.column_config.NumberColumn("Quantidade", min_value=1, step=1),
+                        }
+                        
+                        # --- GRUPO 1: JÁ CADASTRADOS (vão somar ao estoque existente) ---
+                        df_editado_ja = pd.DataFrame(columns=df_edicao_pdf.columns)
+                        if not df_ja_cad.empty:
+                            st.info(f"📦 **{len(df_ja_cad)} item(ns) já cadastrado(s)** — a quantidade será somada ao estoque atual e o custo médio recalculado.")
+                            
+                            # Mostra o nome que está no cadastro ao lado do nome que veio do PDF:
+                            # divergência aqui costuma indicar referência trocada no fornecedor.
+                            df_ja_cad['Cadastrado como'] = df_ja_cad['_cod_limpo'].map(mapa_nomes_cad)
+                            divergentes = df_ja_cad[
+                                df_ja_cad['Produto'].astype(str).str.strip().str.casefold()
+                                != df_ja_cad['Cadastrado como'].astype(str).str.strip().str.casefold()
+                            ]
+                            if not divergentes.empty:
+                                st.warning(f"⚠️ {len(divergentes)} item(ns) têm nome no PDF diferente do nome cadastrado. Confira a coluna **Cadastrado como** — pode ser só diferença de escrita, mas também pode ser referência trocada.")
+                            
+                            df_editado_ja = st.data_editor(
+                                df_ja_cad.drop(columns=['_cod_limpo']),
+                                column_config={**colunas_editor, "Cadastrado como": st.column_config.TextColumn("Cadastrado como", disabled=True, width="large")},
+                                hide_index=True,
+                                use_container_width=True,
+                                num_rows="dynamic",
+                                key="editor_pdf_ja_cadastrados"
+                            )
+                        
+                        # --- GRUPO 2: NOVOS (serão criados no cadastro) ---
+                        df_editado_novos = pd.DataFrame(columns=df_edicao_pdf.columns)
+                        if not df_novos.empty:
+                            st.warning(f"🆕 **{len(df_novos)} item(ns) sem cadastro** — serão criados como produtos novos ao finalizar, com categoria *Geral* e a marca do fornecedor. Revise os nomes antes de confirmar.")
+                            
+                            df_editado_novos = st.data_editor(
+                                df_novos.drop(columns=['_cod_limpo']),
+                                column_config=colunas_editor,
+                                hide_index=True,
+                                use_container_width=True,
+                                num_rows="dynamic",
+                                key="editor_pdf_novos"
+                            )
                         
                         col_conf1, col_conf2 = st.columns([1, 1])
                         
@@ -3694,14 +3893,9 @@ Feliz aniversário! 🥳✨"""
                             if 'carrinho_compra' not in st.session_state:
                                 st.session_state['carrinho_compra'] = []
                             
-                            # Verifica quais códigos já existem cadastrados, para reaproveitar o
-                            # mesmo mecanismo de atualização direta por ID que o Lançamento Manual usa
-                            codigos_pdf = [str(c).strip() for c in df_editado['Código'].tolist()]
-                            df_existentes = carregar_dados_cached(
-                                "SELECT id, referencia FROM produtos WHERE empresa_id = %s AND referencia = ANY(%s)",
-                                (emp_id, codigos_pdf)
-                            )
-                            mapa_ids = dict(zip(df_existentes['referencia'].astype(str), df_existentes['id'])) if not df_existentes.empty else {}
+                            # Junta os dois grupos de volta num só antes de mandar pro carrinho
+                            partes = [d for d in (df_editado_ja, df_editado_novos) if not d.empty]
+                            df_editado = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(columns=df_edicao_pdf.columns)
                             
                             qtd_adicionada = 0
                             for _, row in df_editado.iterrows():
@@ -3735,8 +3929,8 @@ Feliz aniversário! 🥳✨"""
                     st.markdown("#### 🛒 Adicionar Item à Nota")
                     tipo_item = st.radio("O que você está dando entrada?", ["Produto já cadastrado", "Produto novo (Primeira vez)"], horizontal=True)
                     
-                    with st.form("form_add_compra", clear_on_submit=True):
-                        if tipo_item == "Produto já cadastrado" and not df_produtos.empty:
+                    if tipo_item == "Produto já cadastrado" and not df_produtos.empty:
+                        with st.form("form_add_compra", clear_on_submit=True):
                             lista_nomes = df_produtos['nome'].tolist()
                             prod_selecionado = st.selectbox("🔍 Busque o Produto", [""] + lista_nomes)
                             
@@ -3759,27 +3953,78 @@ Feliz aniversário! 🥳✨"""
                                     })
                                     st.success(f"✅ {prod_selecionado} adicionado ao lote!")
                                     
-                        else:
-                            st.caption("Preencha para cadastrar este item no estoque automaticamente ao salvar.")
-                            c_cod, c_nome = st.columns([1, 2])
-                            novo_cod = c_cod.text_input("Código / Referência")
-                            novo_nome = c_nome.text_input("Nome do Produto")
+                    else:
+                        st.caption("Preencha para cadastrar este item no estoque automaticamente ao salvar.")
+                        
+                        # 🔧 VALIDAÇÃO DE REFERÊNCIA DUPLICADA
+                        # O campo de referência fica FORA do st.form de propósito: dentro do
+                        # form o valor só chega ao Python depois do submit, e aí a checagem
+                        # só aconteceria tarde demais. Fora dele, cada tecla dispara um
+                        # rerun e conseguimos avisar na hora que a referência é digitada.
+                        # Motivo do cuidado: a finalização casa produto por (referencia,
+                        # empresa_id) — então uma referência repetida NÃO criava um item
+                        # novo, ela somava estoque no produto já existente sem avisar.
+                        if 'reset_ref_nova' not in st.session_state:
+                            st.session_state['reset_ref_nova'] = 0
+                        
+                        novo_cod = st.text_input("Código / Referência", key=f"ref_nova_{st.session_state['reset_ref_nova']}")
+                        ref_limpa = (novo_cod or "").strip()
+                        ref_chave = ref_limpa.casefold()
+                        
+                        # Compara ignorando espaços nas pontas e maiúsculas/minúsculas, senão
+                        # "38 " ou "ab12" passariam como diferentes de "38" e "AB12".
+                        refs_cadastradas = {}
+                        if not df_produtos.empty:
+                            for _, r_prod in df_produtos.iterrows():
+                                if pd.notnull(r_prod['referencia']) and str(r_prod['referencia']).strip():
+                                    refs_cadastradas[str(r_prod['referencia']).strip().casefold()] = r_prod['nome']
+                        
+                        nome_ja_cadastrado = refs_cadastradas.get(ref_chave)
+                        ja_no_carrinho = any(
+                            str(item_c.get('Código', '')).strip().casefold() == ref_chave
+                            for item_c in st.session_state['carrinho_compra']
+                        ) if ref_chave else False
+                        
+                        ref_bloqueada = False
+                        if ref_limpa:
+                            if nome_ja_cadastrado:
+                                st.error(f"🚫 A referência **{ref_limpa}** já pertence ao produto **{nome_ja_cadastrado}**. Para dar entrada nele, troque para a opção **Produto já cadastrado** acima.")
+                                ref_bloqueada = True
+                            elif ja_no_carrinho:
+                                st.error(f"🚫 A referência **{ref_limpa}** já foi adicionada a esta nota. Ajuste a quantidade no carrinho abaixo em vez de lançar duas vezes.")
+                                ref_bloqueada = True
+                            else:
+                                st.success(f"✅ Referência **{ref_limpa}** disponível para cadastro.")
+                        
+                        with st.form("form_add_compra_novo", clear_on_submit=True):
+                            novo_nome = st.text_input("Nome do Produto")
                             
                             c_qtd, c_preco = st.columns(2)
                             qtd_input = c_qtd.number_input("Quantidade Recebida", min_value=1, step=1)
                             custo_input = c_preco.number_input("Preço de Custo Un. (R$)", min_value=0.0, step=0.10, format="%.2f")
                             
-                            if st.form_submit_button("➕ Adicionar Novo Produto à Nota", type="primary", use_container_width=True):
-                                if not novo_cod or not novo_nome:
+                            if st.form_submit_button("➕ Adicionar Novo Produto à Nota", type="primary", use_container_width=True, disabled=ref_bloqueada):
+                                if not ref_limpa or not novo_nome:
                                     st.warning("⚠️ Código e Nome são obrigatórios para produtos novos.")
+                                elif nome_ja_cadastrado or ja_no_carrinho:
+                                    # Rede de segurança: se a referência virou duplicada entre
+                                    # o preenchimento e o envio, barra aqui também.
+                                    st.error("🚫 Essa referência já existe. Confira o aviso acima.")
                                 else:
                                     st.session_state['carrinho_compra'].append({
-                                        "Código": novo_cod,
+                                        "Código": ref_limpa,
                                         "Produto": novo_nome,
                                         "Quantidade": int(qtd_input),
                                         "Preço Un. (R$)": float(custo_input)
                                     })
-                                    st.success(f"✅ {novo_nome} adicionado ao lote!")
+                                    st.session_state['msg_add_novo_produto'] = f"✅ {novo_nome} adicionado ao lote!"
+                                    # Limpa o campo de referência, que está fora do form e
+                                    # portanto não é limpo pelo clear_on_submit.
+                                    st.session_state['reset_ref_nova'] += 1
+                                    st.rerun()
+                        
+                        if 'msg_add_novo_produto' in st.session_state:
+                            st.success(st.session_state.pop('msg_add_novo_produto'))
 
                 # ==========================================================
                 # 🔧 SEÇÃO COMPARTILHADA: Carrinho + Fornecedor/Nota + Finalizar
