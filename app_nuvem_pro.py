@@ -2461,16 +2461,39 @@ Feliz aniversário! 🥳✨"""
                             })
                             tabela_prec["Novo Preço (R$)"] = tabela_prec["Preço Atual (R$)"]
 
-                            # 🔧 Reajuste em massa: preenche a coluna "Novo Preço" aplicando
-                            # um percentual sobre o preço atual. É só uma sugestão — os
+                            # 🔧 Aplicação em massa sobre a coluna "Novo Preço", em três
+                            # formas: percentual, preço fixo em R$ (útil quando o filtro
+                            # isola itens de mesmo preço) e acréscimo/desconto em R$.
+                            # Em qualquer uma delas o resultado é só uma sugestão — os
                             # valores continuam editáveis linha a linha antes de gravar.
-                            with st.expander("📈 Aplicar reajuste percentual (opcional)"):
+                            with st.expander("📈 Aplicar em massa (opcional)"):
+                                forma_reaj = st.radio(
+                                    "Como aplicar:",
+                                    ["Percentual (%)", "Preço fixo (R$)", "Somar / subtrair (R$)"],
+                                    horizontal=True, key="forma_reajuste_precos"
+                                )
                                 col_r1, col_r2 = st.columns([1, 2])
-                                pct_reaj = col_r1.number_input("Percentual (%)", value=0.0, step=1.0, format="%.2f",
-                                                               help="Use negativo para redução. Ex.: 10 aumenta 10%; -5 reduz 5%.")
+
+                                if forma_reaj == "Percentual (%)":
+                                    val_reaj = col_r1.number_input("Percentual (%)", value=0.0, step=1.0, format="%.2f",
+                                                                   help="Use negativo para redução. Ex.: 10 aumenta 10%; -5 reduz 5%.")
+                                    calcular = lambda atual: round(atual * (1 + val_reaj / 100), 2)
+                                    resumo_reaj = f"{val_reaj:+.2f}% sobre o preço atual"
+                                elif forma_reaj == "Preço fixo (R$)":
+                                    val_reaj = col_r1.number_input("Novo preço (R$)", value=0.0, min_value=0.0, step=1.0, format="%.2f",
+                                                                   help="Todos os produtos filtrados passam a ter exatamente este preço.")
+                                    calcular = lambda atual: round(val_reaj, 2)
+                                    resumo_reaj = f"todos passam a R$ {val_reaj:.2f}"
+                                else:
+                                    val_reaj = col_r1.number_input("Valor (R$)", value=0.0, step=1.0, format="%.2f",
+                                                                   help="Use negativo para desconto. Ex.: 5 soma R$ 5,00; -3 desconta R$ 3,00.")
+                                    calcular = lambda atual: max(round(atual + val_reaj, 2), 0.0)
+                                    resumo_reaj = f"R$ {val_reaj:+.2f} sobre o preço atual"
+
+                                col_r2.caption(f"Será aplicado em **{len(tabela_prec)}** produto(s) filtrado(s): {resumo_reaj}.")
                                 if col_r2.button("Calcular novos preços", use_container_width=True, key="btn_calc_reajuste"):
                                     st.session_state['precos_sugeridos'] = {
-                                        k: round(v * (1 + pct_reaj / 100), 2)
+                                        k: calcular(v)
                                         for k, v in zip(tabela_prec["Chave"], tabela_prec["Preço Atual (R$)"])
                                     }
                                     st.session_state['versao_editor_precos'] = st.session_state.get('versao_editor_precos', 0) + 1
