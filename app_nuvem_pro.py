@@ -53,6 +53,89 @@ st.markdown(
 
 import html as _html
 
+def buscar_produtos_para_replicar_ref(nome_produto, referencia, empresa_origem):
+    """Lista produtos de OUTRAS empresas com o mesmo nome e sem referência.
+
+    🔧 Usado pela replicação de referência entre empresas. O catálogo é o mesmo
+    para todas as empresas (mesma marca/revenda), então o código de um produto
+    vale para todas — mas cada empresa tem sua própria linha na tabela.
+
+    Só entra na lista quem passa nos três filtros:
+      1. mesmo nome (ignorando caixa e espaços nas pontas);
+      2. está sem referência (NULL ou vazio/'nan');
+      3. a empresa ainda NÃO usa essa referência em outro produto — senão
+         o índice único (empresa_id, referencia) rejeitaria a gravação.
+    """
+    if not nome_produto or not referencia:
+        return pd.DataFrame()
+    return carregar_dados_cached("""
+        SELECT p.id, p.empresa_id, e.nome AS empresa, p.nome, p.quantidade
+        FROM produtos p
+        LEFT JOIN empresas e ON e.id = p.empresa_id
+        WHERE p.tipo = 'P'
+          AND p.empresa_id <> %s
+          AND lower(trim(p.nome)) = lower(trim(%s))
+          AND (p.referencia IS NULL OR lower(trim(p.referencia)) IN ('', 'nan'))
+          AND NOT EXISTS (
+                SELECT 1 FROM produtos x
+                WHERE x.empresa_id = p.empresa_id
+                  AND trim(x.referencia) = trim(%s)
+          )
+        ORDER BY p.empresa_id
+    """, (int(empresa_origem), str(nome_produto), str(referencia)))
+
+
+def painel_replicar_referencia(chave):
+    """Mostra o convite de replicação e grava quando o usuário confirma.
+
+    A gravação toca produtos de outras empresas, por isso nunca é automática:
+    o usuário vê exatamente quais empresas serão afetadas e confirma.
+    """
+    pendente = st.session_state.get(chave)
+    if not pendente:
+        return
+
+    df_alvos = buscar_produtos_para_replicar_ref(
+        pendente['nome'], pendente['referencia'], pendente['empresa_id']
+    )
+    if df_alvos.empty:
+        st.session_state.pop(chave, None)
+        return
+
+    with st.container(border=True):
+        st.markdown(f"##### 🔗 Replicar referência para outras empresas")
+        st.caption(f"O produto **{pendente['nome']}** existe em outras empresas sem referência cadastrada. Deseja aplicar o código **{pendente['referencia']}** nelas também?")
+        st.dataframe(
+            df_alvos[['empresa_id', 'empresa', 'nome', 'quantidade']],
+            hide_index=True, use_container_width=True
+        )
+
+        col_rep1, col_rep2 = st.columns(2)
+        if col_rep1.button(f"✅ Replicar em {len(df_alvos)} empresa(s)", type="primary", use_container_width=True, key=f"btn_rep_{chave}"):
+            conn_rep = conectar_banco()
+            try:
+                cur_rep = conn_rep.cursor()
+                ids_alvo = [int(i) for i in df_alvos['id'].tolist()]
+                cur_rep.execute(
+                    "UPDATE produtos SET referencia = %s WHERE id = ANY(%s)",
+                    (pendente['referencia'], ids_alvo)
+                )
+                conn_rep.commit()
+                devolver_conexao(conn_rep)
+                st.session_state.pop(chave, None)
+                st.success(f"Referência replicada em {len(ids_alvo)} produto(s).")
+                limpar_cache()
+                st.rerun()
+            except Exception as erro_rep:
+                conn_rep.rollback()
+                devolver_conexao(conn_rep)
+                st.error(f"Erro ao replicar: {erro_rep}")
+
+        if col_rep2.button("Agora não", use_container_width=True, key=f"btn_norep_{chave}"):
+            st.session_state.pop(chave, None)
+            st.rerun()
+
+
 def campo_consulta(container, rotulo, valor, tamanho=16):
     """Renderiza um par rótulo/valor nos pop-ups de consulta e resumos.
 
@@ -1742,21 +1825,43 @@ Feliz aniversário! 🥳✨"""
                     cat_p = st.selectbox("Categoria", lista_cat)
                     
                     if st.form_submit_button("💾 Salvar Cadastro"):
+                        ref_p_limpa = (ref_p or "").strip()
+                        # 🔧 Impede cadastrar referência que já pertence a outro produto DESTA
+                        # empresa. Sem esta checagem, dois produtos ficavam com o mesmo código
+                        # e a Entrada de Mercadorias (que casa item por referência) passava a
+                        # somar estoque num deles sem critério definido.
+                        conflito_ref = None
+                        if ref_p_limpa and not df_p.empty and 'referencia' in df_p.columns:
+                            for _, _r in df_p.iterrows():
+                                if pd.notnull(_r['referencia']) and str(_r['referencia']).strip().casefold() == ref_p_limpa.casefold():
+                                    conflito_ref = _r['nome']
+                                    break
+                        
                         if not n_p:
                             st.warning("O nome do produto é obrigatório.")
+                        elif conflito_ref:
+                            st.error(f"🚫 A referência **{ref_p_limpa}** já pertence ao produto **{conflito_ref}**. Use outro código ou deixe o campo em branco.")
                         else:
                             conn = conectar_banco()
                             conn.cursor().execute(
                                 """INSERT INTO produtos 
                                 (nome, quantidade, valor, preco_custo, markup, marca, categoria, empresa_id, referencia, tipo, classe) 
                                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'P',%s)""", 
-                                (n_p, q_p, v_p, custo_p, markup_p, m_p, cat_p, emp_id, (ref_p.strip() or None), classe_letra)
+                                (n_p, q_p, v_p, custo_p, markup_p, m_p, cat_p, emp_id, (ref_p_limpa or None), classe_letra)
                             )
                             conn.commit()
                             devolver_conexao(conn)
+                            # 🔧 Guarda a intenção de replicar; o painel abaixo do formulário
+                            # mostra as empresas alvo e só grava após confirmação.
+                            if ref_p_limpa and st.session_state.get('perfil') in ('admin', 'master'):
+                                st.session_state['replicar_ref_novo'] = {
+                                    'nome': n_p, 'referencia': ref_p_limpa, 'empresa_id': emp_id
+                                }
                             st.success(f"Produto de {classe_letra} cadastrado com sucesso!")
                             limpar_cache()
                             st.rerun()
+                
+                painel_replicar_referencia('replicar_ref_novo')
 
             # --- EXPANDER 2: EDITAR PRODUTO ---
             with st.expander("✏️ Editar Produto"):
@@ -1830,6 +1935,10 @@ Feliz aniversário! 🥳✨"""
                                     cur.close()
                                     conn.commit()
                                     devolver_conexao(conn)
+                                    if e_ref.strip() and st.session_state.get('perfil') in ('admin', 'master'):
+                                        st.session_state['replicar_ref_edicao'] = {
+                                            'nome': e_nome, 'referencia': e_ref.strip(), 'empresa_id': emp_id
+                                        }
                                     st.success("Cadastro atualizado com sucesso!")
                                     limpar_cache()
                                     st.rerun()
@@ -1853,6 +1962,8 @@ Feliz aniversário! 🥳✨"""
                                     if 'conn' in locals(): devolver_conexao(conn)
                 else:
                     st.info("Não há produtos cadastrados para editar.")
+                
+                painel_replicar_referencia('replicar_ref_edicao')
 
             # --- EXPANDER 3: MONTAGEM DE KITS PROMOCIONAIS ---
             with st.expander("🎁 Montar Kit Promocional"):
@@ -1976,6 +2087,12 @@ Feliz aniversário! 🥳✨"""
                     if not df_final.empty:
                         # Remove colunas de controle interno para a visualização ficar limpa
                         df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa', 'tipo'], errors='ignore')
+                        # 🔧 Campos de texto sem valor no banco (NULL) apareceriam como "None"
+                        # na tabela. Aqui viram string vazia só para exibição — o banco continua
+                        # guardando NULL, que é o correto para "não preenchido".
+                        for _col_txt in ['referencia', 'marca', 'categoria']:
+                            if _col_txt in df_exibicao.columns:
+                                df_exibicao[_col_txt] = df_exibicao[_col_txt].fillna("")
                         
                         # 🔧 MELHORIA: clicar num produto abre um pop-up de consulta (não
                         # empurra a lista pra baixo). O contador no key força a tabela a
@@ -2154,7 +2271,7 @@ Feliz aniversário! 🥳✨"""
                             st.markdown("**Informações Básicas**")
                             c1, c2 = st.columns(2)
                             e_nome_s = c1.text_input("Nome do Serviço", value=s_atual['nome'])
-                            e_ref_s = c2.text_input("Referência", value=s_atual['referencia'] if s_atual['referencia'] else "")
+                            e_ref_s = c2.text_input("Referência", value=str(s_atual['referencia']) if pd.notnull(s_atual['referencia']) else "")
                             
                             c3, c4 = st.columns(2)
                             e_valor_s = c3.number_input("Valor do Serviço (R$)", min_value=0.0, format="%.2f", value=float(s_atual['valor']))
@@ -2198,6 +2315,10 @@ Feliz aniversário! 🥳✨"""
                 
                 # Prepara o dataframe para exibição, ocultando as colunas inúteis para serviços
                 df_exibicao_s = df_s.drop(columns=['empresa_id', 'tipo', 'quantidade', 'preco_custo', 'markup', 'marca'], errors='ignore')
+                # 🔧 Mesmo tratamento de exibição usado na tabela de Produtos.
+                for _col_txt in ['referencia', 'categoria']:
+                    if _col_txt in df_exibicao_s.columns:
+                        df_exibicao_s[_col_txt] = df_exibicao_s[_col_txt].fillna("")
                 
                 # Formatação de exibição rica
                 if 'valor' in df_exibicao_s.columns:
@@ -4112,7 +4233,13 @@ Feliz aniversário! 🥳✨"""
                                     # Resolve o ID do produto de qualquer uma das duas formas:
                                     prod_id_resolvido = prod_id_direto
                                     if not prod_id_resolvido:
-                                        cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s", (v_cod, emp_id))
+                                        # 🔧 ORDER BY id: se houver mais de um produto com a mesma
+                                        # referência (dado antigo, antes da validação de duplicidade),
+                                        # a entrada sempre cai no MESMO produto — o mais antigo.
+                                        # Sem a ordenação, o Postgres devolvia qualquer um dos dois,
+                                        # e o estoque podia ir para um item numa entrada e para o
+                                        # outro na entrada seguinte.
+                                        cur.execute("SELECT id FROM produtos WHERE referencia = %s AND empresa_id = %s ORDER BY id", (v_cod, emp_id))
                                         prod_existe = cur.fetchone()
                                         prod_id_resolvido = prod_existe[0] if prod_existe else None
                                     
@@ -4264,11 +4391,21 @@ Feliz aniversário! 🥳✨"""
                                 itens_estorno = cur.fetchall()
                                 
                                 # 2. Retira as quantidades exatas do estoque atual
+                                # 🔧 A subquery com ORDER BY id LIMIT 1 é essencial: se dois
+                                # produtos da mesma empresa dividirem a mesma referência (dado
+                                # antigo), o UPDATE direto por referencia subtrairia a quantidade
+                                # de AMBOS, zerando estoque de um item que nunca entrou na nota.
+                                # O ORDER BY id é o mesmo critério usado ao dar a entrada, então
+                                # o estorno desfaz exatamente no produto que recebeu.
                                 for ref, qtd in itens_estorno:
                                     cur.execute("""
                                         UPDATE produtos 
                                         SET quantidade = quantidade - %s 
-                                        WHERE referencia = %s AND empresa_id = %s
+                                        WHERE id = (
+                                            SELECT id FROM produtos
+                                            WHERE referencia = %s AND empresa_id = %s
+                                            ORDER BY id LIMIT 1
+                                        )
                                     """, (int(qtd), str(ref), emp_id))
                                 
                                 # 3. Deleta o histórico analítico de itens da nota
