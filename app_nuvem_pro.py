@@ -1790,172 +1790,350 @@ Feliz aniversário! 🥳✨"""
             df_c = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
             
-            # --- EXPANDER 1: NOVO PRODUTO ---
-            with st.expander("➕ Novo Produto Físico"):
-                with st.form("f_novo_p", clear_on_submit=True):
-                    
-                    st.markdown("**Classificação do Produto**")
-                    # O Grande Diferencial: Definição da Classe
-                    classe_desc = st.radio(
-                        "Qual a finalidade deste produto?", 
-                        ["Venda / Comercialização", "Insumo / Consumo Interno"], 
-                        horizontal=True,
-                        help="Venda: Produtos expostos para a cliente comprar. Insumo: Produtos usados nos procedimentos do salão."
-                    )
-                    classe_letra = 'Venda' if classe_desc == "Venda / Comercialização" else 'Insumo'
-                    
-                    st.markdown("---")
-                    st.markdown("**Informações Básicas**")
-                    c1, c2 = st.columns(2)
-                    n_p = c1.text_input("Nome do Produto")
-                    ref_p = c2.text_input("Referência / Código Interno", placeholder="Opcional")
-                    
-                    c3, c4 = st.columns(2)
-                    q_p = c3.number_input("Qtd Inicial em Estoque", min_value=0, step=1)
-                    m_p = c4.text_input("Marca / Linha", placeholder="Ex: Mary Kay, D'Grava")
-                    
-                    st.markdown("**Finanças e Precificação**")
-                    c5, c6, c7 = st.columns(3)
-                    
-                    # Se for insumo, o preço de venda deixa de ser obrigatório
-                    custo_p = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f")
-                    markup_p = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", disabled=(classe_letra == 'Insumo'), help="Desabilitado para Insumos.")
-                    v_p = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", disabled=(classe_letra == 'Insumo'), help="Insumos não possuem preço de venda.")
-                    
-                    cat_p = st.selectbox("Categoria", lista_cat)
-                    
-                    if st.form_submit_button("💾 Salvar Cadastro"):
-                        ref_p_limpa = (ref_p or "").strip()
-                        # 🔧 Impede cadastrar referência que já pertence a outro produto DESTA
-                        # empresa. Sem esta checagem, dois produtos ficavam com o mesmo código
-                        # e a Entrada de Mercadorias (que casa item por referência) passava a
-                        # somar estoque num deles sem critério definido.
-                        conflito_ref = None
-                        if ref_p_limpa and not df_p.empty and 'referencia' in df_p.columns:
-                            for _, _r in df_p.iterrows():
-                                if pd.notnull(_r['referencia']) and str(_r['referencia']).strip().casefold() == ref_p_limpa.casefold():
-                                    conflito_ref = _r['nome']
-                                    break
-                        
-                        if not n_p:
-                            st.warning("O nome do produto é obrigatório.")
-                        elif conflito_ref:
-                            st.error(f"🚫 A referência **{ref_p_limpa}** já pertence ao produto **{conflito_ref}**. Use outro código ou deixe o campo em branco.")
-                        else:
-                            conn = conectar_banco()
-                            conn.cursor().execute(
-                                """INSERT INTO produtos 
-                                (nome, quantidade, valor, preco_custo, markup, marca, categoria, empresa_id, referencia, tipo, classe) 
-                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'P',%s)""", 
-                                (n_p, q_p, v_p, custo_p, markup_p, m_p, cat_p, emp_id, (ref_p_limpa or None), classe_letra)
-                            )
-                            conn.commit()
-                            devolver_conexao(conn)
-                            # 🔧 Guarda a intenção de replicar; o painel abaixo do formulário
-                            # mostra as empresas alvo e só grava após confirmação.
-                            if ref_p_limpa and st.session_state.get('perfil') in ('admin', 'master'):
-                                st.session_state['replicar_ref_novo'] = {
-                                    'nome': n_p, 'referencia': ref_p_limpa, 'empresa_id': emp_id
-                                }
-                            st.success(f"Produto de {classe_letra} cadastrado com sucesso!")
-                            limpar_cache()
-                            st.rerun()
-                
-                painel_replicar_referencia('replicar_ref_novo')
-
-            # --- EXPANDER 2: EDITAR PRODUTO ---
-            with st.expander("✏️ Editar Produto"):
+            
+            # 🔧 Sub-abas no lugar dos expanders: os quatro expanders empilhados
+            # empurravam a lista de produtos para o fim da rolagem. Mesmo padrão já
+            # usado na aba Clientes, então as duas telas ficam coerentes.
+            # 'Novo' e 'Editar' foram agrupados em Cadastro para caberem 4 abas na
+            # largura do celular sem rolagem horizontal.
+            sub_lista_p, sub_cad_p, sub_excl_p, sub_kit_p = st.tabs(
+                ["📋 Lista de Produtos", "📝 Cadastro", "🗑️ Excluir", "🎁 Kit Promocional"]
+            )
+            
+            with sub_lista_p:
+                # --- PAINEL DE FILTROS E EXIBIÇÃO DA TABELA ---
                 if not df_p.empty:
-                    opcoes_edicao = df_p['id'].tolist()
-                    
-                    def formatar_produto(prod_id):
-                        linha = df_p[df_p['id'] == prod_id].iloc[0]
-                        # pd.notnull é necessário: um NaN do pandas é "verdadeiro" num if
-                        # simples, e o rótulo saía como "(Ref: nan)" para quem não tem código.
-                        tem_ref = pd.notnull(linha['referencia']) and str(linha['referencia']).strip() != ''
-                        ref = f" (Ref: {linha['referencia']})" if tem_ref else ""
-                        classe_tag = "[INVENTÁRIO]" if linha.get('classe', 'Venda') == 'Insumo' else "[REVENDA]"
-                        return f"{classe_tag} {linha['nome']}{ref}"
-                        
-                    prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto, key="sel_editar_produto")
-                    
-                    if prod_id_selecionado:
-                        p_atual = df_p[df_p['id'] == prod_id_selecionado].iloc[0]
-                        classe_atual = p_atual.get('classe', 'Venda')
-                        
-                        # Tratamento seguro de nulos para todos os campos
-                        val_nome   = str(p_atual['nome']) if pd.notnull(p_atual['nome']) else ""
-                        val_ref    = str(p_atual['referencia']) if pd.notnull(p_atual['referencia']) else ""
-                        val_marca  = str(p_atual['marca']) if pd.notnull(p_atual['marca']) else ""
-                        val_qtd    = int(p_atual['quantidade']) if pd.notnull(p_atual['quantidade']) else 0
-                        val_custo  = float(p_atual['preco_custo']) if pd.notnull(p_atual.get('preco_custo')) else 0.0
-                        val_markup = float(p_atual['markup']) if pd.notnull(p_atual.get('markup')) else 0.0
-                        val_valor  = float(p_atual['valor']) if pd.notnull(p_atual['valor']) else 0.0
-                        
-                        # Chave única por produto — força o Streamlit a limpar os campos ao trocar de produto
-                        key_prefix = f"edit_prod_{prod_id_selecionado}"
-                        
-                        with st.container(border=True):
-                            
-                            index_classe_atual = 1 if classe_atual == 'Insumo' else 0
-                            e_classe_desc = st.selectbox("Finalidade do Produto:", ["Venda / Comercialização", "Insumo / Consumo Interno"], index=index_classe_atual, key=f"{key_prefix}_classe")
-                            e_classe_letra = 'Venda' if e_classe_desc == "Venda / Comercialização" else 'Insumo'
-                            
-                            c1, c2 = st.columns(2)
-                            e_nome = c1.text_input("Nome", value=val_nome, key=f"{key_prefix}_nome")
-                            e_ref  = c2.text_input("Referência", value=val_ref, key=f"{key_prefix}_ref")
-                            
-                            c3, c4 = st.columns(2)
-                            e_qtd   = c3.number_input("Quantidade em Estoque Atualizada", min_value=0, step=1, value=val_qtd, key=f"{key_prefix}_qtd")
-                            e_marca = c4.text_input("Marca / Linha", value=val_marca, key=f"{key_prefix}_marca")
-                            
-                            st.markdown("**Finanças e Precificação**")
-                            c5, c6, c7 = st.columns(3)
-                            
-                            e_custo  = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f", value=val_custo, key=f"{key_prefix}_custo")
-                            e_markup = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", value=val_markup, disabled=(e_classe_letra == 'Insumo'), key=f"{key_prefix}_markup")
-                            e_valor  = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", value=val_valor, disabled=(e_classe_letra == 'Insumo'), key=f"{key_prefix}_valor")
-                            
-                            try:
-                                cat_index = lista_cat.index(p_atual['categoria'])
-                            except (ValueError, TypeError):
-                                cat_index = 0
-                                
-                            e_cat = st.selectbox("Categoria", lista_cat, index=cat_index, key=f"{key_prefix}_cat")
-                            
-                            st.markdown("---")
-                            
-                            if st.button("💾 Salvar Alterações", type="primary", use_container_width=True, key=f"{key_prefix}_salvar"):
-                                try:
-                                    conn = conectar_banco()
-                                    cur = conn.cursor()
-                                    cur.execute("""
-                                        UPDATE produtos 
-                                        SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s, classe=%s 
-                                        WHERE id=%s AND empresa_id=%s
-                                    """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, (e_ref.strip() or None), e_classe_letra, int(prod_id_selecionado), emp_id))
-                                    cur.close()
-                                    conn.commit()
-                                    devolver_conexao(conn)
-                                    if e_ref.strip() and st.session_state.get('perfil') in ('admin', 'master'):
-                                        st.session_state['replicar_ref_edicao'] = {
-                                            'nome': e_nome, 'referencia': e_ref.strip(), 'empresa_id': emp_id
-                                        }
-                                    st.success("Cadastro atualizado com sucesso!")
-                                    limpar_cache()
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Erro ao salvar: {e}")
-                                    if 'conn' in locals(): devolver_conexao(conn)
-                                
-                            st.caption("Para excluir um produto, use o expander **🗑️ Excluir Produto** abaixo — ele confere antes se há histórico vinculado.")
-                else:
-                    st.info("Não há produtos cadastrados para editar.")
+                    st.markdown("---")
+                    col_f_nome, col_f_cat, col_f_classe = st.columns(3)
                 
-                painel_replicar_referencia('replicar_ref_edicao')
+                    classe_filtro = col_f_classe.selectbox("📦 Filtrar por Finalidade:", ["🛒 Todos os Produtos", "🛍️ Apenas Venda/Revenda", "🧴 Apenas Insumos/Consumo"])
+                
+                    # Aplica filtro de classe
+                    if classe_filtro == "🛍️ Apenas Venda/Revenda":
+                        df_filtrado = df_p[df_p.get('classe', 'Venda') == 'Venda'].copy()
+                    elif classe_filtro == "🧴 Apenas Insumos/Consumo":
+                        df_filtrado = df_p[df_p.get('classe', 'Venda') == 'Insumo'].copy()
+                    else:
+                        df_filtrado = df_p.copy()
+                
+                    opcoes_cat = ["📦 Todas as Categorias"] + lista_cat
+                    cat_selecionada = col_f_cat.selectbox("📑 Filtrar por Categoria:", options=opcoes_cat)
+                
+                    if cat_selecionada != "📦 Todas as Categorias":
+                        df_filtrado = df_filtrado[df_filtrado['categoria'] == cat_selecionada].copy()
+                
+                    if not df_filtrado.empty:
+                        df_filtrado['display_pesquisa'] = df_filtrado.apply(lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1)
+                        opcoes_busca = ["🔍 Todos os Itens listados"] + df_filtrado['display_pesquisa'].tolist()
+                        prod_busca = col_f_nome.selectbox("🔍 Pesquise o Produto:", options=opcoes_busca)
+                    
+                        if prod_busca != "🔍 Todos os Itens listados":
+                            df_final = df_filtrado[df_filtrado['display_pesquisa'] == prod_busca]
+                        else:
+                            df_final = df_filtrado
+                        
+                        if not df_final.empty:
+                            # Remove colunas de controle interno para a visualização ficar limpa
+                            # 🔧 'id' sai da exibição: é chave interna do banco, não informa nada ao
+                            # usuário. A seleção de linha continua funcionando porque usa a POSIÇÃO
+                            # da linha (df_final.iloc[...]), não a coluna id.
+                            df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa', 'tipo', 'id'], errors='ignore')
+                            # 🔧 Campos de texto sem valor no banco (NULL) apareceriam como "None"
+                            # na tabela. Aqui viram string vazia só para exibição — o banco continua
+                            # guardando NULL, que é o correto para "não preenchido".
+                            for _col_txt in ['referencia', 'marca', 'categoria']:
+                                if _col_txt in df_exibicao.columns:
+                                    df_exibicao[_col_txt] = df_exibicao[_col_txt].fillna("")
+                        
+                            # 🔧 MELHORIA: clicar num produto abre um pop-up de consulta (não
+                            # empurra a lista pra baixo). O contador no key força a tabela a
+                            # "esquecer" a seleção quando o pop-up é fechado.
+                            if 'reset_tabela_produtos' not in st.session_state:
+                                st.session_state['reset_tabela_produtos'] = 0
+                        
+                            @st.dialog("🔎 Consulta de Produto")
+                            def dialog_consulta_produto(p_consulta):
+                                st.markdown(f"##### {p_consulta['nome']}")
+                                st.caption("Somente leitura — para alterar, use a aba **📝 Cadastro → Editar Produto**.")
+                            
+                                classe_consulta = p_consulta.get('classe', 'Venda')
+                                cc1, cc2 = st.columns(2)
+                                campo_consulta(cc1, "Finalidade", 'Insumo / Consumo Interno' if classe_consulta == 'Insumo' else 'Venda / Comercialização')
+                                campo_consulta(cc2, "Referência", p_consulta['referencia'] if pd.notnull(p_consulta['referencia']) else None)
+                            
+                                cc3, cc4 = st.columns(2)
+                                campo_consulta(cc3, "Quantidade em Estoque", int(p_consulta['quantidade']) if pd.notnull(p_consulta['quantidade']) else 0)
+                                campo_consulta(cc4, "Marca / Linha", p_consulta['marca'] if pd.notnull(p_consulta['marca']) else None)
+                            
+                                campo_consulta(st, "Categoria", p_consulta['categoria'] if pd.notnull(p_consulta.get('categoria')) else None)
+                            
+                                st.markdown("**Finanças e Precificação**")
+                                cc5, cc6, cc7 = st.columns(3)
+                                campo_consulta(cc5, "Preço de Custo", f"R$ {float(p_consulta['preco_custo']):.2f}" if pd.notnull(p_consulta.get('preco_custo')) else "R$ 0,00")
+                                campo_consulta(cc6, "Markup", f"{float(p_consulta['markup']):.2f}%" if pd.notnull(p_consulta.get('markup')) else "0,00%")
+                                campo_consulta(cc7, "Preço de Venda", f"R$ {float(p_consulta['valor']):.2f}" if pd.notnull(p_consulta['valor']) else "R$ 0,00")
+                            
+                                # 🔧 Custo Médio: campo calculado automaticamente (média ponderada) a
+                                # cada entrada de mercadoria — por isso só aparece aqui na consulta,
+                                # nunca no formulário de edição.
+                                campo_consulta(st, "Custo Médio (calculado automaticamente)", f"R$ {float(p_consulta['custo_medio']):.2f}" if pd.notnull(p_consulta.get('custo_medio')) else "R$ 0,00")
+                            
+                                if st.button("Fechar", use_container_width=True, key="fechar_cons_prod"):
+                                    st.session_state['reset_tabela_produtos'] += 1
+                                    st.rerun()
+                        
+                            evento_tabela = st.dataframe(
+                                df_exibicao, use_container_width=True, hide_index=True,
+                                on_select="rerun", selection_mode="single-row",
+                                key=f"tabela_consulta_produtos_{st.session_state['reset_tabela_produtos']}"
+                            )
+                        
+                            linhas_selecionadas = evento_tabela.selection.rows if evento_tabela and evento_tabela.selection else []
+                            # 🔧 O Streamlit só aceita UM st.dialog aberto por execução, e as três
+                            # tabelas desta tela (Produtos/Serviços/Clientes) são renderizadas
+                            # todas a cada execução — abas são só troca visual no navegador.
+                            # Se o usuário fecha o pop-up pelo "X", a linha continua selecionada;
+                            # sem esta checagem, selecionar uma linha em outra aba abriria dois
+                            # pop-ups ao mesmo tempo e derrubaria o app. Por isso só abrimos
+                            # quando a seleção daquela tabela realmente MUDOU.
+                            sel_atual_prod = linhas_selecionadas[0] if linhas_selecionadas else None
+                            if sel_atual_prod != st.session_state.get('ultima_sel_produtos'):
+                                st.session_state['ultima_sel_produtos'] = sel_atual_prod
+                                if sel_atual_prod is not None:
+                                    dialog_consulta_produto(df_final.iloc[sel_atual_prod])
+                        
+                            # --- NOVAS MÉTRICAS DE CAPITAL DE ESTOQUE ---
+                            st.markdown("#### 💰 Resumo Financeiro do Estoque")
+                            st.caption("Os números abaixo consideram apenas os itens que passaram pelos filtros acima.")
+                        
+                            # 1. Capital de Venda (Potencial de Faturamento usando Preço de Venda)
+                            df_venda_soma = df_final[df_final.get('classe', 'Venda') == 'Venda']
+                            val_est_venda = (df_venda_soma['quantidade'] * df_venda_soma['valor']).sum()
+                        
+                            # 2. Capital de Insumo (Dinheiro parado usando Preço de Custo)
+                            df_insumo_soma = df_final[df_final.get('classe', 'Venda') == 'Insumo']
+                        
+                            # Tratamento de segurança caso o banco tenha produtos antigos sem custo preenchido
+                            if not df_insumo_soma.empty:
+                                df_insumo_soma['custo_seguro'] = df_insumo_soma['preco_custo'].fillna(0).astype(float)
+                                val_est_insumo = (df_insumo_soma['quantidade'] * df_insumo_soma['custo_seguro']).sum()
+                            else:
+                                val_est_insumo = 0.0
+                        
+                            # 3. Contagens — "itens" = produtos distintos listados; "unidades" = soma
+                            # das quantidades em estoque. São coisas diferentes: 10 produtos podem
+                            # somar 250 unidades, ou 3 unidades se o estoque estiver baixo.
+                            qtd_itens = len(df_final)
+                            qtd_unidades = int(df_final['quantidade'].fillna(0).sum())
+                        
+                            # 4. Estoque valorizado por custo — sobre TODOS os itens filtrados
+                            # (venda + insumo), diferente das duas métricas acima que separam por
+                            # finalidade. fillna(0) evita que produto sem custo preenchido quebre a conta.
+                            qtd_segura = df_final['quantidade'].fillna(0).astype(float)
+                            if 'preco_custo' in df_final.columns:
+                                custo_unit_seguro = df_final['preco_custo'].fillna(0).astype(float)
+                            else:
+                                custo_unit_seguro = pd.Series(0.0, index=df_final.index)
+                            if 'custo_medio' in df_final.columns:
+                                medio_unit_seguro = df_final['custo_medio'].fillna(0).astype(float)
+                            else:
+                                medio_unit_seguro = pd.Series(0.0, index=df_final.index)
+                        
+                            val_total_custo = (qtd_segura * custo_unit_seguro).sum()
+                            val_total_medio = (qtd_segura * medio_unit_seguro).sum()
+                        
+                            m1, m2 = st.columns(2)
+                            campo_consulta(m1, "📋 Itens Listados", f"{qtd_itens}", tamanho=18)
+                            campo_consulta(m2, "📦 Unidades em Estoque", f"{qtd_unidades:,}".replace(",", "."), tamanho=18)
+                        
+                            m3, m4 = st.columns(2)
+                            campo_consulta(m3, "🛒 Potencial de Faturamento (Revenda)", f"R$ {val_est_venda:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
+                            campo_consulta(m4, "🧴 Capital Imobilizado (Insumos)", f"R$ {val_est_insumo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
+                        
+                            m5, m6 = st.columns(2)
+                            campo_consulta(m5, "🏷️ Estoque pelo Preço de Custo", f"R$ {val_total_custo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
+                            campo_consulta(m6, "⚖️ Estoque pelo Custo Médio", f"R$ {val_total_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
+                    else:
+                        st.info("Nenhum produto encontrado com os filtros atuais.")
+                    
+            # ==========================================
+            # ABA: GERENCIAR SERVIÇOS (APENAS SERVIÇOS)
+            
+            with sub_cad_p:
+                modo_cad_p = st.radio(
+                    "O que deseja fazer?", ["➕ Novo Produto", "✏️ Editar Produto"],
+                    horizontal=True, key="modo_cadastro_produto"
+                )
+                st.markdown("---")
+            
+                if modo_cad_p == "➕ Novo Produto":
+                    # --- CADASTRO DE NOVO PRODUTO FÍSICO ---
+                    with st.form("f_novo_p", clear_on_submit=True):
+                    
+                        st.markdown("**Classificação do Produto**")
+                        # O Grande Diferencial: Definição da Classe
+                        classe_desc = st.radio(
+                            "Qual a finalidade deste produto?", 
+                            ["Venda / Comercialização", "Insumo / Consumo Interno"], 
+                            horizontal=True,
+                            help="Venda: Produtos expostos para a cliente comprar. Insumo: Produtos usados nos procedimentos do salão."
+                        )
+                        classe_letra = 'Venda' if classe_desc == "Venda / Comercialização" else 'Insumo'
+                    
+                        st.markdown("---")
+                        st.markdown("**Informações Básicas**")
+                        c1, c2 = st.columns(2)
+                        n_p = c1.text_input("Nome do Produto")
+                        ref_p = c2.text_input("Referência / Código Interno", placeholder="Opcional")
+                    
+                        c3, c4 = st.columns(2)
+                        q_p = c3.number_input("Qtd Inicial em Estoque", min_value=0, step=1)
+                        m_p = c4.text_input("Marca / Linha", placeholder="Ex: Mary Kay, D'Grava")
+                    
+                        st.markdown("**Finanças e Precificação**")
+                        c5, c6, c7 = st.columns(3)
+                    
+                        # Se for insumo, o preço de venda deixa de ser obrigatório
+                        custo_p = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f")
+                        markup_p = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", disabled=(classe_letra == 'Insumo'), help="Desabilitado para Insumos.")
+                        v_p = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", disabled=(classe_letra == 'Insumo'), help="Insumos não possuem preço de venda.")
+                    
+                        cat_p = st.selectbox("Categoria", lista_cat)
+                    
+                        if st.form_submit_button("💾 Salvar Cadastro"):
+                            ref_p_limpa = (ref_p or "").strip()
+                            # 🔧 Impede cadastrar referência que já pertence a outro produto DESTA
+                            # empresa. Sem esta checagem, dois produtos ficavam com o mesmo código
+                            # e a Entrada de Mercadorias (que casa item por referência) passava a
+                            # somar estoque num deles sem critério definido.
+                            conflito_ref = None
+                            if ref_p_limpa and not df_p.empty and 'referencia' in df_p.columns:
+                                for _, _r in df_p.iterrows():
+                                    if pd.notnull(_r['referencia']) and str(_r['referencia']).strip().casefold() == ref_p_limpa.casefold():
+                                        conflito_ref = _r['nome']
+                                        break
+                        
+                            if not n_p:
+                                st.warning("O nome do produto é obrigatório.")
+                            elif conflito_ref:
+                                st.error(f"🚫 A referência **{ref_p_limpa}** já pertence ao produto **{conflito_ref}**. Use outro código ou deixe o campo em branco.")
+                            else:
+                                conn = conectar_banco()
+                                conn.cursor().execute(
+                                    """INSERT INTO produtos 
+                                    (nome, quantidade, valor, preco_custo, markup, marca, categoria, empresa_id, referencia, tipo, classe) 
+                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'P',%s)""", 
+                                    (n_p, q_p, v_p, custo_p, markup_p, m_p, cat_p, emp_id, (ref_p_limpa or None), classe_letra)
+                                )
+                                conn.commit()
+                                devolver_conexao(conn)
+                                # 🔧 Guarda a intenção de replicar; o painel abaixo do formulário
+                                # mostra as empresas alvo e só grava após confirmação.
+                                if ref_p_limpa and st.session_state.get('perfil') in ('admin', 'master'):
+                                    st.session_state['replicar_ref_novo'] = {
+                                        'nome': n_p, 'referencia': ref_p_limpa, 'empresa_id': emp_id
+                                    }
+                                st.success(f"Produto de {classe_letra} cadastrado com sucesso!")
+                                limpar_cache()
+                                st.rerun()
+                
+                    painel_replicar_referencia('replicar_ref_novo')
 
-            # --- EXPANDER 2B: EXCLUIR PRODUTO (com auditoria de vínculos) ---
-            with st.expander("🗑️ Excluir Produto"):
+            
+                else:
+                    # --- EDIÇÃO DE PRODUTO EXISTENTE ---
+                    if not df_p.empty:
+                        opcoes_edicao = df_p['id'].tolist()
+                    
+                        def formatar_produto(prod_id):
+                            linha = df_p[df_p['id'] == prod_id].iloc[0]
+                            # pd.notnull é necessário: um NaN do pandas é "verdadeiro" num if
+                            # simples, e o rótulo saía como "(Ref: nan)" para quem não tem código.
+                            tem_ref = pd.notnull(linha['referencia']) and str(linha['referencia']).strip() != ''
+                            ref = f" (Ref: {linha['referencia']})" if tem_ref else ""
+                            classe_tag = "[INVENTÁRIO]" if linha.get('classe', 'Venda') == 'Insumo' else "[REVENDA]"
+                            return f"{classe_tag} {linha['nome']}{ref}"
+                        
+                        prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto, key="sel_editar_produto")
+                    
+                        if prod_id_selecionado:
+                            p_atual = df_p[df_p['id'] == prod_id_selecionado].iloc[0]
+                            classe_atual = p_atual.get('classe', 'Venda')
+                        
+                            # Tratamento seguro de nulos para todos os campos
+                            val_nome   = str(p_atual['nome']) if pd.notnull(p_atual['nome']) else ""
+                            val_ref    = str(p_atual['referencia']) if pd.notnull(p_atual['referencia']) else ""
+                            val_marca  = str(p_atual['marca']) if pd.notnull(p_atual['marca']) else ""
+                            val_qtd    = int(p_atual['quantidade']) if pd.notnull(p_atual['quantidade']) else 0
+                            val_custo  = float(p_atual['preco_custo']) if pd.notnull(p_atual.get('preco_custo')) else 0.0
+                            val_markup = float(p_atual['markup']) if pd.notnull(p_atual.get('markup')) else 0.0
+                            val_valor  = float(p_atual['valor']) if pd.notnull(p_atual['valor']) else 0.0
+                        
+                            # Chave única por produto — força o Streamlit a limpar os campos ao trocar de produto
+                            key_prefix = f"edit_prod_{prod_id_selecionado}"
+                        
+                            with st.container(border=True):
+                            
+                                index_classe_atual = 1 if classe_atual == 'Insumo' else 0
+                                e_classe_desc = st.selectbox("Finalidade do Produto:", ["Venda / Comercialização", "Insumo / Consumo Interno"], index=index_classe_atual, key=f"{key_prefix}_classe")
+                                e_classe_letra = 'Venda' if e_classe_desc == "Venda / Comercialização" else 'Insumo'
+                            
+                                c1, c2 = st.columns(2)
+                                e_nome = c1.text_input("Nome", value=val_nome, key=f"{key_prefix}_nome")
+                                e_ref  = c2.text_input("Referência", value=val_ref, key=f"{key_prefix}_ref")
+                            
+                                c3, c4 = st.columns(2)
+                                e_qtd   = c3.number_input("Quantidade em Estoque Atualizada", min_value=0, step=1, value=val_qtd, key=f"{key_prefix}_qtd")
+                                e_marca = c4.text_input("Marca / Linha", value=val_marca, key=f"{key_prefix}_marca")
+                            
+                                st.markdown("**Finanças e Precificação**")
+                                c5, c6, c7 = st.columns(3)
+                            
+                                e_custo  = c5.number_input("Preço de Custo (R$)", min_value=0.0, format="%.2f", value=val_custo, key=f"{key_prefix}_custo")
+                                e_markup = c6.number_input("Markup (%)", min_value=0.0, format="%.2f", value=val_markup, disabled=(e_classe_letra == 'Insumo'), key=f"{key_prefix}_markup")
+                                e_valor  = c7.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f", value=val_valor, disabled=(e_classe_letra == 'Insumo'), key=f"{key_prefix}_valor")
+                            
+                                try:
+                                    cat_index = lista_cat.index(p_atual['categoria'])
+                                except (ValueError, TypeError):
+                                    cat_index = 0
+                                
+                                e_cat = st.selectbox("Categoria", lista_cat, index=cat_index, key=f"{key_prefix}_cat")
+                            
+                                st.markdown("---")
+                            
+                                if st.button("💾 Salvar Alterações", type="primary", use_container_width=True, key=f"{key_prefix}_salvar"):
+                                    try:
+                                        conn = conectar_banco()
+                                        cur = conn.cursor()
+                                        cur.execute("""
+                                            UPDATE produtos 
+                                            SET nome=%s, quantidade=%s, valor=%s, preco_custo=%s, markup=%s, marca=%s, categoria=%s, referencia=%s, classe=%s 
+                                            WHERE id=%s AND empresa_id=%s
+                                        """, (e_nome, e_qtd, e_valor, e_custo, e_markup, e_marca, e_cat, (e_ref.strip() or None), e_classe_letra, int(prod_id_selecionado), emp_id))
+                                        cur.close()
+                                        conn.commit()
+                                        devolver_conexao(conn)
+                                        if e_ref.strip() and st.session_state.get('perfil') in ('admin', 'master'):
+                                            st.session_state['replicar_ref_edicao'] = {
+                                                'nome': e_nome, 'referencia': e_ref.strip(), 'empresa_id': emp_id
+                                            }
+                                        st.success("Cadastro atualizado com sucesso!")
+                                        limpar_cache()
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Erro ao salvar: {e}")
+                                        if 'conn' in locals(): devolver_conexao(conn)
+                                
+                                st.caption("Para excluir um produto, use a aba **🗑️ Excluir** — ele confere antes se há histórico vinculado.")
+                    else:
+                        st.info("Não há produtos cadastrados para editar.")
+                
+                    painel_replicar_referencia('replicar_ref_edicao')
+
+            
+            with sub_excl_p:
+                # --- EXCLUSÃO DE PRODUTO (com auditoria de vínculos) ---
                 if df_p.empty:
                     st.info("Não há produtos cadastrados.")
                 else:
@@ -2055,8 +2233,9 @@ Feliz aniversário! 🥳✨"""
                                     st.error(f"O banco recusou a exclusão — o produto tem algum vínculo não previsto. Detalhe: {erro_d}")
                                     if 'conn_d' in locals(): devolver_conexao(conn_d)
 
-            # --- EXPANDER 3: MONTAGEM DE KITS PROMOCIONAIS ---
-            with st.expander("🎁 Montar Kit Promocional"):
+            
+            with sub_kit_p:
+                # --- MONTAGEM DE KITS PROMOCIONAIS ---
                 # Kits promocionais só fazem sentido com produtos de Venda
                 df_produtos_base = df_p[(df_p['quantidade'] > 0) & (df_p.get('classe', 'Venda') == 'Venda')].copy() if not df_p.empty else pd.DataFrame()
                 
@@ -2143,163 +2322,6 @@ Feliz aniversário! 🥳✨"""
                 else:
                     st.info("Não há produtos comerciais de venda com estoque disponível para montar kits.")
 
-            # --- PAINEL DE FILTROS E EXIBIÇÃO DA TABELA ---
-            if not df_p.empty:
-                st.markdown("---")
-                col_f_nome, col_f_cat, col_f_classe = st.columns(3)
-                
-                classe_filtro = col_f_classe.selectbox("📦 Filtrar por Finalidade:", ["🛒 Todos os Produtos", "🛍️ Apenas Venda/Revenda", "🧴 Apenas Insumos/Consumo"])
-                
-                # Aplica filtro de classe
-                if classe_filtro == "🛍️ Apenas Venda/Revenda":
-                    df_filtrado = df_p[df_p.get('classe', 'Venda') == 'Venda'].copy()
-                elif classe_filtro == "🧴 Apenas Insumos/Consumo":
-                    df_filtrado = df_p[df_p.get('classe', 'Venda') == 'Insumo'].copy()
-                else:
-                    df_filtrado = df_p.copy()
-                
-                opcoes_cat = ["📦 Todas as Categorias"] + lista_cat
-                cat_selecionada = col_f_cat.selectbox("📑 Filtrar por Categoria:", options=opcoes_cat)
-                
-                if cat_selecionada != "📦 Todas as Categorias":
-                    df_filtrado = df_filtrado[df_filtrado['categoria'] == cat_selecionada].copy()
-                
-                if not df_filtrado.empty:
-                    df_filtrado['display_pesquisa'] = df_filtrado.apply(lambda x: f"{x['nome']} (Estoque: {int(x['quantidade'])})", axis=1)
-                    opcoes_busca = ["🔍 Todos os Itens listados"] + df_filtrado['display_pesquisa'].tolist()
-                    prod_busca = col_f_nome.selectbox("🔍 Pesquise o Produto:", options=opcoes_busca)
-                    
-                    if prod_busca != "🔍 Todos os Itens listados":
-                        df_final = df_filtrado[df_filtrado['display_pesquisa'] == prod_busca]
-                    else:
-                        df_final = df_filtrado
-                        
-                    if not df_final.empty:
-                        # Remove colunas de controle interno para a visualização ficar limpa
-                        # 🔧 'id' sai da exibição: é chave interna do banco, não informa nada ao
-                        # usuário. A seleção de linha continua funcionando porque usa a POSIÇÃO
-                        # da linha (df_final.iloc[...]), não a coluna id.
-                        df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa', 'tipo', 'id'], errors='ignore')
-                        # 🔧 Campos de texto sem valor no banco (NULL) apareceriam como "None"
-                        # na tabela. Aqui viram string vazia só para exibição — o banco continua
-                        # guardando NULL, que é o correto para "não preenchido".
-                        for _col_txt in ['referencia', 'marca', 'categoria']:
-                            if _col_txt in df_exibicao.columns:
-                                df_exibicao[_col_txt] = df_exibicao[_col_txt].fillna("")
-                        
-                        # 🔧 MELHORIA: clicar num produto abre um pop-up de consulta (não
-                        # empurra a lista pra baixo). O contador no key força a tabela a
-                        # "esquecer" a seleção quando o pop-up é fechado.
-                        if 'reset_tabela_produtos' not in st.session_state:
-                            st.session_state['reset_tabela_produtos'] = 0
-                        
-                        @st.dialog("🔎 Consulta de Produto")
-                        def dialog_consulta_produto(p_consulta):
-                            st.markdown(f"##### {p_consulta['nome']}")
-                            st.caption("Somente leitura — para alterar, use **✏️ Editar Produto**.")
-                            
-                            classe_consulta = p_consulta.get('classe', 'Venda')
-                            cc1, cc2 = st.columns(2)
-                            campo_consulta(cc1, "Finalidade", 'Insumo / Consumo Interno' if classe_consulta == 'Insumo' else 'Venda / Comercialização')
-                            campo_consulta(cc2, "Referência", p_consulta['referencia'] if pd.notnull(p_consulta['referencia']) else None)
-                            
-                            cc3, cc4 = st.columns(2)
-                            campo_consulta(cc3, "Quantidade em Estoque", int(p_consulta['quantidade']) if pd.notnull(p_consulta['quantidade']) else 0)
-                            campo_consulta(cc4, "Marca / Linha", p_consulta['marca'] if pd.notnull(p_consulta['marca']) else None)
-                            
-                            campo_consulta(st, "Categoria", p_consulta['categoria'] if pd.notnull(p_consulta.get('categoria')) else None)
-                            
-                            st.markdown("**Finanças e Precificação**")
-                            cc5, cc6, cc7 = st.columns(3)
-                            campo_consulta(cc5, "Preço de Custo", f"R$ {float(p_consulta['preco_custo']):.2f}" if pd.notnull(p_consulta.get('preco_custo')) else "R$ 0,00")
-                            campo_consulta(cc6, "Markup", f"{float(p_consulta['markup']):.2f}%" if pd.notnull(p_consulta.get('markup')) else "0,00%")
-                            campo_consulta(cc7, "Preço de Venda", f"R$ {float(p_consulta['valor']):.2f}" if pd.notnull(p_consulta['valor']) else "R$ 0,00")
-                            
-                            # 🔧 Custo Médio: campo calculado automaticamente (média ponderada) a
-                            # cada entrada de mercadoria — por isso só aparece aqui na consulta,
-                            # nunca no formulário de edição.
-                            campo_consulta(st, "Custo Médio (calculado automaticamente)", f"R$ {float(p_consulta['custo_medio']):.2f}" if pd.notnull(p_consulta.get('custo_medio')) else "R$ 0,00")
-                            
-                            if st.button("Fechar", use_container_width=True, key="fechar_cons_prod"):
-                                st.session_state['reset_tabela_produtos'] += 1
-                                st.rerun()
-                        
-                        evento_tabela = st.dataframe(
-                            df_exibicao, use_container_width=True, hide_index=True,
-                            on_select="rerun", selection_mode="single-row",
-                            key=f"tabela_consulta_produtos_{st.session_state['reset_tabela_produtos']}"
-                        )
-                        
-                        linhas_selecionadas = evento_tabela.selection.rows if evento_tabela and evento_tabela.selection else []
-                        # 🔧 O Streamlit só aceita UM st.dialog aberto por execução, e as três
-                        # tabelas desta tela (Produtos/Serviços/Clientes) são renderizadas
-                        # todas a cada execução — abas são só troca visual no navegador.
-                        # Se o usuário fecha o pop-up pelo "X", a linha continua selecionada;
-                        # sem esta checagem, selecionar uma linha em outra aba abriria dois
-                        # pop-ups ao mesmo tempo e derrubaria o app. Por isso só abrimos
-                        # quando a seleção daquela tabela realmente MUDOU.
-                        sel_atual_prod = linhas_selecionadas[0] if linhas_selecionadas else None
-                        if sel_atual_prod != st.session_state.get('ultima_sel_produtos'):
-                            st.session_state['ultima_sel_produtos'] = sel_atual_prod
-                            if sel_atual_prod is not None:
-                                dialog_consulta_produto(df_final.iloc[sel_atual_prod])
-                        
-                        # --- NOVAS MÉTRICAS DE CAPITAL DE ESTOQUE ---
-                        st.markdown("#### 💰 Resumo Financeiro do Estoque")
-                        st.caption("Os números abaixo consideram apenas os itens que passaram pelos filtros acima.")
-                        
-                        # 1. Capital de Venda (Potencial de Faturamento usando Preço de Venda)
-                        df_venda_soma = df_final[df_final.get('classe', 'Venda') == 'Venda']
-                        val_est_venda = (df_venda_soma['quantidade'] * df_venda_soma['valor']).sum()
-                        
-                        # 2. Capital de Insumo (Dinheiro parado usando Preço de Custo)
-                        df_insumo_soma = df_final[df_final.get('classe', 'Venda') == 'Insumo']
-                        
-                        # Tratamento de segurança caso o banco tenha produtos antigos sem custo preenchido
-                        if not df_insumo_soma.empty:
-                            df_insumo_soma['custo_seguro'] = df_insumo_soma['preco_custo'].fillna(0).astype(float)
-                            val_est_insumo = (df_insumo_soma['quantidade'] * df_insumo_soma['custo_seguro']).sum()
-                        else:
-                            val_est_insumo = 0.0
-                        
-                        # 3. Contagens — "itens" = produtos distintos listados; "unidades" = soma
-                        # das quantidades em estoque. São coisas diferentes: 10 produtos podem
-                        # somar 250 unidades, ou 3 unidades se o estoque estiver baixo.
-                        qtd_itens = len(df_final)
-                        qtd_unidades = int(df_final['quantidade'].fillna(0).sum())
-                        
-                        # 4. Estoque valorizado por custo — sobre TODOS os itens filtrados
-                        # (venda + insumo), diferente das duas métricas acima que separam por
-                        # finalidade. fillna(0) evita que produto sem custo preenchido quebre a conta.
-                        qtd_segura = df_final['quantidade'].fillna(0).astype(float)
-                        if 'preco_custo' in df_final.columns:
-                            custo_unit_seguro = df_final['preco_custo'].fillna(0).astype(float)
-                        else:
-                            custo_unit_seguro = pd.Series(0.0, index=df_final.index)
-                        if 'custo_medio' in df_final.columns:
-                            medio_unit_seguro = df_final['custo_medio'].fillna(0).astype(float)
-                        else:
-                            medio_unit_seguro = pd.Series(0.0, index=df_final.index)
-                        
-                        val_total_custo = (qtd_segura * custo_unit_seguro).sum()
-                        val_total_medio = (qtd_segura * medio_unit_seguro).sum()
-                        
-                        m1, m2 = st.columns(2)
-                        campo_consulta(m1, "📋 Itens Listados", f"{qtd_itens}", tamanho=18)
-                        campo_consulta(m2, "📦 Unidades em Estoque", f"{qtd_unidades:,}".replace(",", "."), tamanho=18)
-                        
-                        m3, m4 = st.columns(2)
-                        campo_consulta(m3, "🛒 Potencial de Faturamento (Revenda)", f"R$ {val_est_venda:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
-                        campo_consulta(m4, "🧴 Capital Imobilizado (Insumos)", f"R$ {val_est_insumo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
-                        
-                        m5, m6 = st.columns(2)
-                        campo_consulta(m5, "🏷️ Estoque pelo Preço de Custo", f"R$ {val_total_custo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
-                        campo_consulta(m6, "⚖️ Estoque pelo Custo Médio", f"R$ {val_total_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), tamanho=18)
-                else:
-                    st.info("Nenhum produto encontrado com os filtros atuais.")
-                    
-        # ==========================================
-        # ABA: GERENCIAR SERVIÇOS (APENAS SERVIÇOS)
         # ==========================================
         with tab_serv:
             #st.markdown("### 🛠️ Gestão de Serviços Prestados")
