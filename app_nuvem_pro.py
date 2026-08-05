@@ -53,6 +53,66 @@ st.markdown(
 
 import html as _html
 
+CONECTIVOS_NOME = {'de','da','do','das','dos','e','com','para','em','a','o','no','na','ao','to','of'}
+UNIDADES_NOME = {'ml','g','kg','mg','l','un','cm','mm'}
+SIGLAS_NOME = {'MK','AP','LED','UV','SPF','XL','XS'}
+
+def formatar_nome_produto_nf(nome):
+    """Deixa legível o nome que veio da nota fiscal.
+
+    A DANFE traz a descrição toda em CAIXA ALTA e, quando o texto quebra
+    linha dentro da célula, o extrator cola as palavras ("GentlemanDeo").
+    Aqui tratamos o que dá para tratar com segurança:
+      - separa colagem em transição minúscula→MAIÚSCULA;
+      - separa unidade colada em número ("147ML" → "147 ml");
+      - normaliza o hífen separador ("LIQUIDAMATTE -VERY" → " - Very");
+      - converte CAIXA ALTA em Nome Próprio, mantendo conectivos minúsculos
+        e siglas conhecidas em maiúsculo.
+
+    Nomes já bem escritos (menos de 70% em maiúsculas) passam quase intactos.
+    Colagem entre palavras TODAS em maiúscula ("PRESENTEOFFWHITE") não tem
+    como ser desfeita automaticamente — o campo segue editável na revisão.
+    """
+    if not nome:
+        return nome
+    texto = str(nome).strip()
+    texto = re.sub(r'(?<=[a-zà-ÿ])(?=[A-ZÀ-Ý])', ' ', texto)
+    texto = re.sub(r'(?<=\d)(?=[a-zA-Zà-ÿÀ-Ý]{2,})', ' ', texto)
+    texto = re.sub(r'\s+-\s*(?=\S)', ' - ', texto)
+    texto = re.sub(r'[\s\-,]+$', '', texto)
+
+    letras = [c for c in texto if c.isalpha()]
+    if not letras:
+        return texto
+    if sum(1 for c in letras if c.isupper()) / len(letras) < 0.7:
+        return re.sub(r'\s{2,}', ' ', texto).strip()
+
+    saida = []
+    for i, palavra in enumerate(texto.split()):
+        nucleo = palavra.strip('.,;:-()')
+        if nucleo.upper() in SIGLAS_NOME:
+            saida.append(palavra.replace(nucleo, nucleo.upper()))
+            continue
+        base = palavra.lower()
+        if base.strip('.,;:-()') in UNIDADES_NOME:
+            saida.append(base)
+            continue
+        if i > 0 and base in CONECTIVOS_NOME:
+            saida.append(base)
+            continue
+        partes = re.split(r'([-/.])', base)
+        fmt = []
+        for j, parte in enumerate(partes):
+            if parte in '-/.':
+                fmt.append(parte)
+            elif j > 0 and len(parte) > 1 and parte in CONECTIVOS_NOME:
+                fmt.append(parte)
+            else:
+                fmt.append(parte.capitalize())
+        saida.append(''.join(fmt))
+    return re.sub(r'\s{2,}', ' ', ' '.join(saida)).strip()
+
+
 def buscar_produtos_para_replicar_ref(nome_produto, referencia, empresa_origem):
     """Lista produtos de OUTRAS empresas com o mesmo nome e sem referência.
 
@@ -1790,15 +1850,34 @@ Feliz aniversário! 🥳✨"""
             df_c = carregar_dados_cached("SELECT nome FROM categorias WHERE empresa_id=%s ORDER BY nome", (emp_id,))
             lista_cat = df_c['nome'].tolist() if not df_c.empty else ["Geral"]
             
+            # 🔧 Definida AQUI, antes das sub-abas, porque é usada tanto em Cadastro
+            # quanto em Excluir. Quando ficava dentro do bloco "Editar Produto", ela
+            # não existia enquanto o seletor estava em "Novo Produto" — e a aba
+            # Excluir quebrava com NameError.
+            def formatar_produto(prod_id):
+                linha = df_p[df_p['id'] == prod_id].iloc[0]
+                # pd.notnull é necessário: um NaN do pandas é "verdadeiro" num if
+                # simples, e o rótulo saía como "(Ref: nan)" para quem não tem código.
+                tem_ref = pd.notnull(linha['referencia']) and str(linha['referencia']).strip() != ''
+                ref = f" (Ref: {linha['referencia']})" if tem_ref else ""
+                classe_tag = "[INVENTÁRIO]" if linha.get('classe', 'Venda') == 'Insumo' else "[REVENDA]"
+                return f"{classe_tag} {linha['nome']}{ref}"
+            
             
             # 🔧 Sub-abas no lugar dos expanders: os quatro expanders empilhados
             # empurravam a lista de produtos para o fim da rolagem. Mesmo padrão já
             # usado na aba Clientes, então as duas telas ficam coerentes.
             # 'Novo' e 'Editar' foram agrupados em Cadastro para caberem 4 abas na
             # largura do celular sem rolagem horizontal.
-            sub_lista_p, sub_cad_p, sub_excl_p, sub_kit_p = st.tabs(
-                ["📋 Lista de Produtos", "📝 Cadastro", "🗑️ Excluir", "🎁 Kit Promocional"]
-            )
+            # A aba de Preços é multiempresa, então só aparece para admin — assim
+            # o usuário comum continua com 4 abas e sem rolagem lateral no celular.
+            eh_admin_precos = st.session_state.get('perfil') in ('admin', 'master')
+            _rotulos_sub = ["📋 Lista de Produtos", "📝 Cadastro", "🗑️ Excluir", "🎁 Kit Promocional"]
+            if eh_admin_precos:
+                _rotulos_sub.append("💲 Preços")
+            _subs = st.tabs(_rotulos_sub)
+            sub_lista_p, sub_cad_p, sub_excl_p, sub_kit_p = _subs[0], _subs[1], _subs[2], _subs[3]
+            sub_prec_p = _subs[4] if eh_admin_precos else None
             
             with sub_lista_p:
                 # --- PAINEL DE FILTROS E EXIBIÇÃO DA TABELA ---
@@ -2044,15 +2123,6 @@ Feliz aniversário! 🥳✨"""
                     # --- EDIÇÃO DE PRODUTO EXISTENTE ---
                     if not df_p.empty:
                         opcoes_edicao = df_p['id'].tolist()
-                    
-                        def formatar_produto(prod_id):
-                            linha = df_p[df_p['id'] == prod_id].iloc[0]
-                            # pd.notnull é necessário: um NaN do pandas é "verdadeiro" num if
-                            # simples, e o rótulo saía como "(Ref: nan)" para quem não tem código.
-                            tem_ref = pd.notnull(linha['referencia']) and str(linha['referencia']).strip() != ''
-                            ref = f" (Ref: {linha['referencia']})" if tem_ref else ""
-                            classe_tag = "[INVENTÁRIO]" if linha.get('classe', 'Venda') == 'Insumo' else "[REVENDA]"
-                            return f"{classe_tag} {linha['nome']}{ref}"
                         
                         prod_id_selecionado = st.selectbox("Selecione o produto que deseja atualizar:", opcoes_edicao, format_func=formatar_produto, key="sel_editar_produto")
                     
@@ -2321,6 +2391,192 @@ Feliz aniversário! 🥳✨"""
                                         devolver_conexao(conn)
                 else:
                     st.info("Não há produtos comerciais de venda com estoque disponível para montar kits.")
+
+            # ==========================================================
+            # SUB-ABA: ATUALIZAÇÃO DE PREÇOS MULTIEMPRESA (admin)
+            # ==========================================================
+            # Casa os produtos entre empresas pela REFERÊNCIA (não pelo nome):
+            # depois do índice único (empresa_id, referencia), ela é o
+            # identificador confiável do mesmo item em todas as empresas.
+            if sub_prec_p is not None:
+                with sub_prec_p:
+                    st.markdown("##### 💲 Atualização de Preço de Venda")
+                    st.caption("Define o preço de venda do mesmo produto em várias empresas de uma vez.")
+
+                    # 🔧 Dois modos de casar o mesmo produto entre empresas:
+                    #  - Referência: identificador confiável (índice único empresa+ref),
+                    #    mas deixa de fora quem ainda não tem código cadastrado;
+                    #  - Nome: alcança todos, porém depende da grafia estar igual nas
+                    #    empresas e pode casar itens diferentes que dividam o nome.
+                    modo_casar = st.radio(
+                        "Casar o produto entre empresas por:",
+                        ["🔖 Referência", "🔤 Nome do produto"],
+                        horizontal=True, key="modo_casamento_precos"
+                    )
+                    por_referencia = modo_casar.startswith("🔖")
+
+                    if por_referencia:
+                        st.caption("Casamento pela **referência**. Produtos sem referência não aparecem — troque para *Nome do produto* para alcançá-los.")
+                        df_base_prec = df_p[df_p['referencia'].notna()].copy()
+                        df_base_prec = df_base_prec[df_base_prec['referencia'].astype(str).str.strip() != '']
+                    else:
+                        st.caption("Casamento pelo **nome**, ignorando maiúsculas e espaços nas pontas. Confira a prévia antes de gravar: nomes iguais em produtos diferentes seriam atualizados juntos.")
+                        df_base_prec = df_p.copy()
+
+                    if df_base_prec.empty:
+                        st.info("Nenhum produto disponível para este modo.")
+                    else:
+                        df_emp_prec = carregar_dados_cached("SELECT id, nome FROM empresas ORDER BY id")
+
+                        col_f1, col_f2 = st.columns([2, 1])
+                        busca_prec = col_f1.text_input("🔍 Filtrar produtos pelo nome ou referência", key="busca_precos")
+                        cats_prec = ["Todas"] + sorted([c for c in df_base_prec['categoria'].dropna().unique().tolist()])
+                        cat_prec = col_f2.selectbox("Categoria", cats_prec, key="cat_precos")
+
+                        df_filtro_prec = df_base_prec.copy()
+                        if busca_prec:
+                            alvo = busca_prec.strip().lower()
+                            df_filtro_prec = df_filtro_prec[
+                                df_filtro_prec['nome'].astype(str).str.lower().str.contains(alvo, na=False)
+                                | df_filtro_prec['referencia'].astype(str).str.lower().str.contains(alvo, na=False)
+                            ]
+                        if cat_prec != "Todas":
+                            df_filtro_prec = df_filtro_prec[df_filtro_prec['categoria'] == cat_prec]
+
+                        if df_filtro_prec.empty:
+                            st.warning("Nenhum produto encontrado com esse filtro.")
+                        else:
+                            # 'Chave' é a coluna usada para casar entre empresas — some da
+                            # exibição, mas é ela que vai para o WHERE do UPDATE.
+                            if por_referencia:
+                                chaves = df_filtro_prec['referencia'].astype(str).str.strip()
+                            else:
+                                chaves = df_filtro_prec['nome'].astype(str).str.strip().str.lower()
+
+                            tabela_prec = pd.DataFrame({
+                                "Chave": chaves.values,
+                                "Referência": df_filtro_prec['referencia'].fillna("—").astype(str).values,
+                                "Produto": df_filtro_prec['nome'].values,
+                                "Preço Atual (R$)": df_filtro_prec['valor'].fillna(0).astype(float).round(2).values,
+                            })
+                            tabela_prec["Novo Preço (R$)"] = tabela_prec["Preço Atual (R$)"]
+
+                            # 🔧 Reajuste em massa: preenche a coluna "Novo Preço" aplicando
+                            # um percentual sobre o preço atual. É só uma sugestão — os
+                            # valores continuam editáveis linha a linha antes de gravar.
+                            with st.expander("📈 Aplicar reajuste percentual (opcional)"):
+                                col_r1, col_r2 = st.columns([1, 2])
+                                pct_reaj = col_r1.number_input("Percentual (%)", value=0.0, step=1.0, format="%.2f",
+                                                               help="Use negativo para redução. Ex.: 10 aumenta 10%; -5 reduz 5%.")
+                                if col_r2.button("Calcular novos preços", use_container_width=True, key="btn_calc_reajuste"):
+                                    st.session_state['precos_sugeridos'] = {
+                                        k: round(v * (1 + pct_reaj / 100), 2)
+                                        for k, v in zip(tabela_prec["Chave"], tabela_prec["Preço Atual (R$)"])
+                                    }
+                                    st.session_state['versao_editor_precos'] = st.session_state.get('versao_editor_precos', 0) + 1
+                                    st.rerun()
+
+                            sugeridos = st.session_state.get('precos_sugeridos', {})
+                            if sugeridos:
+                                tabela_prec["Novo Preço (R$)"] = [
+                                    sugeridos.get(k, atual)
+                                    for k, atual in zip(tabela_prec["Chave"], tabela_prec["Preço Atual (R$)"])
+                                ]
+
+                            editado_prec = st.data_editor(
+                                tabela_prec,
+                                column_config={
+                                    "Chave": None,
+                                    "Referência": st.column_config.TextColumn("Referência", disabled=True),
+                                    "Produto": st.column_config.TextColumn("Produto", disabled=True, width="large"),
+                                    "Preço Atual (R$)": st.column_config.NumberColumn("Preço Atual (R$)", disabled=True, format="%.2f"),
+                                    "Novo Preço (R$)": st.column_config.NumberColumn("Novo Preço (R$)", min_value=0.0, format="%.2f"),
+                                },
+                                hide_index=True, use_container_width=True,
+                                key=f"editor_precos_{st.session_state.get('versao_editor_precos', 0)}"
+                            )
+
+                            alterados_prec = editado_prec[
+                                editado_prec["Novo Preço (R$)"].round(2) != editado_prec["Preço Atual (R$)"].round(2)
+                            ]
+
+                            st.markdown("---")
+                            nomes_emp = {int(r['id']): r['nome'] for _, r in df_emp_prec.iterrows()} if not df_emp_prec.empty else {}
+                            emp_escolhidas = st.multiselect(
+                                "Aplicar nas empresas:",
+                                options=list(nomes_emp.keys()),
+                                default=list(nomes_emp.keys()),
+                                format_func=lambda i: f"{i} — {nomes_emp.get(i, '')}",
+                                key="emp_alvo_precos"
+                            )
+
+                            if alterados_prec.empty:
+                                st.info("Nenhum preço alterado ainda. Edite a coluna **Novo Preço** ou use o reajuste percentual.")
+                            elif not emp_escolhidas:
+                                st.warning("Selecione ao menos uma empresa.")
+                            else:
+                                chaves_alteradas = [str(c) for c in alterados_prec["Chave"].tolist()]
+                                ids_emp = [int(i) for i in emp_escolhidas]
+
+                                if por_referencia:
+                                    sql_impacto = """
+                                        SELECT p.empresa_id, e.nome AS empresa, count(*) AS produtos
+                                        FROM produtos p
+                                        LEFT JOIN empresas e ON e.id = p.empresa_id
+                                        WHERE p.tipo = 'P' AND p.empresa_id = ANY(%s)
+                                          AND trim(p.referencia) = ANY(%s)
+                                        GROUP BY p.empresa_id, e.nome ORDER BY p.empresa_id
+                                    """
+                                else:
+                                    sql_impacto = """
+                                        SELECT p.empresa_id, e.nome AS empresa, count(*) AS produtos
+                                        FROM produtos p
+                                        LEFT JOIN empresas e ON e.id = p.empresa_id
+                                        WHERE p.tipo = 'P' AND p.empresa_id = ANY(%s)
+                                          AND lower(trim(p.nome)) = ANY(%s)
+                                        GROUP BY p.empresa_id, e.nome ORDER BY p.empresa_id
+                                    """
+                                df_impacto = carregar_dados_cached(sql_impacto, (ids_emp, chaves_alteradas))
+
+                                total_atingido = int(df_impacto['produtos'].sum()) if not df_impacto.empty else 0
+                                st.warning(f"⚠️ **{len(alterados_prec)}** produto(s) com preço alterado, atingindo **{total_atingido}** cadastro(s) em **{len(df_impacto)}** empresa(s). O preço será sobrescrito onde já existir.")
+
+                                if not por_referencia and total_atingido > len(alterados_prec) * len(ids_emp):
+                                    st.error("🚨 Algum nome corresponde a mais de um produto dentro da mesma empresa — todos receberiam o mesmo preço. Confira a prévia antes de confirmar.")
+
+                                col_p1, col_p2 = st.columns(2)
+                                with col_p1:
+                                    st.caption("Preços que serão gravados")
+                                    st.dataframe(alterados_prec[["Referência", "Produto", "Preço Atual (R$)", "Novo Preço (R$)"]],
+                                                 hide_index=True, use_container_width=True)
+                                with col_p2:
+                                    st.caption("Empresas atingidas")
+                                    st.dataframe(df_impacto, hide_index=True, use_container_width=True)
+
+                                confirma_prec = st.checkbox("Confirmo a atualização dos preços nas empresas selecionadas", key="chk_confirma_precos")
+                                if st.button("💾 Aplicar Atualização de Preços", type="primary", use_container_width=True,
+                                             disabled=not confirma_prec, key="btn_aplicar_precos"):
+                                    conn_pr = conectar_banco()
+                                    try:
+                                        cur_pr = conn_pr.cursor()
+                                        sql_update = ("UPDATE produtos SET valor = %s WHERE tipo = 'P' AND empresa_id = ANY(%s) AND trim(referencia) = %s"
+                                                      if por_referencia else
+                                                      "UPDATE produtos SET valor = %s WHERE tipo = 'P' AND empresa_id = ANY(%s) AND lower(trim(nome)) = %s")
+                                        linhas_afetadas = 0
+                                        for _, lin in alterados_prec.iterrows():
+                                            cur_pr.execute(sql_update, (float(lin["Novo Preço (R$)"]), ids_emp, str(lin["Chave"])))
+                                            linhas_afetadas += cur_pr.rowcount
+                                        conn_pr.commit()
+                                        devolver_conexao(conn_pr)
+                                        st.session_state.pop('precos_sugeridos', None)
+                                        st.session_state['versao_editor_precos'] = st.session_state.get('versao_editor_precos', 0) + 1
+                                        st.success(f"✅ {linhas_afetadas} cadastro(s) atualizado(s) em {len(ids_emp)} empresa(s).")
+                                        limpar_cache()
+                                        st.rerun()
+                                    except Exception as erro_pr:
+                                        conn_pr.rollback()
+                                        devolver_conexao(conn_pr)
+                                        st.error(f"Erro ao atualizar preços: {erro_pr}")
 
         # ==========================================
         with tab_serv:
@@ -3900,6 +4156,9 @@ Feliz aniversário! 🥳✨"""
                                         
                                         # Remove o prefixo de kit "(K: 10256368)" do começo do nome
                                         desc_item = re.sub(r'^\(K:\s*\d+\)\s*', '', desc_item).strip()
+                                        # Deixa legível: tira o CAIXA ALTA da nota e separa
+                                        # palavras coladas pela quebra de linha do PDF.
+                                        desc_item = formatar_nome_produto_nf(desc_item)
                                         
                                         itens_danfe.append({
                                             "Código": m_d.group(1),
