@@ -1870,7 +1870,10 @@ Feliz aniversário! 🥳✨"""
                     
                     def formatar_produto(prod_id):
                         linha = df_p[df_p['id'] == prod_id].iloc[0]
-                        ref = f" (Ref: {linha['referencia']})" if linha['referencia'] else ""
+                        # pd.notnull é necessário: um NaN do pandas é "verdadeiro" num if
+                        # simples, e o rótulo saía como "(Ref: nan)" para quem não tem código.
+                        tem_ref = pd.notnull(linha['referencia']) and str(linha['referencia']).strip() != ''
+                        ref = f" (Ref: {linha['referencia']})" if tem_ref else ""
                         classe_tag = "[INVENTÁRIO]" if linha.get('classe', 'Venda') == 'Insumo' else "[REVENDA]"
                         return f"{classe_tag} {linha['nome']}{ref}"
                         
@@ -1921,9 +1924,8 @@ Feliz aniversário! 🥳✨"""
                             e_cat = st.selectbox("Categoria", lista_cat, index=cat_index, key=f"{key_prefix}_cat")
                             
                             st.markdown("---")
-                            col_btn_salvar, col_btn_excluir = st.columns(2)
                             
-                            if col_btn_salvar.button("💾 Salvar Alterações", type="primary", use_container_width=True, key=f"{key_prefix}_salvar"):
+                            if st.button("💾 Salvar Alterações", type="primary", use_container_width=True, key=f"{key_prefix}_salvar"):
                                 try:
                                     conn = conectar_banco()
                                     cur = conn.cursor()
@@ -1946,24 +1948,112 @@ Feliz aniversário! 🥳✨"""
                                     st.error(f"Erro ao salvar: {e}")
                                     if 'conn' in locals(): devolver_conexao(conn)
                                 
-                            if col_btn_excluir.button("🗑️ Excluir Produto", use_container_width=True, key=f"{key_prefix}_excluir"):
-                                try:
-                                    conn = conectar_banco()
-                                    cur = conn.cursor()
-                                    cur.execute("DELETE FROM produtos WHERE id=%s AND empresa_id=%s", (int(prod_id_selecionado), emp_id))
-                                    cur.close()
-                                    conn.commit()
-                                    devolver_conexao(conn)
-                                    st.success("✅ Produto excluído com sucesso!")
-                                    limpar_cache()
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error("⚠️ **Não é possível excluir!** Este produto já possui histórico de vendas ou foi utilizado em serviços vinculados ao seu financeiro.")
-                                    if 'conn' in locals(): devolver_conexao(conn)
+                            st.caption("Para excluir um produto, use o expander **🗑️ Excluir Produto** abaixo — ele confere antes se há histórico vinculado.")
                 else:
                     st.info("Não há produtos cadastrados para editar.")
                 
                 painel_replicar_referencia('replicar_ref_edicao')
+
+            # --- EXPANDER 2B: EXCLUIR PRODUTO (com auditoria de vínculos) ---
+            with st.expander("🗑️ Excluir Produto"):
+                if df_p.empty:
+                    st.info("Não há produtos cadastrados.")
+                else:
+                    st.caption("O sistema confere o histórico antes de permitir a exclusão. Produtos já usados em vendas, compras ou trocas não podem ser apagados — o histórico ficaria órfão.")
+                    
+                    prod_id_excluir = st.selectbox(
+                        "Selecione o produto que deseja excluir:",
+                        df_p['id'].tolist(),
+                        format_func=formatar_produto,
+                        key="sel_excluir_produto"
+                    )
+                    
+                    if prod_id_excluir:
+                        p_del = df_p[df_p['id'] == prod_id_excluir].iloc[0]
+                        ref_del = str(p_del['referencia']).strip() if pd.notnull(p_del['referencia']) else ''
+                        
+                        # 🔧 AUDITORIA DE VÍNCULOS — uma consulta por tabela que aponta para o
+                        # produto. Atenção: itens_compra NÃO guarda produto_id, só a referência
+                        # como texto, por isso a checagem de compras é feita por referência (e
+                        # só faz sentido se o produto tiver uma).
+                        vinculos = []
+                        
+                        df_v_del = carregar_dados_cached(
+                            "SELECT count(*) AS qtd, coalesce(sum(quantidade),0) AS unidades FROM vendas WHERE produto_id = %s AND empresa_id = %s",
+                            (int(prod_id_excluir), emp_id))
+                        if not df_v_del.empty and int(df_v_del.iloc[0]['qtd']) > 0:
+                            vinculos.append(f"**{int(df_v_del.iloc[0]['qtd'])}** lançamento(s) em vendas ({int(df_v_del.iloc[0]['unidades'])} unidades)")
+                        
+                        df_i_del = carregar_dados_cached(
+                            "SELECT count(*) AS qtd FROM historico_insumos WHERE produto_id = %s AND empresa_id = %s",
+                            (int(prod_id_excluir), emp_id))
+                        if not df_i_del.empty and int(df_i_del.iloc[0]['qtd']) > 0:
+                            vinculos.append(f"**{int(df_i_del.iloc[0]['qtd'])}** uso(s) como insumo em atendimentos")
+                        
+                        df_t_del = carregar_dados_cached(
+                            "SELECT count(*) AS qtd FROM trocas_itens WHERE produto_id = %s",
+                            (int(prod_id_excluir),))
+                        if not df_t_del.empty and int(df_t_del.iloc[0]['qtd']) > 0:
+                            vinculos.append(f"**{int(df_t_del.iloc[0]['qtd'])}** movimentação(ões) de troca/empréstimo")
+                        
+                        if ref_del:
+                            df_c_del = carregar_dados_cached("""
+                                SELECT count(*) AS qtd FROM itens_compra ic
+                                JOIN compras c ON c.id = ic.compra_id
+                                WHERE c.empresa_id = %s AND trim(ic.produto_referencia) = %s
+                            """, (emp_id, ref_del))
+                            if not df_c_del.empty and int(df_c_del.iloc[0]['qtd']) > 0:
+                                vinculos.append(f"**{int(df_c_del.iloc[0]['qtd'])}** item(ns) em notas de entrada")
+                        
+                        estoque_del = int(p_del['quantidade']) if pd.notnull(p_del['quantidade']) else 0
+                        
+                        st.markdown(f"**Produto:** {p_del['nome']}  \n**Referência:** {ref_del or '—'}  \n**Estoque atual:** {estoque_del}")
+                        
+                        if vinculos:
+                            st.error("🚫 **Este produto não pode ser excluído.** Ele tem histórico vinculado:")
+                            for v in vinculos:
+                                st.markdown(f"- {v}")
+                            st.info("Apagar o produto deixaria esses registros sem referência, quebrando relatórios e o histórico do cliente. Se ele saiu de linha, o caminho é **zerar o estoque** e deixá-lo cadastrado.")
+                            
+                            if estoque_del != 0 and st.button("📦 Zerar estoque deste produto", use_container_width=True, key="btn_zerar_estoque_del"):
+                                try:
+                                    conn_z = conectar_banco()
+                                    cur_z = conn_z.cursor()
+                                    cur_z.execute("UPDATE produtos SET quantidade = 0 WHERE id = %s AND empresa_id = %s",
+                                                  (int(prod_id_excluir), emp_id))
+                                    conn_z.commit()
+                                    devolver_conexao(conn_z)
+                                    st.success("Estoque zerado. O produto continua cadastrado e o histórico foi preservado.")
+                                    limpar_cache()
+                                    st.rerun()
+                                except Exception as erro_z:
+                                    st.error(f"Erro ao zerar estoque: {erro_z}")
+                                    if 'conn_z' in locals(): devolver_conexao(conn_z)
+                        else:
+                            st.success("✅ Nenhum histórico encontrado — este produto pode ser excluído com segurança.")
+                            if estoque_del > 0:
+                                st.warning(f"Atenção: ainda há **{estoque_del}** unidade(s) em estoque. Confirme que isso está correto antes de excluir.")
+                            
+                            confirmou_del = st.checkbox(f"Confirmo que quero excluir definitivamente **{p_del['nome']}**", key="chk_confirma_excluir_prod")
+                            
+                            if st.button("🗑️ Excluir Definitivamente", type="primary", use_container_width=True,
+                                         disabled=not confirmou_del, key="btn_excluir_prod_def"):
+                                try:
+                                    conn_d = conectar_banco()
+                                    cur_d = conn_d.cursor()
+                                    cur_d.execute("DELETE FROM produtos WHERE id=%s AND empresa_id=%s",
+                                                  (int(prod_id_excluir), emp_id))
+                                    conn_d.commit()
+                                    devolver_conexao(conn_d)
+                                    st.success(f"Produto '{p_del['nome']}' excluído.")
+                                    limpar_cache()
+                                    st.rerun()
+                                except Exception as erro_d:
+                                    # Rede de segurança: se alguma FK que não auditamos barrar,
+                                    # o banco recusa e o produto continua intacto.
+                                    conn_d.rollback() if 'conn_d' in locals() else None
+                                    st.error(f"O banco recusou a exclusão — o produto tem algum vínculo não previsto. Detalhe: {erro_d}")
+                                    if 'conn_d' in locals(): devolver_conexao(conn_d)
 
             # --- EXPANDER 3: MONTAGEM DE KITS PROMOCIONAIS ---
             with st.expander("🎁 Montar Kit Promocional"):
@@ -2086,7 +2176,10 @@ Feliz aniversário! 🥳✨"""
                         
                     if not df_final.empty:
                         # Remove colunas de controle interno para a visualização ficar limpa
-                        df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa', 'tipo'], errors='ignore')
+                        # 🔧 'id' sai da exibição: é chave interna do banco, não informa nada ao
+                        # usuário. A seleção de linha continua funcionando porque usa a POSIÇÃO
+                        # da linha (df_final.iloc[...]), não a coluna id.
+                        df_exibicao = df_final.drop(columns=['empresa_id', 'display_pesquisa', 'tipo', 'id'], errors='ignore')
                         # 🔧 Campos de texto sem valor no banco (NULL) apareceriam como "None"
                         # na tabela. Aqui viram string vazia só para exibição — o banco continua
                         # guardando NULL, que é o correto para "não preenchido".
