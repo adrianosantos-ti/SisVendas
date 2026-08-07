@@ -52,6 +52,90 @@ st.markdown(
 )
 
 import html as _html
+import unicodedata
+from difflib import SequenceMatcher
+
+# Palavras que não ajudam a distinguir um produto do outro na comparação de
+# nomes (marca, preposições, unidades). Ignorá-las evita que dois produtos
+# diferentes pareçam iguais só por serem ambos "Mary Kay ... 29 ml".
+PALAVRAS_IRRELEVANTES = {'mary', 'kay', 'de', 'da', 'do', 'com', 'para', 'e',
+                         'a', 'o', 'em', 'ml', 'g', 'kg', 'the'}
+
+
+def tokens_nome_produto(texto):
+    """Palavras significativas de um nome de produto, sem acento nem pontuação."""
+    t = unicodedata.normalize('NFKD', str(texto).lower())
+    t = ''.join(c for c in t if not unicodedata.combining(c))
+    return {p for p in re.sub(r'[^a-z0-9]+', ' ', t).split()
+            if p and p not in PALAVRAS_IRRELEVANTES}
+
+
+def semelhanca_nomes(a, b):
+    """(score, desempate) entre dois nomes de produto.
+
+    Comparar letra a letra falha aqui: o nome do catálogo é bem mais longo
+    que o do cadastro (traz marca e gramatura), o que derruba a nota mesmo
+    quando é o mesmo produto. Por isso o score principal é a cobertura das
+    palavras do nome mais curto, e o desempate é o Jaccard — que penaliza o
+    candidato com muitas palavras sobrando e resolve casos como
+    "Medium" x "Light-to-Medium".
+    """
+    ta, tb = tokens_nome_produto(a), tokens_nome_produto(b)
+    if not ta or not tb:
+        return 0.0, 0.0
+    inter = len(ta & tb)
+    cobertura = inter / min(len(ta), len(tb))
+    jaccard = inter / len(ta | tb)
+    seq = SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio()
+    return max(cobertura, seq), jaccard
+
+
+def ler_planilha_de_precos(arquivo):
+    """Lê a planilha de preços e devolve (por_referencia, por_nome).
+
+    Exige as colunas 'nome' e 'valor'; usa 'referencia' quando existir.
+    Levanta ValueError se as colunas obrigatórias faltarem.
+    """
+    if arquivo.name.lower().endswith(".csv"):
+        df_pl = pd.read_csv(arquivo)
+    else:
+        df_pl = pd.read_excel(arquivo)
+    df_pl.columns = [str(c).strip().lower() for c in df_pl.columns]
+    if 'nome' not in df_pl.columns or 'valor' not in df_pl.columns:
+        raise ValueError("A planilha precisa ter, no mínimo, as colunas 'nome' e 'valor'.")
+
+    por_referencia = {}
+    if 'referencia' in df_pl.columns:
+        for _, lp in df_pl.iterrows():
+            r = str(lp['referencia']).strip() if pd.notnull(lp['referencia']) else ''
+            if r and r.lower() != 'nan' and pd.notnull(lp['valor']):
+                por_referencia[r] = float(lp['valor'])
+
+    por_nome = [(str(lp['nome']).strip(), float(lp['valor']))
+                for _, lp in df_pl.iterrows()
+                if pd.notnull(lp['nome']) and pd.notnull(lp['valor'])]
+    return por_referencia, por_nome
+
+
+def casar_preco_na_planilha(nome_cad, ref_cad, por_referencia, por_nome, limiar=0.80):
+    """Acha o preço de um produto na planilha.
+
+    Tenta primeiro pela referência (exata e confiável); se não houver, cai
+    para a semelhança de nome. Devolve (valor, origem, nome_casado, score)
+    ou None quando nada atinge o limiar.
+    """
+    r = str(ref_cad).strip() if ref_cad and str(ref_cad) not in ('—', 'nan', 'None') else ''
+    if r and r in por_referencia:
+        return por_referencia[r], "referência", r, 1.0
+    if not por_nome:
+        return None
+    candidatos = []
+    for n_pl, v_pl in por_nome:
+        s, j = semelhanca_nomes(nome_cad, n_pl)
+        candidatos.append((s, j, n_pl, v_pl))
+    candidatos.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    s, _j, n_pl, v_pl = candidatos[0]
+    return (v_pl, "nome", n_pl, s) if s >= limiar else None
 
 CONECTIVOS_NOME = {'de','da','do','das','dos','e','com','para','em','a','o','no','na','ao','to','of'}
 UNIDADES_NOME = {'ml','g','kg','mg','l','un','cm','mm'}
@@ -2427,6 +2511,9 @@ Feliz aniversário! 🥳✨"""
                         st.info("Nenhum produto disponível para este modo.")
                     else:
                         df_emp_prec = carregar_dados_cached("SELECT id, nome FROM empresas ORDER BY id")
+                        # Mapa id → nome usado tanto no cadastro de itens novos quanto na
+                        # seleção de empresas da atualização de preços, mais abaixo.
+                        nomes_emp_prec = {int(r['id']): r['nome'] for _, r in df_emp_prec.iterrows()} if not df_emp_prec.empty else {}
 
                         col_f1, col_f2 = st.columns([2, 1])
                         busca_prec = col_f1.text_input("🔍 Filtrar produtos pelo nome ou referência", key="busca_precos")
@@ -2506,6 +2593,163 @@ Feliz aniversário! 🥳✨"""
                                     for k, atual in zip(tabela_prec["Chave"], tabela_prec["Preço Atual (R$)"])
                                 ]
 
+                            # 🔧 Fonte alternativa para a coluna "Novo Preço": uma planilha
+                            # com a tabela de preços (ex.: a revista do mês já conferida).
+                            # O casamento com o cadastro é por REFERÊNCIA quando a planilha
+                            # traz esse campo, e por SEMELHANÇA DE NOME caso contrário —
+                            # nomes de catálogo raramente batem letra a letra com o cadastro.
+                            with st.expander("📄 Importar preços de uma planilha (opcional)"):
+                                st.caption("A planilha precisa ter as colunas **nome** e **valor**. Se tiver **referencia**, ela é usada primeiro por ser mais confiável.")
+                                arq_precos = st.file_uploader("Planilha de preços (.xlsx ou .csv)",
+                                                              type=["xlsx", "csv"], key="upload_planilha_precos")
+                                limiar = st.slider("Semelhança mínima do nome para considerar o mesmo produto",
+                                                   min_value=0.50, max_value=1.00, value=0.80, step=0.05,
+                                                   help="1,00 exige nome idêntico. Abaixo de 0,70 começam a aparecer associações erradas.")
+
+                                if arq_precos is not None:
+                                    try:
+                                        ref_para_valor, nomes_planilha = ler_planilha_de_precos(arq_precos)
+                                        if True:
+                                            achados, nao_achados = [], []
+                                            for _, lc in tabela_prec.iterrows():
+                                                res = casar_preco_na_planilha(lc['Produto'], lc['Referência'], ref_para_valor, nomes_planilha, limiar)
+                                                if res:
+                                                    valor_novo, origem, casado, score = res
+                                                    achados.append({
+                                                        "Chave": lc['Chave'],
+                                                        "Produto cadastrado": lc['Produto'],
+                                                        "Encontrado na planilha": casado,
+                                                        "Casou por": origem,
+                                                        "Semelhança": round(score, 2),
+                                                        "Preço Atual (R$)": lc['Preço Atual (R$)'],
+                                                        "Preço da Planilha (R$)": round(valor_novo, 2),
+                                                    })
+                                                else:
+                                                    nao_achados.append(lc['Produto'])
+
+                                            df_achados = pd.DataFrame(achados)
+                                            st.info(f"**{len(achados)}** de **{len(tabela_prec)}** produto(s) filtrado(s) foram encontrados na planilha.")
+
+                                            if not df_achados.empty:
+                                                # Diferença ajuda a flagrar casamento errado (preço muito destoante)
+                                                df_achados["Diferença (R$)"] = (df_achados["Preço da Planilha (R$)"] - df_achados["Preço Atual (R$)"]).round(2)
+                                                st.dataframe(df_achados.drop(columns=["Chave"]), hide_index=True, use_container_width=True)
+
+                                                duvidosos = df_achados[(df_achados["Casou por"] == "nome") & (df_achados["Semelhança"] < 0.90)]
+                                                if not duvidosos.empty:
+                                                    st.warning(f"⚠️ {len(duvidosos)} associação(ões) por semelhança abaixo de 0,90 — confira na tabela acima antes de aplicar, ou aumente o limiar.")
+
+                                                if st.button("Usar estes preços na coluna Novo Preço", type="primary",
+                                                             use_container_width=True, key="btn_usar_planilha_precos"):
+                                                    st.session_state['precos_sugeridos'] = {
+                                                        r["Chave"]: r["Preço da Planilha (R$)"] for _, r in df_achados.iterrows()
+                                                    }
+                                                    st.session_state['versao_editor_precos'] = st.session_state.get('versao_editor_precos', 0) + 1
+                                                    st.rerun()
+
+                                            if nao_achados:
+                                                with st.expander(f"Ver {len(nao_achados)} produto(s) cadastrado(s) sem preço na planilha"):
+                                                    st.write("\n".join(f"- {n}" for n in nao_achados[:200]))
+
+                                            # ==================================================
+                                            # CAMINHO INVERSO: o que está na planilha e ainda
+                                            # NÃO existe no cadastro (lançamentos do mês).
+                                            # ==================================================
+                                            # A comparação aqui é contra TODOS os produtos da
+                                            # empresa (df_p), não contra a tabela filtrada — senão
+                                            # um filtro de categoria faria produtos existentes
+                                            # aparecerem como se fossem novos.
+                                            st.markdown("---")
+                                            st.markdown("###### 🆕 Itens da planilha que ainda não estão cadastrados")
+
+                                            cad_nome_ref = [
+                                                (str(r['nome']), str(r['referencia']).strip() if pd.notnull(r['referencia']) else '')
+                                                for _, r in df_p.iterrows()
+                                            ]
+                                            refs_cad = {r for _, r in cad_nome_ref if r and r.lower() != 'nan'}
+
+                                            faltantes = []
+                                            for n_pl, v_pl in nomes_planilha:
+                                                melhor = 0.0
+                                                for n_cad, _r in cad_nome_ref:
+                                                    s, _j = semelhanca_nomes(n_pl, n_cad)
+                                                    if s > melhor:
+                                                        melhor = s
+                                                        if melhor >= limiar:
+                                                            break
+                                                if melhor < limiar:
+                                                    faltantes.append({"Cadastrar": False, "Produto": n_pl,
+                                                                      "Preço de Venda (R$)": round(v_pl, 2),
+                                                                      "Semelhança máxima": round(melhor, 2)})
+
+                                            if not faltantes:
+                                                st.success("Todos os itens da planilha já têm produto correspondente no cadastro.")
+                                            else:
+                                                st.info(f"**{len(faltantes)}** item(ns) da planilha sem correspondência. Marque os que quiser cadastrar — normalmente são os lançamentos do mês.")
+                                                st.caption("A coluna *Semelhança máxima* mostra o quanto o item mais parecido do cadastro chegou perto. Valores altos (acima de 0,7) podem indicar que o produto já existe com outro nome.")
+
+                                                df_faltantes = st.data_editor(
+                                                    pd.DataFrame(faltantes),
+                                                    column_config={
+                                                        "Cadastrar": st.column_config.CheckboxColumn("Cadastrar", default=False),
+                                                        "Produto": st.column_config.TextColumn("Produto", disabled=True, width="large"),
+                                                        "Preço de Venda (R$)": st.column_config.NumberColumn("Preço de Venda (R$)", format="%.2f", min_value=0.0),
+                                                        "Semelhança máxima": st.column_config.NumberColumn("Semelhança máxima", disabled=True, format="%.2f"),
+                                                    },
+                                                    hide_index=True, use_container_width=True, key="editor_faltantes_precos"
+                                                )
+
+                                                marcados = df_faltantes[df_faltantes["Cadastrar"] == True]
+                                                col_n1, col_n2 = st.columns(2)
+                                                emp_novos = col_n1.multiselect(
+                                                    "Cadastrar nas empresas:",
+                                                    options=list(nomes_emp_prec.keys()),
+                                                    default=[emp_id] if emp_id in nomes_emp_prec else [],
+                                                    format_func=lambda i: f"{i} — {nomes_emp_prec.get(i, '')}",
+                                                    key="emp_cadastrar_novos"
+                                                )
+                                                cat_novos = col_n2.text_input("Categoria dos novos produtos", value="Geral", key="cat_novos_precos")
+
+                                                if marcados.empty:
+                                                    st.caption("Nenhum item marcado.")
+                                                elif not emp_novos:
+                                                    st.warning("Selecione ao menos uma empresa.")
+                                                elif st.button(f"➕ Cadastrar {len(marcados)} item(ns) em {len(emp_novos)} empresa(s)",
+                                                               type="primary", use_container_width=True, key="btn_cadastrar_faltantes"):
+                                                    conn_nv = conectar_banco()
+                                                    try:
+                                                        cur_nv = conn_nv.cursor()
+                                                        criados = 0
+                                                        for _, ln in marcados.iterrows():
+                                                            for id_emp_nv in emp_novos:
+                                                                # NOT EXISTS por nome: evita duplicar se o
+                                                                # produto já existir com grafia idêntica.
+                                                                cur_nv.execute("""
+                                                                    INSERT INTO produtos
+                                                                        (nome, quantidade, valor, preco_custo, markup, marca, categoria, empresa_id, referencia, tipo, classe)
+                                                                    SELECT %s, 0, %s, 0, 0, %s, %s, %s, NULL, 'P', 'Venda'
+                                                                    WHERE NOT EXISTS (
+                                                                        SELECT 1 FROM produtos
+                                                                        WHERE empresa_id = %s AND lower(trim(nome)) = lower(trim(%s))
+                                                                    )
+                                                                """, (str(ln["Produto"]), float(ln["Preço de Venda (R$)"]),
+                                                                      "Mary Kay", str(cat_novos).strip() or "Geral",
+                                                                      int(id_emp_nv), int(id_emp_nv), str(ln["Produto"])))
+                                                                criados += cur_nv.rowcount
+                                                        conn_nv.commit()
+                                                        devolver_conexao(conn_nv)
+                                                        st.success(f"✅ {criados} produto(s) cadastrado(s). Estoque e custo entram zerados — dê entrada pela tela de Entrada de Mercadorias.")
+                                                        limpar_cache()
+                                                        st.rerun()
+                                                    except Exception as erro_nv:
+                                                        conn_nv.rollback()
+                                                        devolver_conexao(conn_nv)
+                                                        st.error(f"Erro ao cadastrar: {erro_nv}")
+                                    except ValueError as erro_col:
+                                        st.error(str(erro_col))
+                                    except Exception as erro_pl:
+                                        st.error(f"Não consegui ler a planilha: {erro_pl}")
+
                             editado_prec = st.data_editor(
                                 tabela_prec,
                                 column_config={
@@ -2524,7 +2768,7 @@ Feliz aniversário! 🥳✨"""
                             ]
 
                             st.markdown("---")
-                            nomes_emp = {int(r['id']): r['nome'] for _, r in df_emp_prec.iterrows()} if not df_emp_prec.empty else {}
+                            nomes_emp = nomes_emp_prec
                             emp_escolhidas = st.multiselect(
                                 "Aplicar nas empresas:",
                                 options=list(nomes_emp.keys()),
@@ -4392,13 +4636,46 @@ Feliz aniversário! 🥳✨"""
                             )
                         
                         # --- GRUPO 2: NOVOS (serão criados no cadastro) ---
-                        df_editado_novos = pd.DataFrame(columns=df_edicao_pdf.columns)
+                        df_editado_novos = pd.DataFrame(columns=list(df_edicao_pdf.columns) + ["Preço Venda (R$)"])
                         if not df_novos.empty:
-                            st.warning(f"🆕 **{len(df_novos)} item(ns) sem cadastro** — serão criados como produtos novos ao finalizar, com categoria *Geral* e a marca do fornecedor. Revise os nomes antes de confirmar.")
-                            
+                            st.warning(f"🆕 **{len(df_novos)} item(ns) sem cadastro** — serão criados como produtos novos ao finalizar, com categoria *Geral* e a marca do fornecedor. Revise os nomes e o preço de venda antes de confirmar.")
+
+                            # 🔧 Preço de venda para produtos novos. Antes, o cadastro nascia
+                            # com o preço de venda IGUAL ao custo (margem zero), o que passa
+                            # despercebido porque parece um valor legítimo. Agora a coluna é
+                            # explícita e pode ser preenchida a partir da tabela de preços
+                            # (a revista do mês, por exemplo).
+                            df_novos_edit = df_novos.drop(columns=['_cod_limpo']).copy()
+                            df_novos_edit["Preço Venda (R$)"] = 0.0
+
+                            with st.expander("💲 Preencher preço de venda a partir de uma planilha (opcional)"):
+                                st.caption("A planilha precisa ter as colunas **nome** e **valor** (e **referencia**, se houver). O casamento usa a referência quando existe, senão a semelhança do nome.")
+                                arq_venda = st.file_uploader("Tabela de preços (.xlsx ou .csv)",
+                                                             type=["xlsx", "csv"], key="upload_precos_entrada")
+                                if arq_venda is not None:
+                                    try:
+                                        ref_v, nomes_v = ler_planilha_de_precos(arq_venda)
+                                        encontrados = 0
+                                        for idx_n, ln in df_novos_edit.iterrows():
+                                            achado = casar_preco_na_planilha(ln['Produto'], ln['Código'], ref_v, nomes_v, 0.80)
+                                            if achado:
+                                                df_novos_edit.at[idx_n, "Preço Venda (R$)"] = round(achado[0], 2)
+                                                encontrados += 1
+                                        if encontrados:
+                                            st.success(f"✅ Preço de venda preenchido em {encontrados} de {len(df_novos_edit)} item(ns). Confira na tabela abaixo.")
+                                        else:
+                                            st.warning("Nenhum item novo foi encontrado na planilha — preencha o preço de venda manualmente.")
+                                    except ValueError as e_col:
+                                        st.error(str(e_col))
+                                    except Exception as e_pl:
+                                        st.error(f"Não consegui ler a planilha: {e_pl}")
+
                             df_editado_novos = st.data_editor(
-                                df_novos.drop(columns=['_cod_limpo']),
-                                column_config=colunas_editor,
+                                df_novos_edit,
+                                column_config={**colunas_editor,
+                                               "Preço Venda (R$)": st.column_config.NumberColumn(
+                                                   "Preço Venda (R$)", min_value=0.0, format="%.2f",
+                                                   help="Preço de revenda ao cliente. Deixando 0, o produto é criado sem preço definido — ajuste depois em Cadastros.")},
                                 hide_index=True,
                                 use_container_width=True,
                                 num_rows="dynamic",
@@ -4426,6 +4703,10 @@ Feliz aniversário! 🥳✨"""
                                 }
                                 if cod_item in mapa_ids:
                                     item_carrinho["id"] = int(mapa_ids[cod_item])
+                                elif "Preço Venda (R$)" in row.index and pd.notnull(row["Preço Venda (R$)"]):
+                                    # Só produtos novos carregam preço de venda; para os já
+                                    # cadastrados o preço da tela de Produtos é preservado.
+                                    item_carrinho["Preço Venda"] = float(row["Preço Venda (R$)"])
                                 
                                 st.session_state['carrinho_compra'].append(item_carrinho)
                                 qtd_adicionada += 1
@@ -4664,10 +4945,15 @@ Feliz aniversário! 🥳✨"""
                                         # Médio com o mesmo valor (não há histórico anterior ainda).
                                         # 🔧 Marca padrão para produtos novos agora é o próprio
                                         # fornecedor da nota, em vez do valor fixo "D'Grava".
+                                        # 🔧 O preço de VENDA vem da revisão da nota (coluna
+                                        # "Preço Venda"). Antes ele era gravado igual ao custo,
+                                        # o que criava o produto com margem zero sem avisar —
+                                        # pior que ficar vazio, porque parece um valor legítimo.
+                                        v_preco_venda = float(item.get('Preço Venda') or 0.0)
                                         cur.execute("""
                                             INSERT INTO produtos (nome, quantidade, valor, preco_custo, custo_medio, marca, categoria, empresa_id, referencia) 
                                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                        """, (v_nome, v_qtd, v_valor, v_valor, v_valor, sel_fornecedor, "Geral", emp_id, v_cod))
+                                        """, (v_nome, v_qtd, v_preco_venda, v_valor, v_valor, sel_fornecedor, "Geral", emp_id, v_cod))
                                         
                                     itens_salvos += 1
                                     
